@@ -1,0 +1,27 @@
+# Neptune backend dependencies — pinned to tested versions. Windows-compatible
+# (use `pip install -r requirements.txt`). Per roadmap: avoid pyproject-only installs
+# on Windows to dodge setuptools backend errors.
+
+# --- API ---
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+
+# --- Persistence (Postgres canonical; SQLite is stdlib for tests) ---
+SQLAlchemy==2.0.50
+psycopg[binary]==3.1.19
+alembic==1.13.2
+
+# --- Quant Engine ---
+numpy==2.4.6
+scipy==1.17.1
+cvxpy==1.9.1
+
+# --- Task queue (deferred wiring; pinned for forward compatibility) ---
+celery==5.4.0
+redis==5.0.7
+
+# --- Dev / test ---
+pytest==9.0.3
+httpx==0.28.1
