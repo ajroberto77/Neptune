@@ -72,6 +72,11 @@ class Position:
     cost_basis_method: CostBasisMethod | None = None
     realised_pnl: float = 0.0
     lots: list[LotEntry] = field(default_factory=list)
+    # --- Per-name coverage (firm staff; see domain/org.py) ---
+    # PM/analyst assigned to THIS name. Both optional: if pm_id is unset, the effective PM
+    # is the book's lead PM. These reference Person ids; they never carry investment thesis.
+    pm_id: str | None = None
+    analyst_id: str | None = None
     # --- Fundamental Layer (read-only to the system) ---
     thesis: str | None = None
     target: str | None = None
@@ -106,12 +111,20 @@ class Position:
 
 @dataclass
 class Portfolio:
-    """A book of positions belonging to one PM mandate."""
+    """A book of positions belonging to one investor entity.
+
+    Ownership (all optional so existing call sites and the synthetic slice keep working):
+    ``investor_entity_id`` is the client account the book runs for; ``firm_id`` is the
+    managing firm (the tenant); ``lead_pm_ids`` are the book's lead PM(s) — usually one,
+    but co-PMs are supported. People are firm staff (see ``domain/org.py``)."""
 
     id: str
     name: str
     base_currency: str = "USD"
     is_paper: bool = False
+    firm_id: str | None = None
+    investor_entity_id: str | None = None
+    lead_pm_ids: list[str] = field(default_factory=list)
     positions: list[Position] = field(default_factory=list)
 
     @property

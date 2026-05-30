@@ -25,6 +25,7 @@ from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.db.base import SessionLocal, init_db
 from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
+from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
 from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
 from neptune.risk import analytics
@@ -56,6 +57,8 @@ class PositionIn(BaseModel):
     sector: str | None = None
     cost_basis_method: CostBasisMethod = CostBasisMethod.FIFO
     lots: list[LotIn] = Field(default_factory=list)
+    pm_id: str | None = None
+    analyst_id: str | None = None
     thesis: str | None = None
     target: str | None = None
 
@@ -90,6 +93,8 @@ def _to_domain(p: PositionIn) -> Position:
         forward_beta=p.forward_beta,
         sector=p.sector,
         cost_basis_method=p.cost_basis_method,
+        pm_id=p.pm_id,
+        analyst_id=p.analyst_id,
         lots=[LotEntry(quantity=l.quantity, entry_price=l.entry_price,
                        entry_date=l.entry_date) for l in p.lots],
         thesis=p.thesis,
@@ -108,7 +113,15 @@ def seed_golden(session: Session) -> None:
     pid = GOLDEN_PORTFOLIO["portfolio_id"]
     if service.get_portfolio(pid) is not None:
         return
-    service.create_portfolio(pid, GOLDEN_PORTFOLIO["name"])
+    # The golden book belongs to Iridium (the internal management firm), runs for an
+    # internal investor entity, and is led by one PM — exercising the ownership graph.
+    service.create_firm("IRIDIUM", "Iridium Capital Management", is_internal=True)
+    service.create_person("pm-iridium", "IRIDIUM", "Lead PM", PersonRole.PM)
+    service.create_investor_entity("IRIDIUM-FUND", "IRIDIUM", "Iridium Master Fund")
+    service.create_portfolio(
+        pid, GOLDEN_PORTFOLIO["name"],
+        firm_id="IRIDIUM", investor_entity_id="IRIDIUM-FUND", lead_pm_ids=["pm-iridium"],
+    )
     for pos in golden_positions():
         service.add_position(pid, pos)
 
@@ -169,6 +182,9 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
             "beta": round(metrics[p.ticker].beta, 4),
             "beta_method": metrics[p.ticker].beta_method,
             "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
+            # Per-name coverage; pm falls back to the book's lead PM via effective_pm.
+            "pm_id": service.effective_pm(portfolio_id, p),
+            "analyst_id": p.analyst_id,
             "pnl": _pnl_dict(pnl_engine.position_pnl_for(p, MARKET_DATA)),
         }
         for p in portfolio.positions

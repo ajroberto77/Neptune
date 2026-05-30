@@ -113,6 +113,26 @@ def test_unknown_portfolio_404(client):
 
 # --- P&L engine endpoints --------------------------------------------------------
 
+def test_positions_carry_pm_attribution(client):
+    """The seeded golden book has a lead PM; names with no override inherit it."""
+    listing = client.get(f"/portfolios/{PID}/positions").json()
+    aaa = next(p for p in listing if p["ticker"] == "AAA")
+    assert aaa["pm_id"] == "pm-iridium"  # falls back to the book's lead PM
+    assert "analyst_id" in aaa
+
+
+def test_position_pm_override_is_surfaced(client):
+    client.post(
+        f"/portfolios/{PID}/positions",
+        json={"ticker": "HHH", "side": "LONG", "notional": 100000, "forward_beta": 1.0,
+              "pm_id": "pm-override", "analyst_id": "an-x"},
+    )
+    listing = client.get(f"/portfolios/{PID}/positions").json()
+    hhh = next(p for p in listing if p["ticker"] == "HHH")
+    assert hhh["pm_id"] == "pm-override"
+    assert hhh["analyst_id"] == "an-x"
+
+
 def test_positions_include_pnl_and_book(client):
     listing = client.get(f"/portfolios/{PID}/positions").json()
     aaa = next(p for p in listing if p["ticker"] == "AAA")

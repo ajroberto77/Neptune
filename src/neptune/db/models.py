@@ -1,32 +1,125 @@
-"""ORM models. The schema stays dialect-agnostic so SQLite (tests) and Postgres
-(production) behave identically. NOTE: append-only history (invariant I-07) is NOT yet
-enforced in the slice — ``delete_position`` hard-deletes; the append-only audit trail
-(`corrected_by` rows + `audit_log`) is a deferred phase."""
+"""ORM models for the portfolio database. The schema stays dialect-agnostic so SQLite
+(tests) and Postgres (production) behave identically.
+
+Ownership / multi-tenancy (see ``domain/org.py`` and ``docs/data_architecture.md``):
+
+    management_firm        ← TENANT / isolation root (the investment-management firm)
+      ├── person           ← PM / ANALYST / CIO / ADMIN — FIRM staff (not the client)
+      └── investor_entity  ← a client account the firm manages
+            └── portfolio  (= book) ← belongs to an investor_entity; has lead PM(s)
+                  └── position      ← optional per-name pm_id / analyst_id
+                        └── lot
+
+NOTE: append-only history (invariant I-07) is NOT yet enforced in the slice —
+``delete_position`` hard-deletes; the append-only audit trail (`corrected_by` rows +
+`audit_log`) is a deferred phase."""
 from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Date
+from sqlalchemy import Boolean, Date
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import Float, ForeignKey, String
+from sqlalchemy import Float, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from neptune.db.base import Base
+from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod
 from neptune.domain.models import Side, ShortType
 
 
+class ManagementFirmORM(Base):
+    """The investment-management firm — tenant / isolation root."""
+
+    __tablename__ = "management_firms"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    is_internal: Mapped[bool] = mapped_column(Boolean, default=False)
+    subscription_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    people: Mapped[list["PersonORM"]] = relationship(
+        back_populates="firm", cascade="all, delete-orphan"
+    )
+    investor_entities: Mapped[list["InvestorEntityORM"]] = relationship(
+        back_populates="firm", cascade="all, delete-orphan"
+    )
+
+
+class PersonORM(Base):
+    """A PM / analyst / CIO / admin employed by a firm. Firm staff — never a client."""
+
+    __tablename__ = "people"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    firm_id: Mapped[str] = mapped_column(ForeignKey("management_firms.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[PersonRole] = mapped_column(SAEnum(PersonRole), nullable=False)
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    firm: Mapped[ManagementFirmORM] = relationship(back_populates="people")
+
+
+class InvestorEntityORM(Base):
+    """A client/account whose capital the firm manages. Books belong to one of these."""
+
+    __tablename__ = "investor_entities"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    firm_id: Mapped[str] = mapped_column(ForeignKey("management_firms.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    base_currency: Mapped[str] = mapped_column(String, default="USD")
+
+    firm: Mapped[ManagementFirmORM] = relationship(back_populates="investor_entities")
+    portfolios: Mapped[list["PortfolioORM"]] = relationship(back_populates="investor_entity")
+
+
 class PortfolioORM(Base):
+    """A book of positions. Belongs to an investor entity (the client); managed by the
+    firm's lead PM(s) via ``BookManagerORM``. ``firm_id``/``investor_entity_id`` are
+    nullable so the synthetic golden slice (which seeds a bare book) still works."""
+
     __tablename__ = "portfolios"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     base_currency: Mapped[str] = mapped_column(String, default="USD")
-    is_paper: Mapped[bool] = mapped_column(default=False)
+    is_paper: Mapped[bool] = mapped_column(Boolean, default=False)
+    firm_id: Mapped[str | None] = mapped_column(
+        ForeignKey("management_firms.id"), nullable=True
+    )
+    investor_entity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("investor_entities.id"), nullable=True
+    )
 
+    investor_entity: Mapped["InvestorEntityORM | None"] = relationship(
+        back_populates="portfolios"
+    )
+    managers: Mapped[list["BookManagerORM"]] = relationship(
+        back_populates="portfolio", cascade="all, delete-orphan"
+    )
     positions: Mapped[list["PositionORM"]] = relationship(
         back_populates="portfolio", cascade="all, delete-orphan"
     )
+
+
+class BookManagerORM(Base):
+    """A book↔person management assignment. ``is_lead`` marks lead PM(s); co-PMs are >1
+    lead row for the same book."""
+
+    __tablename__ = "book_managers"
+    __table_args__ = (
+        UniqueConstraint("portfolio_id", "person_id", name="uq_book_manager"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolios.id"), nullable=False)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id"), nullable=False)
+    is_lead: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    portfolio: Mapped[PortfolioORM] = relationship(back_populates="managers")
+    person: Mapped[PersonORM] = relationship()
 
 
 class PositionORM(Base):
@@ -40,6 +133,10 @@ class PositionORM(Base):
     short_type: Mapped[ShortType] = mapped_column(SAEnum(ShortType), default=ShortType.NA)
     forward_beta: Mapped[float | None] = mapped_column(Float, nullable=True)
     sector: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Per-name coverage — firm staff assigned to this name (optional; PM falls back to the
+    # book's lead PM). These reference people.id; they carry no investment thesis content.
+    pm_id: Mapped[str | None] = mapped_column(ForeignKey("people.id"), nullable=True)
+    analyst_id: Mapped[str | None] = mapped_column(ForeignKey("people.id"), nullable=True)
     # P&L: cost-basis method and inception-to-date realised P&L accumulated from closes.
     cost_basis_method: Mapped[CostBasisMethod] = mapped_column(
         SAEnum(CostBasisMethod), default=CostBasisMethod.FIFO

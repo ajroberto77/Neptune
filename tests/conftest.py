@@ -20,7 +20,14 @@ from neptune.db.base import (  # noqa: E402
 
 @pytest.fixture()
 def session():
-    """A session against a freshly created in-memory portfolio schema."""
+    """A session against a freshly created in-memory portfolio schema.
+
+    The in-memory DB is shared across the process (StaticPool), so drop + recreate to
+    isolate each test (otherwise firm/entity/book rows leak between tests)."""
+    from neptune.db.base import Base
+    from neptune.db import models  # noqa: F401  (register mappers)
+
+    Base.metadata.drop_all(bind=engine)
     init_db(engine)
     with SessionLocal() as s:
         yield s

@@ -10,8 +10,9 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from neptune.db.repository import PositionRepository
+from neptune.db.repository import OrgRepository, PositionRepository
 from neptune.domain.models import LotEntry, Portfolio, Position, Side, ShortType
+from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, Lot, reduce_position
 
 
@@ -22,9 +23,33 @@ class ConflictError(ValueError):
 class PositionService:
     def __init__(self, session: Session):
         self.repo = PositionRepository(session)
+        self.org = OrgRepository(session)
 
     def create_portfolio(self, portfolio_id: str, name: str, **kwargs) -> Portfolio:
         return self.repo.create_portfolio(portfolio_id, name, **kwargs)
+
+    # --- Organization / ownership -------------------------------------------------
+    def create_firm(self, firm_id: str, name: str, **kwargs):
+        return self.org.create_firm(firm_id, name, **kwargs)
+
+    def create_person(self, person_id: str, firm_id: str, name: str, role: PersonRole, **kwargs):
+        return self.org.create_person(person_id, firm_id, name, role, **kwargs)
+
+    def create_investor_entity(self, entity_id: str, firm_id: str, name: str, **kwargs):
+        return self.org.create_investor_entity(entity_id, firm_id, name, **kwargs)
+
+    def set_book_managers(self, portfolio_id: str, person_ids: list[str], is_lead: bool = True):
+        return self.org.set_book_managers(portfolio_id, person_ids, is_lead)
+
+    def effective_pm(self, portfolio_id: str, position: Position) -> str | None:
+        """The PM responsible for a name: its own ``pm_id`` if set, else the book's first
+        lead PM. Returns None if neither is assigned (e.g. the bare synthetic slice)."""
+        if position.pm_id is not None:
+            return position.pm_id
+        portfolio = self.repo.get_portfolio(portfolio_id)
+        if portfolio and portfolio.lead_pm_ids:
+            return portfolio.lead_pm_ids[0]
+        return None
 
     def get_portfolio(self, portfolio_id: str) -> Portfolio | None:
         return self.repo.get_portfolio(portfolio_id)
