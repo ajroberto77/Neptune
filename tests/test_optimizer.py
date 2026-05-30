@@ -2,6 +2,7 @@
 hard constraint."""
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_candidates, golden_positions
@@ -10,7 +11,9 @@ from neptune.quant.optimizer import (
     Candidate,
     InfeasibleHedge,
     compute_residual,
+    complexity_frontier,
     optimize_hedge,
+    optimize_hedge_capped,
 )
 from neptune.risk import book
 
@@ -104,3 +107,56 @@ def test_infeasible_hedge_fails_closed():
 def test_empty_universe_rejected():
     with pytest.raises(ValueError):
         optimize_hedge(0.5, {}, [], long_aum=1_000_000.0)
+
+
+def _wide_universe(n=60, seed=0):
+    rng = np.random.default_rng(seed)
+    return [
+        Candidate(
+            f"U{i}",
+            beta=float(np.clip(rng.normal(1.0, 0.25), 0.4, 1.8)),
+            loadings={f: float(rng.normal(0, 0.06)) for f in ("SMB", "HML", "MOM")},
+        )
+        for i in range(n)
+    ]
+
+
+def test_capped_run_limits_position_count():
+    proposal = optimize_hedge_capped(
+        residual_beta=0.6, residual_factors={"SMB": 0.05, "HML": 0.0, "MOM": 0.0},
+        universe=_wide_universe(), long_aum=2_500_000.0, n_cap=5,
+    )
+    assert proposal.n_selected <= 5
+    assert proposal.n_cap == 5
+
+
+def test_capped_run_rejects_bad_cap():
+    with pytest.raises(ValueError):
+        optimize_hedge_capped(0.3, {}, _wide_universe(), 1_000_000.0, n_cap=0)
+
+
+def test_frontier_trades_complexity_for_quality():
+    # A large residual beta the size ceiling (15%) cannot neutralize with too few names:
+    # 3 names -> max 0.45 of beta, can't reach 0.94; 10 names easily can.
+    runs = complexity_frontier(
+        residual_beta=0.94, residual_factors={"SMB": 0.10, "HML": -0.05, "MOM": 0.03},
+        universe=_wide_universe(), long_aum=2_500_000.0, caps=(3, 5, 10),
+    )
+    assert [r.n_cap for r in runs] == [3, 5, 10]
+    # More names -> hedge quality improves (tracking error is non-increasing).
+    tes = [r.tracking_error for r in runs]
+    assert tes[0] > tes[-1]
+    assert tes == sorted(tes, reverse=True)
+    # Too few names breaches the beta tolerance; enough names satisfies it.
+    assert runs[0].beta_within_tol is False
+    assert runs[-1].beta_within_tol is True
+
+
+def test_frontier_caps_are_clamped_to_universe_size():
+    runs = complexity_frontier(
+        residual_beta=0.3, residual_factors={}, universe=_wide_universe(n=8),
+        long_aum=1_000_000.0, caps=(10, 20, 50),
+    )
+    # All caps exceed the 8-name universe, so they collapse to a single run of 8.
+    assert len(runs) == 1
+    assert runs[0].n_cap == 8

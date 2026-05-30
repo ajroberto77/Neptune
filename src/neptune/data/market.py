@@ -58,6 +58,12 @@ def _seed_for(ticker: str) -> int:
     return int(digest[:8], 16)
 
 
+def default_universe_tickers(n: int = 60) -> list[str]:
+    """A synthetic shortable universe of ``n`` names (U0001..). Deterministic; their
+    betas/loadings come from the per-ticker generator in ``spec_for``."""
+    return [f"U{i:04d}" for i in range(1, n + 1)]
+
+
 class SyntheticMarketData:
     """A reproducible market + factor + per-ticker return generator."""
 
@@ -81,8 +87,9 @@ class SyntheticMarketData:
             return CATALOG[ticker]
         # Unknown tickers: deterministic, near-market, lightly loaded.
         rng = np.random.default_rng(_seed_for(ticker))
-        beta = float(np.clip(rng.normal(1.0, 0.2), 0.4, 1.8))
-        return TickerSpec(beta, {"SMB": 0.0, "HML": 0.0, "MOM": 0.0})
+        beta = float(np.clip(rng.normal(1.0, 0.25), 0.4, 1.8))
+        loadings = {f: round(float(rng.normal(0.0, 0.06)), 4) for f in ("SMB", "HML", "MOM")}
+        return TickerSpec(beta, loadings)
 
     def ticker_returns(self, ticker: str) -> np.ndarray:
         """Synthetic returns r = beta*MKT + sum(load_f * factor_f) + noise."""

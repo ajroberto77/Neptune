@@ -20,17 +20,17 @@ from sqlalchemy.orm import Session
 
 from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
-from neptune.data.market import SyntheticMarketData
+from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.db.base import SessionLocal, init_db
 from neptune.domain.models import Position, Side, ShortType
-from neptune.quant.optimizer import InfeasibleHedge, optimize_hedge
+from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
 from neptune.risk import analytics
 from neptune.risk.summary import summarize
 from neptune.positions.service import ConflictError, PositionService
 
 # One shared synthetic market-data source feeds the live beta/factor pipeline.
 MARKET_DATA = SyntheticMarketData()
-UNIVERSE_TICKERS = [u["ticker"] for u in GOLDEN_PORTFOLIO["universe"]]
+UNIVERSE_TICKERS = default_universe_tickers(60)
 
 
 # --- request/response schemas ----------------------------------------------------
@@ -191,5 +191,42 @@ def propose_hedge(portfolio_id: str, session: Session = Depends(get_session)):
         "proposed_shorts": [
             {"ticker": s.ticker, "notional": round(s.notional, 2), "beta": s.beta}
             for s in proposal.positions
+        ],
+    }
+
+
+@app.post("/portfolios/{portfolio_id}/hedge/frontier")
+def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
+    """Complexity-quality frontier: capped runs (N<=10/20/50) showing the trade-off
+    between position count and hedge quality (tracking error / net beta)."""
+    service = PositionService(session)
+    portfolio = _require_portfolio(service, portfolio_id)
+    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
+    residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
+    long_tickers = {p.ticker for p in portfolio.longs}
+    universe = analytics.live_universe(MARKET_DATA, UNIVERSE_TICKERS)
+    runs = complexity_frontier(
+        residual_beta=residual_beta,
+        residual_factors=residual_factors,
+        universe=universe,
+        long_aum=portfolio.long_aum,
+        beta_tol=settings.beta_tol,
+        factor_limit=settings.factor_limit,
+        max_position_weight=settings.max_position_weight,
+        excluded_tickers=long_tickers,
+    )
+    return {
+        "portfolio_id": portfolio_id,
+        "net_beta_before": residual_beta,
+        "frontier": [
+            {
+                "n_cap": r.n_cap,
+                "n_selected": r.n_selected,
+                "net_beta_after": r.net_beta_after,
+                "tracking_error": r.tracking_error,
+                "beta_within_tol": r.beta_within_tol,
+                "solver_status": r.solver_status,
+            }
+            for r in runs
         ],
     }

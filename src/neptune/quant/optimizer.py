@@ -65,6 +65,13 @@ class HedgeProposal:
     long_aum: float
     status: str = "PENDING_APPROVAL"
     solver_status: str = ""
+    n_cap: int | None = None          # position-count cap for this run (None = uncapped)
+    tracking_error: float = 0.0       # sqrt(net_beta^2 + sum factor^2) after hedging
+    beta_within_tol: bool = True      # whether |net beta after| <= beta_tol
+
+    @property
+    def n_selected(self) -> int:
+        return len(self.positions)
 
 
 def compute_residual(
@@ -96,59 +103,178 @@ def optimize_hedge(
     max_position_weight: float = 0.15,
     excluded_tickers: set[str] | None = None,
 ) -> HedgeProposal:
-    """Pass 2. Solve the QP and return a hedge proposal (pending approval)."""
+    """Pass 2 (recommended run). Solve the QP and return a hedge proposal.
+
+    Market-beta neutrality |net beta| <= beta_tol and the factor limits are HARD
+    constraints; the run fails closed (InfeasibleHedge) if they cannot be met.
+    """
     excluded = excluded_tickers or set()
     cands = [c for c in universe if c.ticker not in excluded]
     if not cands:
         raise ValueError("empty shortable universe after exclusions")
 
-    n = len(cands)
+    weights, status = _solve_qp(
+        residual_beta, residual_factors, cands, beta_tol, factor_limit,
+        max_position_weight, hard=True,
+    )
+    if status not in ("optimal", "optimal_inaccurate"):
+        raise InfeasibleHedge(
+            f"no feasible hedge under |net beta| <= {beta_tol} with this universe "
+            f"(solver status: {status})"
+        )
+    return _build_proposal(
+        cands, weights, residual_beta, residual_factors, long_aum, status,
+        beta_tol=beta_tol,
+    )
+
+
+def optimize_hedge_capped(
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    universe: list[Candidate],
+    long_aum: float,
+    n_cap: int,
+    beta_tol: float = 0.05,
+    factor_limit: float = 0.20,
+    max_position_weight: float = 0.15,
+    excluded_tickers: set[str] | None = None,
+) -> HedgeProposal:
+    """Capped run: select at most ``n_cap`` names, then size them.
+
+    True MIQP (binary selection) needs a commercial solver; per the roadmap we use the
+    documented greedy + QP approximation: solve the uncapped problem, keep the ``n_cap``
+    largest holdings by hedging contribution, then re-optimize sizing over just those
+    names. Capped runs use SOFT objectives (no hard beta/factor constraint) so a frontier
+    point is always returned — its ``beta_within_tol`` flag reports whether |net beta| <=
+    tol was actually achieved. These runs are exploratory, never an approvable book that
+    silently breaches the hard tolerance.
+    """
+    if n_cap < 1:
+        raise ValueError("n_cap must be >= 1")
+    excluded = excluded_tickers or set()
+    cands = [c for c in universe if c.ticker not in excluded]
+    if not cands:
+        raise ValueError("empty shortable universe after exclusions")
+
+    # Step 1: uncapped soft solve to rank names by hedging contribution (weight * beta).
+    full_weights, _ = _solve_qp(
+        residual_beta, residual_factors, cands, beta_tol, factor_limit,
+        max_position_weight, hard=False,
+    )
+    contribution = np.array([abs(w * c.beta) for w, c in zip(full_weights, cands)])
+    keep = np.argsort(-contribution)[: min(n_cap, len(cands))]
+    subset = [cands[i] for i in keep]
+
+    # Step 2: re-optimize sizing over the kept subset.
+    weights, status = _solve_qp(
+        residual_beta, residual_factors, subset, beta_tol, factor_limit,
+        max_position_weight, hard=False,
+    )
+    # The soft QP is always feasible; a non-optimal status means a genuine solver
+    # failure, which we surface rather than returning a silent zero hedge.
+    if status not in ("optimal", "optimal_inaccurate"):
+        raise InfeasibleHedge(f"capped hedge solve failed (solver status: {status})")
+    return _build_proposal(
+        subset, weights, residual_beta, residual_factors, long_aum, status,
+        beta_tol=beta_tol, n_cap=n_cap,
+    )
+
+
+def complexity_frontier(
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    universe: list[Candidate],
+    long_aum: float,
+    caps: tuple[int, ...] = (10, 20, 50),
+    beta_tol: float = 0.05,
+    factor_limit: float = 0.20,
+    max_position_weight: float = 0.15,
+    excluded_tickers: set[str] | None = None,
+) -> list[HedgeProposal]:
+    """Run a series of capped optimizations to expose the complexity-quality trade-off.
+
+    Returns one proposal per cap (caps larger than the universe are clamped, then
+    deduplicated), sorted by ``n_cap`` ascending. Fewer names -> higher tracking error /
+    possible beta breach; more names -> tighter hedge.
+    """
+    excluded = excluded_tickers or set()
+    usable = [c for c in universe if c.ticker not in excluded]
+    if not usable:
+        raise ValueError("empty shortable universe after exclusions")
+    distinct = sorted({min(c, len(usable)) for c in caps})
+    return [
+        optimize_hedge_capped(
+            residual_beta, residual_factors, usable, long_aum, n_cap,
+            beta_tol=beta_tol, factor_limit=factor_limit,
+            max_position_weight=max_position_weight,
+        )
+        for n_cap in distinct
+    ]
+
+
+# --- shared solve / proposal helpers ---------------------------------------------
+
+def _solve_qp(
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    cands: list[Candidate],
+    beta_tol: float,
+    factor_limit: float,
+    max_position_weight: float,
+    hard: bool,
+) -> tuple[np.ndarray, str]:
+    """Minimize tracking error to the residual. With ``hard``, the beta/factor limits
+    are constraints; otherwise only the per-name size ceiling is enforced (the limits
+    live in the objective), guaranteeing a feasible solution."""
     betas = np.array([c.beta for c in cands])
-    # Factor loading matrix: rows = candidates, cols = hedge factors.
     loads = np.array([[c.loadings.get(f, 0.0) for f in HEDGE_FACTORS] for c in cands])
 
-    x = cp.Variable(n, nonneg=True)  # short weight as fraction of long AUM (>= 0)
-
+    x = cp.Variable(len(cands), nonneg=True)  # short weight as fraction of long AUM
     # Shorting subtracts exposure: net = residual - sum(x_i * exposure_i).
     net_beta = residual_beta - betas @ x
     resid_fac = np.array([residual_factors.get(f, 0.0) for f in HEDGE_FACTORS])
     net_factors = resid_fac - loads.T @ x
 
     objective = cp.Minimize(cp.square(net_beta) + cp.sum_squares(net_factors))
-    constraints = [
-        cp.abs(net_beta) <= beta_tol,
-        x <= max_position_weight,
-    ]
-    for j in range(len(HEDGE_FACTORS)):
-        constraints.append(cp.abs(net_factors[j]) <= factor_limit)
+    constraints = [x <= max_position_weight]
+    if hard:
+        constraints.append(cp.abs(net_beta) <= beta_tol)
+        for j in range(len(HEDGE_FACTORS)):
+            constraints.append(cp.abs(net_factors[j]) <= factor_limit)
 
     problem = cp.Problem(objective, constraints)
     problem.solve(solver=cp.CLARABEL)
+    weights = np.asarray(x.value).flatten() if x.value is not None else np.zeros(len(cands))
+    return weights, problem.status
 
-    if problem.status not in ("optimal", "optimal_inaccurate"):
-        raise InfeasibleHedge(
-            f"no feasible hedge under |net beta| <= {beta_tol} with this universe "
-            f"(solver status: {problem.status})"
-        )
 
-    weights = np.asarray(x.value).flatten()
+def _build_proposal(
+    cands: list[Candidate],
+    weights: np.ndarray,
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    long_aum: float,
+    solver_status: str,
+    beta_tol: float,
+    n_cap: int | None = None,
+) -> HedgeProposal:
+    betas = np.array([c.beta for c in cands])
+    loads = np.array([[c.loadings.get(f, 0.0) for f in HEDGE_FACTORS] for c in cands])
+
     proposed = [
-        ProposedShort(
-            ticker=c.ticker,
-            notional=float(wt * long_aum),
-            beta=c.beta,
-            weight=float(wt),
-        )
+        ProposedShort(ticker=c.ticker, notional=float(wt * long_aum), beta=c.beta,
+                      weight=float(wt))
         for c, wt in zip(cands, weights)
         if wt > ZERO_WEIGHT_TOL
     ]
-
     net_beta_after = float(residual_beta - betas @ weights)
     factor_after = {
         f: float(residual_factors.get(f, 0.0) - loads[:, j] @ weights)
         for j, f in enumerate(HEDGE_FACTORS)
     }
-
+    tracking_error = float(
+        np.sqrt(net_beta_after**2 + sum(v**2 for v in factor_after.values()))
+    )
     return HedgeProposal(
         positions=proposed,
         net_beta_before=float(residual_beta),
@@ -156,5 +282,8 @@ def optimize_hedge(
         factor_before={f: residual_factors.get(f, 0.0) for f in HEDGE_FACTORS},
         factor_after=factor_after,
         long_aum=long_aum,
-        solver_status=problem.status,
+        solver_status=solver_status,
+        n_cap=n_cap,
+        tracking_error=tracking_error,
+        beta_within_tol=abs(net_beta_after) <= beta_tol,
     )

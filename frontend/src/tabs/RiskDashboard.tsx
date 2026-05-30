@@ -1,6 +1,7 @@
-import type { HedgeProposal, RiskSummary } from "../types";
+import type { Frontier, HedgeProposal, RiskSummary } from "../types";
 import { BetaGauge } from "../components/BetaGauge";
 import { FactorTable } from "../components/FactorTable";
+import { FrontierPanel } from "../components/FrontierPanel";
 import { money } from "../format";
 
 interface Props {
@@ -8,10 +9,21 @@ interface Props {
   proposal: HedgeProposal | null;
   onPropose: () => void;
   proposing: boolean;
+  frontier: Frontier | null;
+  onFrontier: () => void;
+  frontierLoading: boolean;
 }
 
 /** Risk tab: net-beta monitor, factor exposure table, and the proposed short basket. */
-export function RiskDashboard({ summary, proposal, onPropose, proposing }: Props) {
+export function RiskDashboard({
+  summary,
+  proposal,
+  onPropose,
+  proposing,
+  frontier,
+  onFrontier,
+  frontierLoading,
+}: Props) {
   return (
     <div className="space-y-6">
       <p className="text-sm text-ocean-muted">{summary.headline}</p>
@@ -70,6 +82,8 @@ export function RiskDashboard({ summary, proposal, onPropose, proposing }: Props
           </p>
         )}
       </div>
+
+      <FrontierPanel frontier={frontier} onRun={onFrontier} loading={frontierLoading} />
     </div>
   );
 }

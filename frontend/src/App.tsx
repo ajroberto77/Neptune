@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { HedgeProposal, PositionRow, RiskSummary } from "./types";
-import { fetchPositions, fetchRisk, proposeHedge } from "./api/client";
+import type { Frontier, HedgeProposal, PositionRow, RiskSummary } from "./types";
+import { fetchFrontier, fetchPositions, fetchRisk, proposeHedge } from "./api/client";
 import { Blotter } from "./tabs/Blotter";
 import { RiskDashboard } from "./tabs/RiskDashboard";
 import { HedgeApproval } from "./tabs/HedgeApproval";
@@ -15,6 +15,8 @@ export default function App() {
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [proposal, setProposal] = useState<HedgeProposal | null>(null);
   const [proposing, setProposing] = useState(false);
+  const [frontier, setFrontier] = useState<Frontier | null>(null);
+  const [frontierLoading, setFrontierLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,6 +37,18 @@ export default function App() {
       setError(String(e));
     } finally {
       setProposing(false);
+    }
+  }
+
+  async function handleFrontier() {
+    setFrontierLoading(true);
+    setError(null);
+    try {
+      setFrontier(await fetchFrontier(PORTFOLIO_ID));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setFrontierLoading(false);
     }
   }
 
@@ -83,6 +97,9 @@ export default function App() {
                 proposal={proposal}
                 onPropose={handlePropose}
                 proposing={proposing}
+                frontier={frontier}
+                onFrontier={handleFrontier}
+                frontierLoading={frontierLoading}
               />
             )}
             {tab === "Blotter" && <Blotter positions={positions} />}

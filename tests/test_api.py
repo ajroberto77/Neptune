@@ -47,6 +47,17 @@ def test_propose_on_unknown_portfolio_404(client):
     assert client.post("/portfolios/NEWBOOK/hedge/propose").status_code == 404
 
 
+def test_hedge_frontier_returns_capped_runs(client):
+    r = client.post(f"/portfolios/{PID}/hedge/frontier")
+    assert r.status_code == 200
+    body = r.json()
+    caps = [pt["n_cap"] for pt in body["frontier"]]
+    assert caps == [10, 20, 50]
+    for pt in body["frontier"]:
+        assert pt["n_selected"] <= pt["n_cap"]
+        assert "tracking_error" in pt and "beta_within_tol" in pt
+
+
 def test_enter_position_and_list(client):
     r = client.post(
         f"/portfolios/{PID}/positions",

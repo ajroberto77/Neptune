@@ -41,3 +41,17 @@ export interface HedgeProposal {
   long_aum: number;
   proposed_shorts: ProposedShort[];
 }
+
+export interface FrontierPoint {
+  n_cap: number;
+  n_selected: number;
+  net_beta_after: number;
+  tracking_error: number;
+  beta_within_tol: boolean;
+}
+
+export interface Frontier {
+  portfolio_id: string;
+  net_beta_before: number;
+  frontier: FrontierPoint[];
+}
