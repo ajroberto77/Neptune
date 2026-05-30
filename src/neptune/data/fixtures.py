@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from importlib import resources
 
 import numpy as np
 
-from neptune.domain.models import Position, Side, ShortType
+from neptune.domain.models import LotEntry, Position, Side, ShortType
+from neptune.pnl import CostBasisMethod
 from neptune.quant.optimizer import Candidate
+
+# Lots open at the synthetic base price (100.0) on this date, so the seeded book shows
+# real P&L when marked against the current synthetic close.
+GOLDEN_LOT_DATE = date(2026, 1, 2)
+GOLDEN_BASE_PRICE = 100.0
 
 
 def load_golden_portfolio() -> dict:
@@ -25,6 +32,8 @@ def golden_positions() -> list[Position]:
     for p in GOLDEN_PORTFOLIO["positions"]:
         side = Side(p["side"])
         short_type = ShortType(p.get("short_type", "NA")) if side is Side.SHORT else ShortType.NA
+        # One opening lot at the base price; quantity implied by notional.
+        quantity = p["notional"] / GOLDEN_BASE_PRICE
         out.append(
             Position(
                 ticker=p["ticker"],
@@ -32,6 +41,9 @@ def golden_positions() -> list[Position]:
                 notional=p["notional"],
                 short_type=short_type,
                 forward_beta=p.get("forward_beta"),
+                cost_basis_method=CostBasisMethod.FIFO,
+                lots=[LotEntry(quantity=quantity, entry_price=GOLDEN_BASE_PRICE,
+                               entry_date=GOLDEN_LOT_DATE)],
                 thesis=p.get("thesis"),
             )
         )

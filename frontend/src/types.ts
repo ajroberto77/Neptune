@@ -18,13 +18,29 @@ export interface RiskSummary {
   factors: FactorStatus[];
 }
 
+export interface PnL {
+  day: number;
+  total: number;
+  unrealised: number;
+  realised: number;
+}
+
 export interface PositionRow {
   ticker: string;
   side: "LONG" | "SHORT";
-  notional: number;
   short_type: string;
+  book: string;
+  notional: number;
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
+  cost_basis_method?: string;
+  pnl: PnL;
+}
+
+export interface PortfolioPnL {
+  portfolio_id: string;
+  total: PnL;
+  by_book: Record<string, PnL>;
 }
 
 export interface ProposedShort {

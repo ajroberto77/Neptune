@@ -115,3 +115,18 @@ class SyntheticMarketData:
             noise_rng = np.random.default_rng(_seed_for(ticker) ^ 0x9E3779B9)
             r = r + noise_rng.normal(0.0, spec.noise, self.n)
         return r
+
+    def price_series(self, ticker: str, base_price: float = 100.0) -> np.ndarray:
+        """A deterministic synthetic close-price series, base_price compounded by the
+        ticker's returns. Used by the P&L engine for marks."""
+        returns = self.ticker_returns(ticker)
+        return base_price * np.cumprod(1.0 + returns)
+
+    def current_price(self, ticker: str) -> float:
+        """The latest synthetic close (the mark)."""
+        return float(self.price_series(ticker)[-1])
+
+    def prev_close(self, ticker: str) -> float:
+        """The prior synthetic close (for day P&L)."""
+        return float(self.price_series(ticker)[-2])
+

@@ -4,11 +4,15 @@ enforced in the slice — ``delete_position`` hard-deletes; the append-only audi
 (`corrected_by` rows + `audit_log`) is a deferred phase."""
 from __future__ import annotations
 
+from datetime import date
+
+from sqlalchemy import Date
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from neptune.db.base import Base
+from neptune.pnl import CostBasisMethod
 from neptune.domain.models import Side, ShortType
 
 
@@ -36,8 +40,30 @@ class PositionORM(Base):
     short_type: Mapped[ShortType] = mapped_column(SAEnum(ShortType), default=ShortType.NA)
     forward_beta: Mapped[float | None] = mapped_column(Float, nullable=True)
     sector: Mapped[str | None] = mapped_column(String, nullable=True)
+    # P&L: cost-basis method and inception-to-date realised P&L accumulated from closes.
+    cost_basis_method: Mapped[CostBasisMethod] = mapped_column(
+        SAEnum(CostBasisMethod), default=CostBasisMethod.FIFO
+    )
+    realised_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     # Fundamental Layer — read-only to the system; persisted but never auto-generated.
     thesis: Mapped[str | None] = mapped_column(String, nullable=True)
     target: Mapped[str | None] = mapped_column(String, nullable=True)
 
     portfolio: Mapped[PortfolioORM] = relationship(back_populates="positions")
+    lots: Mapped[list["LotORM"]] = relationship(
+        back_populates="position", cascade="all, delete-orphan", order_by="LotORM.entry_date"
+    )
+
+
+class LotORM(Base):
+    """An open lot for a position. Ordered by entry_date so FIFO matching is stable."""
+
+    __tablename__ = "lots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    position_id: Mapped[int] = mapped_column(ForeignKey("positions.id"), nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    position: Mapped[PositionORM] = relationship(back_populates="lots")

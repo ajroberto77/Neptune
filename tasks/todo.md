@@ -26,8 +26,12 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 SQLAlchemy ORM models (`portfolios`, `positions`) — dialect-agnostic
 - [x] 🟢 `PositionRepository` + `PositionService` CRUD
 - [x] 🟢 Tests: CRUD via in-memory SQLite (`test_positions.py`)
-- [ ] 🔵 FIFO / AVCO / Specific-Lot cost basis tracking
-- [ ] 🔵 Live P&L (Day / ITD / Unrealised / Realised), multi-currency
+- [x] 🟢 FIFO / AVCO / Specific-Lot cost basis tracking — pure P&L engine (`src/neptune/pnl/`),
+      lots persisted (`lots` table), `reduce_position` matches lots + accrues realised
+- [x] 🟢 Live P&L (Day / ITD / Unrealised / Realised) split by Long / Systematic /
+      Discretionary (`risk/pnl.py`); `/positions` carries per-name P&L, `/pnl` the book split;
+      blotter shows P&L columns (`test_pnl.py`, `test_api.py`, `Blotter.test.tsx`)
+- [ ] 🔵 Multi-currency (FX P&L tracked separately); WebSocket price pipeline (<400ms)
 
 ## Phase 2 — Beta Engine 🟢
 

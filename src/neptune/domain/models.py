@@ -8,7 +8,10 @@ or mutate it (see CLAUDE.md, layer 3).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
+
+from neptune.pnl import CostBasisMethod
 
 
 class Side(str, Enum):
@@ -28,6 +31,23 @@ class ShortType(str, Enum):
     NA = "NA"                        # not applicable (long positions)
 
 
+class BookType(str, Enum):
+    """The three books P&L is reported across — never conflated (invariant I-03)."""
+
+    LONG = "LONG"
+    SYSTEMATIC_SHORT = "SYSTEMATIC_SHORT"
+    DISCRETIONARY_SHORT = "DISCRETIONARY_SHORT"
+
+
+@dataclass
+class LotEntry:
+    """A position's open lot as carried on the domain object (mirrors pnl.Lot)."""
+
+    quantity: float
+    entry_price: float
+    entry_date: date
+
+
 @dataclass
 class Position:
     """A single book position.
@@ -35,6 +55,9 @@ class Position:
     ``notional`` is always a positive dollar magnitude; direction is given by
     ``side``. ``forward_beta``, when set by a PM, supersedes the entire beta pipeline
     for this position (post-catalyst override).
+
+    ``lots`` / ``cost_basis_method`` / ``realised_pnl`` drive the P&L engine; they are
+    additive to ``notional`` (which remains authoritative for beta/factor risk).
 
     ``thesis`` and ``target`` belong to the Fundamental Layer: Neptune reads them but
     must never write or auto-generate them.
@@ -46,6 +69,9 @@ class Position:
     short_type: ShortType = ShortType.NA
     forward_beta: float | None = None
     sector: str | None = None
+    cost_basis_method: CostBasisMethod | None = None
+    realised_pnl: float = 0.0
+    lots: list[LotEntry] = field(default_factory=list)
     # --- Fundamental Layer (read-only to the system) ---
     thesis: str | None = None
     target: str | None = None
@@ -62,6 +88,20 @@ class Position:
     def signed_notional(self) -> float:
         """Notional with sign: positive for long, negative for short."""
         return self.notional if self.side is Side.LONG else -self.notional
+
+    @property
+    def direction(self) -> int:
+        """+1 for long, -1 for short — the sign convention the P&L engine expects."""
+        return 1 if self.side is Side.LONG else -1
+
+    @property
+    def book(self) -> BookType:
+        """Which of the three reporting books this position belongs to."""
+        if self.side is Side.LONG:
+            return BookType.LONG
+        if self.short_type is ShortType.SYSTEMATIC:
+            return BookType.SYSTEMATIC_SHORT
+        return BookType.DISCRETIONARY_SHORT
 
 
 @dataclass

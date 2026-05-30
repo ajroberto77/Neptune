@@ -18,13 +18,17 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from datetime import date
+
 from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.db.base import SessionLocal, init_db
-from neptune.domain.models import Position, Side, ShortType
+from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
+from neptune.pnl import CostBasisMethod, PnL
 from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
 from neptune.risk import analytics
+from neptune.risk import pnl as pnl_engine
 from neptune.risk.summary import summarize
 from neptune.positions.service import ConflictError, PositionService
 
@@ -35,6 +39,12 @@ UNIVERSE_TICKERS = default_universe_tickers(60)
 
 # --- request/response schemas ----------------------------------------------------
 
+class LotIn(BaseModel):
+    quantity: float = Field(gt=0)
+    entry_price: float = Field(gt=0)
+    entry_date: date
+
+
 class PositionIn(BaseModel):
     ticker: str
     side: Side
@@ -42,8 +52,17 @@ class PositionIn(BaseModel):
     short_type: ShortType = ShortType.NA
     forward_beta: float | None = None
     sector: str | None = None
+    cost_basis_method: CostBasisMethod = CostBasisMethod.FIFO
+    lots: list[LotIn] = Field(default_factory=list)
     thesis: str | None = None
     target: str | None = None
+
+
+class ReduceIn(BaseModel):
+    quantity: float = Field(gt=0)
+    exit_price: float = Field(gt=0)
+    as_of: date | None = None
+    specific_index: int | None = None
 
 
 def _to_domain(p: PositionIn) -> Position:
@@ -54,9 +73,16 @@ def _to_domain(p: PositionIn) -> Position:
         short_type=p.short_type,
         forward_beta=p.forward_beta,
         sector=p.sector,
+        cost_basis_method=p.cost_basis_method,
+        lots=[LotEntry(quantity=l.quantity, entry_price=l.entry_price,
+                       entry_date=l.entry_date) for l in p.lots],
         thesis=p.thesis,
         target=p.target,
     )
+
+
+def _pnl_dict(p: PnL) -> dict:
+    return {"day": p.day, "total": p.total, "unrealised": p.unrealised, "realised": p.realised}
 
 
 # --- lifespan: create tables + seed the golden portfolio -------------------------
@@ -121,13 +147,53 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
         {
             "ticker": p.ticker,
             "side": p.side.value,
-            "notional": p.notional,
             "short_type": p.short_type.value,
+            "book": p.book.value,
+            "notional": p.notional,
             "beta": round(metrics[p.ticker].beta, 4),
             "beta_method": metrics[p.ticker].beta_method,
+            "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
+            "pnl": _pnl_dict(pnl_engine.position_pnl_for(p, MARKET_DATA)),
         }
         for p in portfolio.positions
     ]
+
+
+@app.post("/portfolios/{portfolio_id}/positions/{position_id}/reduce")
+def reduce_position(
+    portfolio_id: str,
+    position_id: int,
+    body: ReduceIn,
+    session: Session = Depends(get_session),
+):
+    """Close part (or all) of a position by its cost-basis method (sell long / cover
+    short). Returns the realised P&L of this reduction. Never routes an order anywhere —
+    it records the lot accounting a human has decided on."""
+    service = PositionService(session)
+    _require_portfolio(service, portfolio_id)
+    position = service.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail=f"position {position_id} not found")
+    try:
+        realised = service.reduce_position(
+            position_id, body.quantity, body.exit_price, body.as_of, body.specific_index
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"position_id": position_id, "realised_pnl": realised}
+
+
+@app.get("/portfolios/{portfolio_id}/pnl")
+def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
+    """Four P&L dimensions for the book, split by Long / Systematic / Discretionary."""
+    service = PositionService(session)
+    portfolio = _require_portfolio(service, portfolio_id)
+    result = pnl_engine.portfolio_pnl(portfolio, MARKET_DATA)
+    return {
+        "portfolio_id": portfolio_id,
+        "total": _pnl_dict(result.total),
+        "by_book": {book.value: _pnl_dict(p) for book, p in result.by_book.items()},
+    }
 
 
 @app.get("/portfolios/{portfolio_id}/risk")
