@@ -24,6 +24,7 @@ export interface PositionRow {
   notional: number;
   short_type: string;
   beta: number;
+  beta_method?: string; // "pipeline" or "forward_override"
 }
 
 export interface ProposedShort {

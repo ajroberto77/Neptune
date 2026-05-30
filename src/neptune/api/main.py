@@ -19,13 +19,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from neptune.config import settings
-from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_candidates, golden_positions
+from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
+from neptune.data.market import SyntheticMarketData
 from neptune.db.base import SessionLocal, init_db
 from neptune.domain.models import Position, Side, ShortType
-from neptune.quant.optimizer import InfeasibleHedge, compute_residual, optimize_hedge
-from neptune.risk import book
+from neptune.quant.optimizer import InfeasibleHedge, optimize_hedge
+from neptune.risk import analytics
 from neptune.risk.summary import summarize
 from neptune.positions.service import ConflictError, PositionService
+
+# One shared synthetic market-data source feeds the live beta/factor pipeline.
+MARKET_DATA = SyntheticMarketData()
+UNIVERSE_TICKERS = [u["ticker"] for u in GOLDEN_PORTFOLIO["universe"]]
 
 
 # --- request/response schemas ----------------------------------------------------
@@ -110,16 +115,18 @@ def add_position(portfolio_id: str, body: PositionIn, session: Session = Depends
 @app.get("/portfolios/{portfolio_id}/positions")
 def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
-    _require_portfolio(service, portfolio_id)
+    portfolio = _require_portfolio(service, portfolio_id)
+    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
     return [
         {
             "ticker": p.ticker,
             "side": p.side.value,
             "notional": p.notional,
             "short_type": p.short_type.value,
-            "beta": book.position_beta(p),
+            "beta": round(metrics[p.ticker].beta, 4),
+            "beta_method": metrics[p.ticker].beta_method,
         }
-        for p in service.list_positions(portfolio_id)
+        for p in portfolio.positions
     ]
 
 
@@ -127,12 +134,13 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
 def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    nb = book.net_beta(portfolio)
-    # Factor exposures are zero in the slice; compute via residual_inputs for structure.
-    _, residual_factors = compute_residual(book.residual_inputs(portfolio), portfolio.long_aum)
+    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
+    net_beta, net_factors = analytics.net_metrics(portfolio, metrics)
+    # Market is shown by the net-beta gauge; the factor table covers the style factors.
+    style_factors = {f: net_factors[f] for f in ("SMB", "HML", "MOM")}
     summary = summarize(
-        net_beta=nb,
-        factor_exposures=residual_factors,
+        net_beta=net_beta,
+        factor_exposures=style_factors,
         long_aum=portfolio.long_aum,
         beta_tol=settings.beta_tol,
         factor_limit=settings.factor_limit,
@@ -156,15 +164,15 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
 def propose_hedge(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    residual_beta, residual_factors = compute_residual(
-        book.residual_inputs(portfolio), portfolio.long_aum
-    )
+    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
+    residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
     long_tickers = {p.ticker for p in portfolio.longs}
+    universe = analytics.live_universe(MARKET_DATA, UNIVERSE_TICKERS)
     try:
         proposal = optimize_hedge(
             residual_beta=residual_beta,
             residual_factors=residual_factors,
-            universe=golden_candidates(),
+            universe=universe,
             long_aum=portfolio.long_aum,
             beta_tol=settings.beta_tol,
             factor_limit=settings.factor_limit,

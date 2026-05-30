@@ -38,6 +38,9 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 Forward-beta override supersedes the pipeline
 - [x] 🟢 Golden-number tests: noise-free fixture (β recovered exactly, w≈1) AND
       known-noise fixture (σ²_OLS>0 so 0<w<1, shrinkage exercised) — `test_beta.py`
+- [x] 🟢 Live wiring: synthetic market data (`data/market.py`) → pipeline over the book
+      (`risk/analytics.py`); forward override per position, Vasicek prior from the book
+      cross-section; betas surfaced in `/positions` and `/risk` (`test_analytics.py`)
 - [ ] 🔵 yfinance ingestion, nightly Celery schedule, `beta_snapshots` hypertable
 - [ ] 🔵 Kalman filter beta (Phase 3+)
 
@@ -46,6 +49,8 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 `factors.py` — rolling FF5 + Momentum regression → per-security loadings
 - [x] 🟢 Portfolio factor exposure (notional-weighted) + OK/WATCH/BREACH classification
 - [x] 🟢 Tests on synthetic factor-driven returns (`test_factors.py`)
+- [x] 🟢 Live wiring: per-position loadings from returns; net style-factor exposure
+      (SMB/HML/MOM) surfaced in `/risk`; live universe loadings feed the optimizer
 - [ ] 🔵 Ken French Data Library ingestion; `factor_exposures` table
 
 ## Phase 4 — Hedge Optimizer 🟢

@@ -1,0 +1,78 @@
+"""Live book analytics: the beta pipeline + factor regression wired over a portfolio."""
+from __future__ import annotations
+
+import pytest
+
+from neptune.data.market import CATALOG, SyntheticMarketData
+from neptune.domain.models import Portfolio, Position, Side, ShortType
+from neptune.risk import analytics
+
+
+def test_market_data_is_deterministic_and_shaped():
+    a = SyntheticMarketData(n=300, seed=1)
+    b = SyntheticMarketData(n=300, seed=1)
+    assert a.market_returns().shape == (300,)
+    assert (a.ticker_returns("AAA") == b.ticker_returns("AAA")).all()
+    assert set(a.factor_returns().keys()) == {"MKT", "SMB", "HML", "MOM"}
+
+
+def test_pipeline_recovers_true_beta_for_non_forward_positions():
+    md = SyntheticMarketData()
+    # No forward override -> beta comes from the EWMA+Dimson -> Vasicek pipeline.
+    portfolio = Portfolio(
+        id="P", name="live",
+        positions=[
+            Position("HDG3", Side.LONG, 1_000_000),  # true beta 1.25
+            Position("HDG4", Side.LONG, 1_000_000),  # true beta 0.85
+        ],
+    )
+    metrics = analytics.compute_metrics(portfolio, md)
+    assert metrics["HDG3"].beta_method == "pipeline"
+    # Recovered close to the catalog truth (shrunk slightly toward 1.0).
+    assert metrics["HDG3"].beta == pytest.approx(CATALOG["HDG3"].true_beta, abs=0.1)
+    assert metrics["HDG4"].beta == pytest.approx(CATALOG["HDG4"].true_beta, abs=0.1)
+    # Style loadings are recovered with the right sign.
+    assert metrics["HDG3"].loadings["SMB"] > 0
+    assert metrics["HDG4"].loadings["SMB"] < 0
+
+
+def test_forward_override_wins_but_loadings_still_computed():
+    md = SyntheticMarketData()
+    portfolio = Portfolio(
+        id="P", name="fwd",
+        positions=[
+            Position("AAA", Side.LONG, 1_000_000, forward_beta=0.42),
+            Position("BBB", Side.LONG, 1_000_000),
+        ],
+    )
+    metrics = analytics.compute_metrics(portfolio, md)
+    assert metrics["AAA"].beta == 0.42
+    assert metrics["AAA"].beta_method == "forward_override"
+    # Factor loadings are not overridden by a forward beta.
+    assert metrics["AAA"].loadings  # non-empty, regression-derived
+
+
+def test_net_metrics_uses_signed_notionals():
+    md = SyntheticMarketData()
+    portfolio = Portfolio(
+        id="P", name="net",
+        positions=[
+            Position("AAA", Side.LONG, 1_000_000, forward_beta=1.2),
+            Position("DDD", Side.SHORT, 500_000, short_type=ShortType.DISCRETIONARY,
+                     forward_beta=1.0),
+        ],
+    )
+    metrics = analytics.compute_metrics(portfolio, md)
+    net_beta, net_factors = analytics.net_metrics(portfolio, metrics)
+    # (1.2*1,000,000 - 1.0*500,000) / 1,000,000 = 0.7
+    assert net_beta == pytest.approx(0.7, abs=1e-9)
+    assert set(net_factors) >= {"SMB", "HML", "MOM"}
+
+
+def test_live_universe_has_betas_and_loadings():
+    md = SyntheticMarketData()
+    universe = analytics.live_universe(md, ["HDG1", "HDG2", "HDG3"])
+    assert len(universe) == 3
+    for c in universe:
+        assert c.beta > 0
+        assert set(c.loadings) >= {"SMB", "HML", "MOM"}

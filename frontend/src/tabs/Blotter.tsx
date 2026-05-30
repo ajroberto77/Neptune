@@ -31,6 +31,7 @@ export function Blotter({ positions }: { positions: PositionRow[] }) {
                   <tr className="text-left text-xs uppercase text-ocean-muted">
                     <th className="pb-2 font-medium">Ticker</th>
                     <th className="pb-2 text-right font-medium">Beta</th>
+                    <th className="pb-2 text-right font-medium">Source</th>
                     <th className="pb-2 text-right font-medium">Notional</th>
                   </tr>
                 </thead>
@@ -39,6 +40,11 @@ export function Blotter({ positions }: { positions: PositionRow[] }) {
                     <tr key={p.ticker} className="border-t border-ocean-border/60">
                       <td className="py-2 font-mono">{p.ticker}</td>
                       <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>
+                      <td className="py-2 text-right">
+                        <span className="font-mono text-xs text-ocean-muted">
+                          {p.beta_method === "forward_override" ? "override" : "live"}
+                        </span>
+                      </td>
                       <td className="py-2 text-right font-mono">{money(p.notional)}</td>
                     </tr>
                   ))}
