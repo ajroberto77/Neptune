@@ -5,6 +5,22 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-05-30 — Fall back to inline review when subagents are unavailable
+
+**Pattern (not a user correction, but worth keeping):** The read-only `quant-researcher`
+and `code-reviewer` subagents both failed repeatedly with transient `API Error: 529
+Overloaded` (zero tool uses, no result). Relaunching just burned time. The fix: when
+subagents are down, do the verification **inline in the main session** instead of looping
+on relaunches — it's bounded work the main session can do directly:
+- *Numerical correctness*: write a short first-principles script that hand-computes the
+  expected numbers and compares (see the P&L check that validated FIFO/AVCO/Specific, the
+  four dimensions, and the book-split sum-to-total invariant).
+- *Invariant/structure review*: targeted `grep`/import-smoke checks for layer purity (no
+  db/api/network imports in pure modules), import cycles, execution paths
+  (broker/OMS/order), Fundamental-Layer writes (`thesis`/`target`), and ORM
+  cascade/ordering.
+Don't block a verified, test-green commit waiting on a flaky subagent.
+
 ## 2026-05-30 — Never commit/push on a red suite; verify behavior, not just "tests pass"
 
 **Correction (self-caught after a stop-hook nudge):** While adding the adaptive
