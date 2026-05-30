@@ -1,9 +1,11 @@
 """Application configuration.
 
 Everything is driven by environment variables so the same code targets Postgres
-(canonical) or SQLite (tests) by changing only ``DATABASE_URL``.
+(canonical) or SQLite (tests) by changing only the database URLs.
 """
 from __future__ import annotations
+
+import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,8 +17,23 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NEPTUNE_", env_file=".env", extra="ignore")
 
     # Persistence. Default is in-memory SQLite so the app/tests run with zero infra;
-    # docker-compose + .env point this at Postgres for real use.
+    # docker-compose + .env point these at Postgres for real use.
+    #
+    # Neptune owns TWO databases (strict separation; see docs/data_architecture.md):
+    #   * portfolio_database_url  — investor entities / books / positions / lots (app)
+    #   * securities_database_url — prices / dividends / corporate actions (market data)
+    # and reads ONE external database READ-ONLY:
+    #   * universe_database_url   — cato_securities master (instruments/identifiers)
+    #
+    # ``database_url`` is the legacy single-DB knob. The two Neptune URLs fall back to it
+    # so existing single-DB setups (and the SQLite test fallback) keep working unchanged;
+    # point them at distinct Postgres databases for the production three-DB topology.
     database_url: str = "sqlite+pysqlite:///:memory:"
+    portfolio_database_url: str | None = None
+    securities_database_url: str | None = None
+    # Read-only link to the shared securities universe. None = not configured (the
+    # synthetic CATALOG/universe is used instead, e.g. tests and offline dev).
+    universe_database_url: str | None = None
 
     # --- Quant Engine constants (HARD invariants; see CLAUDE.md) ---
     ewma_lambda: float = 0.94          # EWMA decay for beta estimation
@@ -28,15 +45,33 @@ class Settings(BaseSettings):
     # notional. Default 0.30 (tighter than the roadmap's 0.40); PM-adjustable in the GUI.
     sector_limit: float = 0.30
 
+    @property
+    def portfolio_url(self) -> str:
+        """Resolved URL for Neptune's portfolio database (falls back to ``database_url``)."""
+        return self.portfolio_database_url or self.database_url
 
-# Note: read DATABASE_URL without the NEPTUNE_ prefix for convenience/compat.
-import os  # noqa: E402
+    @property
+    def securities_url(self) -> str:
+        """Resolved URL for Neptune's market-data database (falls back to ``database_url``)."""
+        return self.securities_database_url or self.database_url
+
+
+# Read the bare (un-prefixed) connection env vars for convenience/compat, so deployments
+# can set DATABASE_URL / PORTFOLIO_DATABASE_URL / SECURITIES_DATABASE_URL /
+# UNIVERSE_DATABASE_URL without the NEPTUNE_ prefix.
+_URL_ENV = {
+    "database_url": "DATABASE_URL",
+    "portfolio_database_url": "PORTFOLIO_DATABASE_URL",
+    "securities_database_url": "SECURITIES_DATABASE_URL",
+    "universe_database_url": "UNIVERSE_DATABASE_URL",
+}
 
 
 def get_settings() -> Settings:
     overrides: dict[str, str] = {}
-    if "DATABASE_URL" in os.environ:
-        overrides["database_url"] = os.environ["DATABASE_URL"]
+    for field, env in _URL_ENV.items():
+        if env in os.environ:
+            overrides[field] = os.environ[env]
     return Settings(**overrides)
 
 

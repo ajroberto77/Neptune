@@ -1,7 +1,20 @@
-"""SQLAlchemy engine/session wiring, driven entirely by ``settings.database_url``.
+"""SQLAlchemy engine/session wiring for Neptune's databases.
 
-Swapping SQLite (tests) for Postgres (production) is a single env-var change; the ORM
-models are dialect-agnostic.
+Neptune owns two databases (strict separation; see ``docs/data_architecture.md``):
+
+* **portfolio** — investor entities, PMs, books, positions, lots. ``PortfolioBase``.
+* **securities** — prices, dividends, corporate actions, the universe projection.
+  ``SecuritiesBase``.
+
+Each has its own declarative base (so ``create_all`` targets the right tables on the
+right engine) and its own engine/session factory, both driven by ``settings``. Swapping
+SQLite (tests) for Postgres (production) is a URL change; the ORM models are
+dialect-agnostic.
+
+Backward compatibility: ``Base`` / ``engine`` / ``SessionLocal`` / ``init_db`` refer to
+the **portfolio** database (the original single-DB slice), so existing imports and the
+test fixtures keep working unchanged. The securities database adds parallel
+``SecuritiesBase`` / ``securities_engine`` / ``SecuritiesSession`` / ``init_securities_db``.
 """
 from __future__ import annotations
 
@@ -12,12 +25,20 @@ from sqlalchemy.pool import StaticPool
 from neptune.config import settings
 
 
-class Base(DeclarativeBase):
-    pass
+class PortfolioBase(DeclarativeBase):
+    """Declarative base for the portfolio database (entities/books/positions/lots)."""
+
+
+class SecuritiesBase(DeclarativeBase):
+    """Declarative base for the securities database (prices/dividends/corp actions)."""
+
+
+# Backward-compatible alias: the original slice imported ``Base`` for portfolio models.
+Base = PortfolioBase
 
 
 def make_engine(url: str | None = None):
-    db_url = url or settings.database_url
+    db_url = url or settings.portfolio_url
     kwargs: dict = {"future": True}
     if db_url.startswith("sqlite"):
         # check_same_thread: FastAPI/test threads share a connection.
@@ -29,12 +50,31 @@ def make_engine(url: str | None = None):
     return create_engine(db_url, **kwargs)
 
 
-engine = make_engine()
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+# --- Portfolio database (the canonical app DB; default target) -------------------
+portfolio_engine = make_engine(settings.portfolio_url)
+PortfolioSession = sessionmaker(bind=portfolio_engine, expire_on_commit=False, future=True)
+
+# Backward-compatible aliases.
+engine = portfolio_engine
+SessionLocal = PortfolioSession
+
+# --- Securities database (market data) -------------------------------------------
+securities_engine = make_engine(settings.securities_url)
+SecuritiesSession = sessionmaker(bind=securities_engine, expire_on_commit=False, future=True)
 
 
 def init_db(target_engine=engine) -> None:
-    """Create tables. For the slice we use metadata.create_all; production uses Alembic."""
-    from neptune.db import models  # noqa: F401  (register mappers)
+    """Create the **portfolio** tables. For the slice we use ``create_all``; production
+    uses Alembic. Default target is the portfolio engine; tests pass an explicit one."""
+    from neptune.db import models  # noqa: F401  (register portfolio mappers)
 
-    Base.metadata.create_all(bind=target_engine)
+    PortfolioBase.metadata.create_all(bind=target_engine)
+
+
+def init_securities_db(target_engine=securities_engine) -> None:
+    """Create the **securities** tables (prices/dividends/corporate actions/projection).
+    Hypertable conversion (TimescaleDB) is an additive Postgres-only migration step;
+    plain ``create_all`` yields a working relational schema everywhere (incl. SQLite)."""
+    from neptune.securities import models  # noqa: F401  (register securities mappers)
+
+    SecuritiesBase.metadata.create_all(bind=target_engine)
