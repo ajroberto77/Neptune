@@ -17,8 +17,12 @@ export function fetchPositions(portfolioId: string): Promise<PositionRow[]> {
   return getJSON<PositionRow[]>(`/portfolios/${portfolioId}/positions`);
 }
 
-export function proposeHedge(portfolioId: string): Promise<HedgeProposal> {
-  return getJSON<HedgeProposal>(`/portfolios/${portfolioId}/hedge/propose`, {
+export function proposeHedge(
+  portfolioId: string,
+  sectorLimit?: number,
+): Promise<HedgeProposal> {
+  const q = sectorLimit !== undefined ? `?sector_limit=${sectorLimit}` : "";
+  return getJSON<HedgeProposal>(`/portfolios/${portfolioId}/hedge/propose${q}`, {
     method: "POST",
   });
 }

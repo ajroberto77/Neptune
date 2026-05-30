@@ -23,7 +23,13 @@ const proposal: HedgeProposal = {
   net_beta_before: 0.94,
   net_beta_after: 0.0123,
   long_aum: 2_500_000,
-  proposed_shorts: [{ ticker: "HDG1", notional: 300000, beta: 1.1 }],
+  proposed_shorts: [{ ticker: "HDG1", notional: 300000, beta: 1.1, sector: "Technology" }],
+  sector_limit: 0.3,
+  sector_breaches: ["Technology"],
+  sectors: [
+    { sector: "Technology", notional: 300000, fraction: 0.6, limit: 0.3, breach: true },
+    { sector: "Energy", notional: 200000, fraction: 0.4, limit: 0.3, breach: true },
+  ],
 };
 
 const frontier: Frontier = {
@@ -39,6 +45,7 @@ const base = {
   summary,
   onPropose: () => {},
   proposing: false,
+  onApplySectorLimit: () => {},
   frontier: null as Frontier | null,
   onFrontier: () => {},
   frontierLoading: false,
@@ -69,5 +76,19 @@ describe("RiskDashboard", () => {
     expect(screen.getByText("Complexity-Quality Frontier")).toBeInTheDocument();
     expect(screen.getByText(/≤ 10/)).toBeInTheDocument();
     expect(screen.getByText(/≤ 20/)).toBeInTheDocument();
+  });
+
+  it("shows the sector concentration panel and applies a new limit", () => {
+    const onApplySectorLimit = vi.fn();
+    render(
+      <RiskDashboard {...base} proposal={proposal} onApplySectorLimit={onApplySectorLimit} />,
+    );
+    expect(screen.getByText("Sector Concentration")).toBeInTheDocument();
+    // Breach badges render for over-concentrated sectors.
+    expect(screen.getAllByText("BREACH").length).toBeGreaterThanOrEqual(2);
+    // Editing the limit and clicking Apply sends the fraction to the handler.
+    fireEvent.change(screen.getByLabelText("sector-limit-input"), { target: { value: "20" } });
+    fireEvent.click(screen.getByText("Apply"));
+    expect(onApplySectorLimit).toHaveBeenCalledWith(0.2);
   });
 });

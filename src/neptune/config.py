@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     beta_tol: float = 0.05             # |net portfolio beta| hard constraint
     max_position_weight: float = 0.15  # position-size ceiling as fraction of long AUM
     factor_limit: float = 0.20         # per-factor exposure limit (Size/Value/Momentum)
+    # Sector concentration: flag any GICS sector exceeding this fraction of total short
+    # notional. Default 0.30 (tighter than the roadmap's 0.40); PM-adjustable in the GUI.
+    sector_limit: float = 0.30
 
 
 # Note: read DATABASE_URL without the NEPTUNE_ prefix for convenience/compat.

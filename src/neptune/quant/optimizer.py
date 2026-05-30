@@ -51,6 +51,20 @@ class ProposedShort:
     notional: float       # positive dollar magnitude to short
     beta: float
     weight: float         # fraction of long AUM
+    sector: str | None = None
+
+
+@dataclass
+class SectorConcentration:
+    """One GICS sector's share of total short notional, and whether it breaches the
+    (PM-adjustable) concentration limit. This is a SOFT warning, never an execution
+    block — the optimizer flags it; a human decides (CLAUDE.md §2)."""
+
+    sector: str
+    notional: float
+    fraction: float       # notional / total short notional
+    limit: float
+    breach: bool
 
 
 @dataclass
@@ -68,10 +82,16 @@ class HedgeProposal:
     n_cap: int | None = None          # position-count cap for this run (None = uncapped)
     tracking_error: float = 0.0       # sqrt(net_beta^2 + sum factor^2) after hedging
     beta_within_tol: bool = False     # whether |net beta after| <= beta_tol (fail-safe default)
+    sector_limit: float = 0.30        # the concentration limit these flags were computed against
+    sectors: list[SectorConcentration] = field(default_factory=list)
 
     @property
     def n_selected(self) -> int:
         return len(self.positions)
+
+    @property
+    def sector_breaches(self) -> list[str]:
+        return [s.sector for s in self.sectors if s.breach]
 
 
 def compute_residual(
@@ -101,12 +121,14 @@ def optimize_hedge(
     beta_tol: float = 0.05,
     factor_limit: float = 0.20,
     max_position_weight: float = 0.15,
+    sector_limit: float = 0.30,
     excluded_tickers: set[str] | None = None,
 ) -> HedgeProposal:
     """Pass 2 (recommended run). Solve the QP and return a hedge proposal.
 
     Market-beta neutrality |net beta| <= beta_tol and the factor limits are HARD
-    constraints; the run fails closed (InfeasibleHedge) if they cannot be met.
+    constraints; the run fails closed (InfeasibleHedge) if they cannot be met. Sector
+    concentration is a SOFT warning computed against ``sector_limit`` (never a block).
     """
     excluded = excluded_tickers or set()
     cands = [c for c in universe if c.ticker not in excluded]
@@ -124,7 +146,7 @@ def optimize_hedge(
         )
     return _build_proposal(
         cands, weights, residual_beta, residual_factors, long_aum, status,
-        beta_tol=beta_tol,
+        beta_tol=beta_tol, sector_limit=sector_limit,
     )
 
 
@@ -137,6 +159,7 @@ def optimize_hedge_capped(
     beta_tol: float = 0.05,
     factor_limit: float = 0.20,
     max_position_weight: float = 0.15,
+    sector_limit: float = 0.30,
     excluded_tickers: set[str] | None = None,
 ) -> HedgeProposal:
     """Capped run: select at most ``n_cap`` names, then size them.
@@ -161,7 +184,7 @@ def optimize_hedge_capped(
     )
     return _size_capped(
         ranked, n_cap, residual_beta, residual_factors, long_aum,
-        beta_tol, factor_limit, max_position_weight,
+        beta_tol, factor_limit, max_position_weight, sector_limit,
     )
 
 
@@ -174,6 +197,7 @@ def complexity_frontier(
     beta_tol: float = 0.05,
     factor_limit: float = 0.20,
     max_position_weight: float = 0.15,
+    sector_limit: float = 0.30,
     excluded_tickers: set[str] | None = None,
 ) -> list[HedgeProposal]:
     """Run a series of capped optimizations to expose the complexity-quality trade-off.
@@ -208,7 +232,7 @@ def complexity_frontier(
     return [
         _size_capped(
             ranked, n_cap, residual_beta, residual_factors, long_aum,
-            beta_tol, factor_limit, max_position_weight,
+            beta_tol, factor_limit, max_position_weight, sector_limit,
         )
         for n_cap in distinct
     ]
@@ -332,6 +356,7 @@ def _size_capped(
     beta_tol: float,
     factor_limit: float,
     max_position_weight: float,
+    sector_limit: float = 0.30,
 ) -> HedgeProposal:
     """Re-optimize sizing over the top ``n_cap`` ranked names (soft QP)."""
     subset = ranked[: min(n_cap, len(ranked))]
@@ -345,8 +370,31 @@ def _size_capped(
         raise InfeasibleHedge(f"capped hedge solve failed (solver status: {status})")
     return _build_proposal(
         subset, weights, residual_beta, residual_factors, long_aum, status,
-        beta_tol=beta_tol, n_cap=n_cap,
+        beta_tol=beta_tol, sector_limit=sector_limit, n_cap=n_cap,
     )
+
+
+def sector_concentration(
+    positions: list[ProposedShort], sector_limit: float
+) -> list[SectorConcentration]:
+    """Each sector's share of total short notional, flagged against ``sector_limit``.
+
+    A soft warning (CLAUDE.md §2): the optimizer surfaces over-concentration; it never
+    blocks. Sorted by share descending. Names with no sector are bucketed as "Unknown"."""
+    total = sum(p.notional for p in positions)
+    if total <= 0:
+        return []
+    by_sector: dict[str, float] = {}
+    for p in positions:
+        by_sector[p.sector or "Unknown"] = by_sector.get(p.sector or "Unknown", 0.0) + p.notional
+    out = [
+        SectorConcentration(
+            sector=sec, notional=notional, fraction=notional / total,
+            limit=sector_limit, breach=(notional / total) > sector_limit,
+        )
+        for sec, notional in by_sector.items()
+    ]
+    return sorted(out, key=lambda s: s.fraction, reverse=True)
 
 
 def _build_proposal(
@@ -357,6 +405,7 @@ def _build_proposal(
     long_aum: float,
     solver_status: str,
     beta_tol: float,
+    sector_limit: float,
     n_cap: int | None = None,
 ) -> HedgeProposal:
     betas = np.array([c.beta for c in cands])
@@ -364,7 +413,7 @@ def _build_proposal(
 
     proposed = [
         ProposedShort(ticker=c.ticker, notional=float(wt * long_aum), beta=c.beta,
-                      weight=float(wt))
+                      weight=float(wt), sector=c.sector)
         for c, wt in zip(cands, weights)
         if wt > ZERO_WEIGHT_TOL
     ]
@@ -387,4 +436,6 @@ def _build_proposal(
         n_cap=n_cap,
         tracking_error=tracking_error,
         beta_within_tol=abs(net_beta_after) <= beta_tol,
+        sector_limit=sector_limit,
+        sectors=sector_concentration(proposed, sector_limit),
     )

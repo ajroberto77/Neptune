@@ -28,11 +28,11 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  async function handlePropose() {
+  async function handlePropose(sectorLimit?: number) {
     setProposing(true);
     setError(null);
     try {
-      setProposal(await proposeHedge(PORTFOLIO_ID));
+      setProposal(await proposeHedge(PORTFOLIO_ID, sectorLimit));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -97,6 +97,7 @@ export default function App() {
                 proposal={proposal}
                 onPropose={handlePropose}
                 proposing={proposing}
+                onApplySectorLimit={(limit) => handlePropose(limit)}
                 frontier={frontier}
                 onFrontier={handleFrontier}
                 frontierLoading={frontierLoading}

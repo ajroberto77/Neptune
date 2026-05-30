@@ -64,8 +64,11 @@ first vertical slice · 🔵 LATER = deferred.
       (`optimize_hedge_capped`, `complexity_frontier`); `/hedge/frontier` endpoint + UI panel.
       Caps are adaptive — derived from the uncapped *natural support* so the frontier shows a
       real trade-off on any book size (fixed N≤10/20/50 degenerate on a small book)
+- [x] 🟢 Sector concentration flagging — soft warning on the proposal, PM-adjustable limit
+      (default 0.30) via the `sector_limit` query param + GUI input (`SectorPanel`); breakdown
+      and OK/BREACH badges in the dashboard
 - [ ] 🔵 True MIQP (binary vars) via a MIP solver when available
-- [ ] 🔵 Sector concentration flagging; hedge approval flow
+- [ ] 🔵 Optional hard sector constraint on capped runs; hedge approval flow
 
 ## Phase 5 — Live Dashboard 🟢 (basic, themed multi-tab)
 

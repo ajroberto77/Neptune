@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -161,7 +161,14 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
 
 
 @app.post("/portfolios/{portfolio_id}/hedge/propose")
-def propose_hedge(portfolio_id: str, session: Session = Depends(get_session)):
+def propose_hedge(
+    portfolio_id: str,
+    sector_limit: float = Query(
+        default=settings.sector_limit, gt=0.0, le=1.0,
+        description="Flag any GICS sector exceeding this fraction of short notional.",
+    ),
+    session: Session = Depends(get_session),
+):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
     metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
@@ -177,6 +184,7 @@ def propose_hedge(portfolio_id: str, session: Session = Depends(get_session)):
             beta_tol=settings.beta_tol,
             factor_limit=settings.factor_limit,
             max_position_weight=settings.max_position_weight,
+            sector_limit=sector_limit,
             excluded_tickers=long_tickers,
         )
     except (InfeasibleHedge, ValueError) as exc:
@@ -189,8 +197,16 @@ def propose_hedge(portfolio_id: str, session: Session = Depends(get_session)):
         "net_beta_after": proposal.net_beta_after,
         "long_aum": proposal.long_aum,
         "proposed_shorts": [
-            {"ticker": s.ticker, "notional": round(s.notional, 2), "beta": s.beta}
+            {"ticker": s.ticker, "notional": round(s.notional, 2), "beta": s.beta,
+             "sector": s.sector}
             for s in proposal.positions
+        ],
+        "sector_limit": proposal.sector_limit,
+        "sector_breaches": proposal.sector_breaches,
+        "sectors": [
+            {"sector": s.sector, "notional": round(s.notional, 2),
+             "fraction": s.fraction, "limit": s.limit, "breach": s.breach}
+            for s in proposal.sectors
         ],
     }
 

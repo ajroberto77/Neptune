@@ -10,10 +10,12 @@ from neptune.domain.models import Portfolio
 from neptune.quant.optimizer import (
     Candidate,
     InfeasibleHedge,
+    ProposedShort,
     compute_residual,
     complexity_frontier,
     optimize_hedge,
     optimize_hedge_capped,
+    sector_concentration,
 )
 from neptune.risk import book
 
@@ -175,3 +177,38 @@ def test_adaptive_caps_straddle_the_natural_support():
     tes = [r.tracking_error for r in runs]
     assert tes == sorted(tes, reverse=True)     # quality improves with more names
     assert runs[-1].beta_within_tol is True     # the loosest cap neutralizes
+
+
+def test_sector_concentration_breakdown_and_flag():
+    positions = [
+        ProposedShort("A", notional=600_000, beta=1.0, weight=0.06, sector="Technology"),
+        ProposedShort("B", notional=300_000, beta=1.0, weight=0.03, sector="Energy"),
+        ProposedShort("C", notional=100_000, beta=1.0, weight=0.01, sector="Healthcare"),
+    ]
+    sectors = sector_concentration(positions, sector_limit=0.50)
+    # Sorted by share descending; fractions sum to 1.
+    assert [s.sector for s in sectors] == ["Technology", "Energy", "Healthcare"]
+    assert sectors[0].fraction == pytest.approx(0.60)
+    assert sum(s.fraction for s in sectors) == pytest.approx(1.0)
+    # Technology (60%) breaches a 50% limit; the others don't.
+    assert sectors[0].breach is True
+    assert all(not s.breach for s in sectors[1:])
+
+
+def test_sector_limit_is_customizable_and_soft():
+    universe = [
+        Candidate("T1", beta=1.0, sector="Technology"),
+        Candidate("T2", beta=1.0, sector="Technology"),
+        Candidate("E1", beta=1.0, sector="Energy"),
+    ]
+    # A residual that two tech names will dominate.
+    common = dict(residual_beta=0.20, residual_factors={}, universe=universe,
+                  long_aum=1_000_000.0, max_position_weight=0.5)
+    loose = optimize_hedge(**common, sector_limit=0.90)
+    tight = optimize_hedge(**common, sector_limit=0.30)
+    # Same hedge either way — the flag is a SOFT warning, it never changes the optimization.
+    assert [p.ticker for p in loose.positions] == [p.ticker for p in tight.positions]
+    assert abs(loose.net_beta_after) <= 0.05 + 1e-6
+    # The threshold only changes the flagging.
+    assert loose.sector_limit == 0.90 and tight.sector_limit == 0.30
+    assert "Technology" in tight.sector_breaches

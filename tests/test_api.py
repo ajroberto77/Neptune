@@ -41,6 +41,28 @@ def test_hedge_proposal_is_constrained_and_pending(client):
     assert body["net_beta_before"] == pytest.approx(0.94, abs=1e-6)
     assert abs(body["net_beta_after"]) <= 0.05 + 1e-6
     assert len(body["proposed_shorts"]) > 0
+    # Sector concentration breakdown is present, sums to ~1, and uses the default limit.
+    assert body["sector_limit"] == 0.30
+    assert sum(s["fraction"] for s in body["sectors"]) == pytest.approx(1.0, abs=1e-6)
+    assert all("sector" in p for p in body["proposed_shorts"])
+
+
+def test_hedge_proposal_sector_limit_is_customizable(client):
+    loose = client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0.9").json()
+    tight = client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0.1").json()
+    assert loose["sector_limit"] == 0.9
+    assert tight["sector_limit"] == 0.1
+    # A tighter limit flags at least as many sectors as a looser one (soft warning only;
+    # the hedge itself is unchanged).
+    assert len(tight["sector_breaches"]) >= len(loose["sector_breaches"])
+    assert len(tight["sector_breaches"]) > 0
+    assert [p["ticker"] for p in loose["proposed_shorts"]] == \
+        [p["ticker"] for p in tight["proposed_shorts"]]
+
+
+def test_propose_rejects_out_of_range_sector_limit(client):
+    assert client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=1.5").status_code == 422
+    assert client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0").status_code == 422
 
 
 def test_propose_on_unknown_portfolio_404(client):

@@ -31,6 +31,15 @@ export interface ProposedShort {
   ticker: string;
   notional: number;
   beta: number;
+  sector?: string | null;
+}
+
+export interface SectorConcentration {
+  sector: string;
+  notional: number;
+  fraction: number;
+  limit: number;
+  breach: boolean;
 }
 
 export interface HedgeProposal {
@@ -40,6 +49,9 @@ export interface HedgeProposal {
   net_beta_after: number;
   long_aum: number;
   proposed_shorts: ProposedShort[];
+  sector_limit: number;
+  sector_breaches: string[];
+  sectors: SectorConcentration[];
 }
 
 export interface FrontierPoint {

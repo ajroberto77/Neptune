@@ -24,12 +24,24 @@ MARKET_VOL = 0.01
 DEFAULT_NOISE = 0.0015
 
 
+# GICS-style sectors used to tag synthetic names for concentration flagging.
+SECTORS = (
+    "Technology",
+    "Financials",
+    "Healthcare",
+    "Energy",
+    "Consumer",
+    "Industrials",
+)
+
+
 @dataclass(frozen=True)
 class TickerSpec:
     """Generative parameters for a synthetic ticker."""
 
     true_beta: float
     loadings: dict[str, float] = field(default_factory=dict)  # SMB/HML/MOM
+    sector: str = "Technology"
     noise: float = DEFAULT_NOISE
 
 
@@ -37,18 +49,18 @@ class TickerSpec:
 # kept modest (|load| <= 0.15) so residual factor exposures stay within the +/-0.20
 # limit and the optimizer remains feasible.
 CATALOG: dict[str, TickerSpec] = {
-    "AAA": TickerSpec(1.20, {"SMB": 0.10, "HML": -0.05, "MOM": 0.08}),
-    "BBB": TickerSpec(0.90, {"SMB": -0.05, "HML": 0.10, "MOM": -0.04}),
-    "CCC": TickerSpec(1.50, {"SMB": 0.12, "HML": -0.10, "MOM": 0.10}),
-    "DDD": TickerSpec(1.00, {"SMB": 0.05, "HML": 0.05, "MOM": 0.00}),
-    "HDG1": TickerSpec(1.10, {"SMB": 0.06, "HML": -0.04, "MOM": 0.05}),
-    "HDG2": TickerSpec(0.95, {"SMB": -0.04, "HML": 0.06, "MOM": -0.03}),
-    "HDG3": TickerSpec(1.25, {"SMB": 0.10, "HML": -0.08, "MOM": 0.07}),
-    "HDG4": TickerSpec(0.85, {"SMB": -0.06, "HML": 0.08, "MOM": -0.05}),
-    "HDG5": TickerSpec(1.05, {"SMB": 0.03, "HML": 0.02, "MOM": 0.04}),
-    "HDG6": TickerSpec(1.15, {"SMB": 0.07, "HML": -0.05, "MOM": 0.06}),
-    "HDG7": TickerSpec(0.90, {"SMB": -0.05, "HML": 0.07, "MOM": -0.04}),
-    "HDG8": TickerSpec(1.20, {"SMB": 0.09, "HML": -0.06, "MOM": 0.08}),
+    "AAA": TickerSpec(1.20, {"SMB": 0.10, "HML": -0.05, "MOM": 0.08}, "Technology"),
+    "BBB": TickerSpec(0.90, {"SMB": -0.05, "HML": 0.10, "MOM": -0.04}, "Financials"),
+    "CCC": TickerSpec(1.50, {"SMB": 0.12, "HML": -0.10, "MOM": 0.10}, "Technology"),
+    "DDD": TickerSpec(1.00, {"SMB": 0.05, "HML": 0.05, "MOM": 0.00}, "Healthcare"),
+    "HDG1": TickerSpec(1.10, {"SMB": 0.06, "HML": -0.04, "MOM": 0.05}, "Technology"),
+    "HDG2": TickerSpec(0.95, {"SMB": -0.04, "HML": 0.06, "MOM": -0.03}, "Financials"),
+    "HDG3": TickerSpec(1.25, {"SMB": 0.10, "HML": -0.08, "MOM": 0.07}, "Technology"),
+    "HDG4": TickerSpec(0.85, {"SMB": -0.06, "HML": 0.08, "MOM": -0.05}, "Healthcare"),
+    "HDG5": TickerSpec(1.05, {"SMB": 0.03, "HML": 0.02, "MOM": 0.04}, "Energy"),
+    "HDG6": TickerSpec(1.15, {"SMB": 0.07, "HML": -0.05, "MOM": 0.06}, "Consumer"),
+    "HDG7": TickerSpec(0.90, {"SMB": -0.05, "HML": 0.07, "MOM": -0.04}, "Industrials"),
+    "HDG8": TickerSpec(1.20, {"SMB": 0.09, "HML": -0.06, "MOM": 0.08}, "Technology"),
 }
 
 
@@ -89,7 +101,8 @@ class SyntheticMarketData:
         rng = np.random.default_rng(_seed_for(ticker))
         beta = float(np.clip(rng.normal(1.0, 0.25), 0.4, 1.8))
         loadings = {f: round(float(rng.normal(0.0, 0.06)), 4) for f in ("SMB", "HML", "MOM")}
-        return TickerSpec(beta, loadings)
+        sector = SECTORS[_seed_for(ticker) % len(SECTORS)]
+        return TickerSpec(beta, loadings, sector)
 
     def ticker_returns(self, ticker: str) -> np.ndarray:
         """Synthetic returns r = beta*MKT + sum(load_f * factor_f) + noise."""

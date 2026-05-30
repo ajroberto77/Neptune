@@ -106,5 +106,6 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
     for t in tickers:
         beta, _ = vasicek_shrinkage(raws[t].beta_raw, raws[t].var_ols, prior_var)
         loadings = factor_loadings(market_data.ticker_returns(t), factors).loadings
-        candidates.append(Candidate(ticker=t, beta=beta, loadings=loadings))
+        sector = market_data.spec_for(t).sector
+        candidates.append(Candidate(ticker=t, beta=beta, loadings=loadings, sector=sector))
     return candidates

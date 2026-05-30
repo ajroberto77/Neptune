@@ -2,13 +2,15 @@ import type { Frontier, HedgeProposal, RiskSummary } from "../types";
 import { BetaGauge } from "../components/BetaGauge";
 import { FactorTable } from "../components/FactorTable";
 import { FrontierPanel } from "../components/FrontierPanel";
+import { SectorPanel } from "../components/SectorPanel";
 import { money } from "../format";
 
 interface Props {
   summary: RiskSummary;
   proposal: HedgeProposal | null;
-  onPropose: () => void;
+  onPropose: (sectorLimit?: number) => void;
   proposing: boolean;
+  onApplySectorLimit: (limit: number) => void;
   frontier: Frontier | null;
   onFrontier: () => void;
   frontierLoading: boolean;
@@ -20,6 +22,7 @@ export function RiskDashboard({
   proposal,
   onPropose,
   proposing,
+  onApplySectorLimit,
   frontier,
   onFrontier,
   frontierLoading,
@@ -39,7 +42,7 @@ export function RiskDashboard({
             Systematic Hedge Proposal
           </h3>
           <button
-            onClick={onPropose}
+            onClick={() => onPropose()}
             disabled={proposing}
             className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80 disabled:opacity-50"
           >
@@ -58,6 +61,7 @@ export function RiskDashboard({
               <thead>
                 <tr className="text-left text-xs uppercase text-ocean-muted">
                   <th className="pb-2 font-medium">Ticker</th>
+                  <th className="pb-2 font-medium">Sector</th>
                   <th className="pb-2 text-right font-medium">Short Notional</th>
                   <th className="pb-2 text-right font-medium">Beta</th>
                 </tr>
@@ -66,6 +70,7 @@ export function RiskDashboard({
                 {proposal.proposed_shorts.map((s) => (
                   <tr key={s.ticker} className="border-t border-ocean-border/60">
                     <td className="py-2 font-mono">{s.ticker}</td>
+                    <td className="py-2 text-ocean-muted">{s.sector ?? "—"}</td>
                     <td className="py-2 text-right font-mono">{money(s.notional)}</td>
                     <td className="py-2 text-right font-mono">{s.beta.toFixed(2)}</td>
                   </tr>
@@ -82,6 +87,10 @@ export function RiskDashboard({
           </p>
         )}
       </div>
+
+      {proposal && (
+        <SectorPanel proposal={proposal} onApplyLimit={onApplySectorLimit} />
+      )}
 
       <FrontierPanel frontier={frontier} onRun={onFrontier} loading={frontierLoading} />
     </div>
