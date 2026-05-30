@@ -156,12 +156,19 @@ def optimize_hedge_capped(
     if not cands:
         raise ValueError("empty shortable universe after exclusions")
 
-    # Step 1: uncapped soft solve to rank names by hedging contribution (weight * beta).
+    # Step 1: uncapped soft solve to rank names by total hedging contribution. The key
+    # is the Euclidean norm of the exposure a name removes per unit weight (market beta
+    # plus the style-factor loadings), so a name valuable purely for factor-neutralizing
+    # is not pruned in favor of a pure-beta name. Market beta dominates (primary target),
+    # but factor contribution is no longer ignored.
     full_weights, _ = _solve_qp(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
         max_position_weight, hard=False,
     )
-    contribution = np.array([abs(w * c.beta) for w, c in zip(full_weights, cands)])
+    contribution = np.array([
+        abs(w) * np.sqrt(c.beta**2 + sum(c.loadings.get(f, 0.0) ** 2 for f in HEDGE_FACTORS))
+        for w, c in zip(full_weights, cands)
+    ])
     keep = np.argsort(-contribution)[: min(n_cap, len(cands))]
     subset = [cands[i] for i in keep]
 
