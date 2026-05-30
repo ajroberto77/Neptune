@@ -60,8 +60,10 @@ first vertical slice · 🔵 LATER = deferred.
       (±0.20), position ceiling (15% long AUM); long-held tickers excluded
 - [x] 🟢 Output is a *proposal* (pending), never executed; fails closed if infeasible
 - [x] 🟢 Tests: `|net β| ≤ 0.05` asserted on golden portfolio (`test_optimizer.py`)
-- [x] 🟢 Capped runs (N≤10/20/50, greedy+QP per roadmap) + complexity-quality frontier
-      (`optimize_hedge_capped`, `complexity_frontier`); `/hedge/frontier` endpoint + UI panel
+- [x] 🟢 Capped runs (greedy+QP per roadmap) + complexity-quality frontier
+      (`optimize_hedge_capped`, `complexity_frontier`); `/hedge/frontier` endpoint + UI panel.
+      Caps are adaptive — derived from the uncapped *natural support* so the frontier shows a
+      real trade-off on any book size (fixed N≤10/20/50 degenerate on a small book)
 - [ ] 🔵 True MIQP (binary vars) via a MIP solver when available
 - [ ] 🔵 Sector concentration flagging; hedge approval flow
 

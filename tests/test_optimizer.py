@@ -160,3 +160,18 @@ def test_frontier_caps_are_clamped_to_universe_size():
     # All caps exceed the 8-name universe, so they collapse to a single run of 8.
     assert len(runs) == 1
     assert runs[0].n_cap == 8
+
+
+def test_adaptive_caps_straddle_the_natural_support():
+    # With caps=None the frontier derives caps from the uncapped support, so it shows a
+    # real trade-off instead of identical rows even when the natural hedge is small.
+    runs = complexity_frontier(
+        residual_beta=0.94, residual_factors={"SMB": 0.10, "HML": -0.05, "MOM": 0.03},
+        universe=_wide_universe(), long_aum=2_500_000.0, caps=None,
+    )
+    caps = [r.n_cap for r in runs]
+    assert caps == sorted(set(caps))           # ascending, distinct
+    assert caps[0] < caps[-1]                   # a genuine spread, not one flat point
+    tes = [r.tracking_error for r in runs]
+    assert tes == sorted(tes, reverse=True)     # quality improves with more names
+    assert runs[-1].beta_within_tol is True     # the loosest cap neutralizes

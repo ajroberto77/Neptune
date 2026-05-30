@@ -52,10 +52,18 @@ def test_hedge_frontier_returns_capped_runs(client):
     assert r.status_code == 200
     body = r.json()
     caps = [pt["n_cap"] for pt in body["frontier"]]
-    assert caps == [10, 20, 50]
+    # Adaptive caps straddle the natural support: ascending, distinct, non-degenerate.
+    assert caps == sorted(caps)
+    assert len(set(caps)) == len(caps)
+    assert caps[0] < caps[-1]
     for pt in body["frontier"]:
         assert pt["n_selected"] <= pt["n_cap"]
         assert "tracking_error" in pt and "beta_within_tol" in pt
+    # The trade-off is visible: tracking error is non-increasing in the cap, and the
+    # loosest cap achieves beta neutrality.
+    tes = [pt["tracking_error"] for pt in body["frontier"]]
+    assert tes == sorted(tes, reverse=True)
+    assert body["frontier"][-1]["beta_within_tol"] is True
 
 
 def test_enter_position_and_list(client):

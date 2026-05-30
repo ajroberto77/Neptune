@@ -67,7 +67,7 @@ class HedgeProposal:
     solver_status: str = ""
     n_cap: int | None = None          # position-count cap for this run (None = uncapped)
     tracking_error: float = 0.0       # sqrt(net_beta^2 + sum factor^2) after hedging
-    beta_within_tol: bool = True      # whether |net beta after| <= beta_tol
+    beta_within_tol: bool = False     # whether |net beta after| <= beta_tol (fail-safe default)
 
     @property
     def n_selected(self) -> int:
@@ -156,34 +156,12 @@ def optimize_hedge_capped(
     if not cands:
         raise ValueError("empty shortable universe after exclusions")
 
-    # Step 1: uncapped soft solve to rank names by total hedging contribution. The key
-    # is the Euclidean norm of the exposure a name removes per unit weight (market beta
-    # plus the style-factor loadings), so a name valuable purely for factor-neutralizing
-    # is not pruned in favor of a pure-beta name. Market beta dominates (primary target),
-    # but factor contribution is no longer ignored.
-    full_weights, _ = _solve_qp(
-        residual_beta, residual_factors, cands, beta_tol, factor_limit,
-        max_position_weight, hard=False,
+    ranked, _support = _rank_candidates(
+        residual_beta, residual_factors, cands, beta_tol, factor_limit, max_position_weight
     )
-    contribution = np.array([
-        abs(w) * np.sqrt(c.beta**2 + sum(c.loadings.get(f, 0.0) ** 2 for f in HEDGE_FACTORS))
-        for w, c in zip(full_weights, cands)
-    ])
-    keep = np.argsort(-contribution)[: min(n_cap, len(cands))]
-    subset = [cands[i] for i in keep]
-
-    # Step 2: re-optimize sizing over the kept subset.
-    weights, status = _solve_qp(
-        residual_beta, residual_factors, subset, beta_tol, factor_limit,
-        max_position_weight, hard=False,
-    )
-    # The soft QP is always feasible; a non-optimal status means a genuine solver
-    # failure, which we surface rather than returning a silent zero hedge.
-    if status not in ("optimal", "optimal_inaccurate"):
-        raise InfeasibleHedge(f"capped hedge solve failed (solver status: {status})")
-    return _build_proposal(
-        subset, weights, residual_beta, residual_factors, long_aum, status,
-        beta_tol=beta_tol, n_cap=n_cap,
+    return _size_capped(
+        ranked, n_cap, residual_beta, residual_factors, long_aum,
+        beta_tol, factor_limit, max_position_weight,
     )
 
 
@@ -192,7 +170,7 @@ def complexity_frontier(
     residual_factors: dict[str, float],
     universe: list[Candidate],
     long_aum: float,
-    caps: tuple[int, ...] = (10, 20, 50),
+    caps: tuple[int, ...] | None = None,
     beta_tol: float = 0.05,
     factor_limit: float = 0.20,
     max_position_weight: float = 0.15,
@@ -200,23 +178,41 @@ def complexity_frontier(
 ) -> list[HedgeProposal]:
     """Run a series of capped optimizations to expose the complexity-quality trade-off.
 
-    Returns one proposal per cap (caps larger than the universe are clamped, then
-    deduplicated), sorted by ``n_cap`` ascending. Fewer names -> higher tracking error /
-    possible beta breach; more names -> tighter hedge.
+    The uncapped soft solve is run once to rank names and measure the *natural support*
+    (how many names the unconstrained hedge actually uses). When ``caps`` is None, caps
+    are derived to straddle that support (``_adaptive_caps``) so the frontier always shows
+    a real trade-off rather than identical rows — the roadmap's fixed N<=10/20/50 assume a
+    Russell-3000-scale support and go degenerate on a small book. Explicit ``caps`` are
+    honored (clamped to the universe, deduplicated). Returns proposals sorted by ``n_cap``
+    ascending: fewer names -> higher tracking error / possible beta breach.
     """
     excluded = excluded_tickers or set()
     usable = [c for c in universe if c.ticker not in excluded]
     if not usable:
         raise ValueError("empty shortable universe after exclusions")
-    distinct = sorted({min(c, len(usable)) for c in caps})
+
+    ranked, support = _rank_candidates(
+        residual_beta, residual_factors, usable, beta_tol, factor_limit, max_position_weight
+    )
+    requested = caps if caps is not None else _adaptive_caps(support)
+    distinct = sorted({min(c, len(usable)) for c in requested if c >= 1})
     return [
-        optimize_hedge_capped(
-            residual_beta, residual_factors, usable, long_aum, n_cap,
-            beta_tol=beta_tol, factor_limit=factor_limit,
-            max_position_weight=max_position_weight,
+        _size_capped(
+            ranked, n_cap, residual_beta, residual_factors, long_aum,
+            beta_tol, factor_limit, max_position_weight,
         )
         for n_cap in distinct
     ]
+
+
+def _adaptive_caps(support: int) -> tuple[int, ...]:
+    """Three caps that straddle the natural support so the frontier is informative.
+
+    For a support of ``s`` we return roughly (s/3, 2s/3, s): the tightest under-hedges
+    (likely a beta breach), the middle trades off, and the last matches the natural
+    hedge. Tiny supports collapse to fewer distinct points."""
+    s = max(1, support)
+    return (max(1, round(s / 3)), max(1, round(2 * s / 3)), s)
 
 
 # --- shared solve / proposal helpers ---------------------------------------------
@@ -253,6 +249,61 @@ def _solve_qp(
     problem.solve(solver=cp.CLARABEL)
     weights = np.asarray(x.value).flatten() if x.value is not None else np.zeros(len(cands))
     return weights, problem.status
+
+
+def _rank_candidates(
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    cands: list[Candidate],
+    beta_tol: float,
+    factor_limit: float,
+    max_position_weight: float,
+) -> tuple[list[Candidate], int]:
+    """Uncapped soft solve, then rank names by total hedging contribution.
+
+    The key is ``|w| * ||(beta, loadings)||`` — the Euclidean norm of the exposure a name
+    removes per unit weight (market beta plus style loadings) — so a name valuable purely
+    for factor-neutralizing is not pruned in favor of a pure-beta name. Returns the
+    candidates sorted best-first and the natural support (count of names the uncapped
+    hedge actually uses)."""
+    full_weights, _ = _solve_qp(
+        residual_beta, residual_factors, cands, beta_tol, factor_limit,
+        max_position_weight, hard=False,
+    )
+    contribution = np.array([
+        abs(w) * np.sqrt(c.beta**2 + sum(c.loadings.get(f, 0.0) ** 2 for f in HEDGE_FACTORS))
+        for w, c in zip(full_weights, cands)
+    ])
+    order = np.argsort(-contribution)
+    ranked = [cands[i] for i in order]
+    support = int(np.sum(np.abs(full_weights) > ZERO_WEIGHT_TOL))
+    return ranked, support
+
+
+def _size_capped(
+    ranked: list[Candidate],
+    n_cap: int,
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    long_aum: float,
+    beta_tol: float,
+    factor_limit: float,
+    max_position_weight: float,
+) -> HedgeProposal:
+    """Re-optimize sizing over the top ``n_cap`` ranked names (soft QP)."""
+    subset = ranked[: min(n_cap, len(ranked))]
+    weights, status = _solve_qp(
+        residual_beta, residual_factors, subset, beta_tol, factor_limit,
+        max_position_weight, hard=False,
+    )
+    # The soft QP is always feasible; a non-optimal status means a genuine solver
+    # failure, which we surface rather than returning a silent zero hedge.
+    if status not in ("optimal", "optimal_inaccurate"):
+        raise InfeasibleHedge(f"capped hedge solve failed (solver status: {status})")
+    return _build_proposal(
+        subset, weights, residual_beta, residual_factors, long_aum, status,
+        beta_tol=beta_tol, n_cap=n_cap,
+    )
 
 
 def _build_proposal(
