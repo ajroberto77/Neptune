@@ -83,10 +83,16 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 FastAPI: positions CRUD, `/risk`, `/hedge/propose` (+ `test_api.py`)
 - [ ] 🔵 WebSocket price pipeline (<400ms); full P&L columns; Electron shell (fast-follow)
 
-## Phase 6 — Stress Engine 🔵 (STUB in slice)
+## Phase 6 — Stress Engine 🟢
 
-- [x] 🟢 Stub module raising `NotImplementedError` with roadmap reference
-- [ ] 🔵 Scenario shocks, VaR/ES, factor-shock P&L
+- [x] 🟢 Pure engine (`src/neptune/stress/`): factor-model scenario shocks (market +
+      style-factor moves → P&L split by book), net dollar factor exposures, parametric
+      VaR + Expected Shortfall (own normal-quantile, no SciPy dep), standard scenario library
+- [x] 🟢 Risk Interface (`risk/stress.py`): exposures + factor covariance from market data
+- [x] 🟢 `/stress` endpoint (standard + custom scenarios, VaR confidence/horizon) + Stress tab
+- [x] 🟢 Tests: scenario golden numbers, VaR closed-form + sqrt-horizon scaling, hedged<unhedged
+      (`test_stress.py`, `test_api.py`, `Stress.test.tsx`)
+- [ ] 🔵 Historical / Monte-Carlo VaR; correlated multi-factor scenario library
 
 ## Phase 7 — Book of Books 🔵 (STUB in slice)
 

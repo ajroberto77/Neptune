@@ -29,7 +29,9 @@ from neptune.pnl import CostBasisMethod, PnL
 from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
 from neptune.risk import analytics
 from neptune.risk import pnl as pnl_engine
+from neptune.risk import stress as stress_engine
 from neptune.risk.summary import summarize
+from neptune.stress import STANDARD_SCENARIOS, Scenario
 from neptune.positions.service import ConflictError, PositionService
 
 # One shared synthetic market-data source feeds the live beta/factor pipeline.
@@ -63,6 +65,20 @@ class ReduceIn(BaseModel):
     exit_price: float = Field(gt=0)
     as_of: date | None = None
     specific_index: int | None = None
+
+
+class ScenarioIn(BaseModel):
+    name: str
+    market_shock: float = 0.0
+    factor_shocks: dict[str, float] = Field(default_factory=dict)
+
+
+class StressIn(BaseModel):
+    """Custom scenarios to run in addition to the standard set, plus VaR parameters."""
+
+    scenarios: list[ScenarioIn] = Field(default_factory=list)
+    confidence: float = Field(default=0.95, gt=0.5, lt=1.0)
+    horizon_days: int = Field(default=1, ge=1)
 
 
 def _to_domain(p: PositionIn) -> Position:
@@ -311,4 +327,45 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
             }
             for r in runs
         ],
+    }
+
+
+@app.post("/portfolios/{portfolio_id}/stress")
+def stress(
+    portfolio_id: str,
+    body: StressIn | None = None,
+    session: Session = Depends(get_session),
+):
+    """Scenario shocks (P&L impact split by book) plus parametric VaR/ES. The standard
+    scenario library always runs; custom scenarios in the body are appended."""
+    body = body or StressIn()
+    service = PositionService(session)
+    portfolio = _require_portfolio(service, portfolio_id)
+
+    scenarios = list(STANDARD_SCENARIOS) + [
+        Scenario(name=s.name, market_shock=s.market_shock, factor_shocks=s.factor_shocks)
+        for s in body.scenarios
+    ]
+    results = stress_engine.run_scenarios(portfolio, MARKET_DATA, scenarios)
+    var = stress_engine.value_at_risk(
+        portfolio, MARKET_DATA, confidence=body.confidence, horizon_days=body.horizon_days
+    )
+    return {
+        "portfolio_id": portfolio_id,
+        "scenarios": [
+            {
+                "name": r.name,
+                "market_shock": r.market_shock,
+                "total_pnl": r.total_pnl,
+                "by_book": r.by_book,
+            }
+            for r in results
+        ],
+        "var": {
+            "confidence": var.confidence,
+            "horizon_days": var.horizon_days,
+            "volatility": var.volatility,
+            "var": var.var,
+            "expected_shortfall": var.expected_shortfall,
+        },
     }

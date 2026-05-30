@@ -1,12 +1,25 @@
 import { useEffect, useState } from "react";
-import type { Frontier, HedgeProposal, PositionRow, RiskSummary } from "./types";
-import { fetchFrontier, fetchPositions, fetchRisk, proposeHedge } from "./api/client";
+import type {
+  Frontier,
+  HedgeProposal,
+  PositionRow,
+  RiskSummary,
+  StressReport,
+} from "./types";
+import {
+  fetchFrontier,
+  fetchPositions,
+  fetchRisk,
+  fetchStress,
+  proposeHedge,
+} from "./api/client";
 import { Blotter } from "./tabs/Blotter";
 import { RiskDashboard } from "./tabs/RiskDashboard";
 import { HedgeApproval } from "./tabs/HedgeApproval";
+import { Stress } from "./tabs/Stress";
 
 const PORTFOLIO_ID = "IRIDIUM-CORE";
-const TABS = ["Blotter", "Risk", "Hedge Approval"] as const;
+const TABS = ["Blotter", "Risk", "Hedge Approval", "Stress"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -17,6 +30,8 @@ export default function App() {
   const [proposing, setProposing] = useState(false);
   const [frontier, setFrontier] = useState<Frontier | null>(null);
   const [frontierLoading, setFrontierLoading] = useState(false);
+  const [stress, setStress] = useState<StressReport | null>(null);
+  const [stressLoading, setStressLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -49,6 +64,18 @@ export default function App() {
       setError(String(e));
     } finally {
       setFrontierLoading(false);
+    }
+  }
+
+  async function handleStress() {
+    setStressLoading(true);
+    setError(null);
+    try {
+      setStress(await fetchStress(PORTFOLIO_ID));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setStressLoading(false);
     }
   }
 
@@ -105,6 +132,9 @@ export default function App() {
             )}
             {tab === "Blotter" && <Blotter positions={positions} />}
             {tab === "Hedge Approval" && <HedgeApproval proposal={proposal} />}
+            {tab === "Stress" && (
+              <Stress report={stress} onRun={handleStress} loading={stressLoading} />
+            )}
           </>
         )}
       </main>

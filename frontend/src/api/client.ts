@@ -1,4 +1,10 @@
-import type { Frontier, HedgeProposal, PositionRow, RiskSummary } from "../types";
+import type {
+  Frontier,
+  HedgeProposal,
+  PositionRow,
+  RiskSummary,
+  StressReport,
+} from "../types";
 
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -29,6 +35,12 @@ export function proposeHedge(
 
 export function fetchFrontier(portfolioId: string): Promise<Frontier> {
   return getJSON<Frontier>(`/portfolios/${portfolioId}/hedge/frontier`, {
+    method: "POST",
+  });
+}
+
+export function fetchStress(portfolioId: string): Promise<StressReport> {
+  return getJSON<StressReport>(`/portfolios/${portfolioId}/stress`, {
     method: "POST",
   });
 }

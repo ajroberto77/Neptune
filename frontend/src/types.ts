@@ -83,3 +83,24 @@ export interface Frontier {
   net_beta_before: number;
   frontier: FrontierPoint[];
 }
+
+export interface ScenarioResult {
+  name: string;
+  market_shock: number;
+  total_pnl: number;
+  by_book: Record<string, number>;
+}
+
+export interface VaR {
+  confidence: number;
+  horizon_days: number;
+  volatility: number;
+  var: number;
+  expected_shortfall: number;
+}
+
+export interface StressReport {
+  portfolio_id: string;
+  scenarios: ScenarioResult[];
+  var: VaR;
+}

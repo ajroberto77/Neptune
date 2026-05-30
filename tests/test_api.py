@@ -171,3 +171,48 @@ def test_reduce_more_than_open_returns_422(client):
         json={"quantity": 500, "exit_price": 110.0},
     )
     assert r.status_code == 422
+
+
+# --- Stress engine endpoint ------------------------------------------------------
+
+def test_stress_runs_standard_scenarios_and_var(client):
+    r = client.post(f"/portfolios/{PID}/stress")
+    assert r.status_code == 200
+    body = r.json()
+    names = [s["name"] for s in body["scenarios"]]
+    assert "Market -10%" in names and "Market +10%" in names
+    for s in body["scenarios"]:
+        # Each scenario reports the three books separately (invariant I-03).
+        assert set(s["by_book"]) <= {"LONG", "SYSTEMATIC_SHORT", "DISCRETIONARY_SHORT"}
+        assert s["total_pnl"] == pytest.approx(sum(s["by_book"].values()), abs=1e-6)
+    # VaR/ES are positive potential losses; ES >= VaR.
+    var = body["var"]
+    assert var["var"] > 0 and var["expected_shortfall"] >= var["var"]
+    assert var["confidence"] == 0.95 and var["horizon_days"] == 1
+
+
+def test_stress_long_book_loses_when_market_falls(client):
+    body = client.post(f"/portfolios/{PID}/stress").json()
+    down = next(s for s in body["scenarios"] if s["name"] == "Market -10%")
+    # The golden book is net long beta, so a market drop is a loss overall.
+    assert down["total_pnl"] < 0
+    assert down["by_book"]["LONG"] < 0
+
+
+def test_stress_accepts_custom_scenario_and_var_params(client):
+    r = client.post(
+        f"/portfolios/{PID}/stress",
+        json={
+            "scenarios": [{"name": "Crash -30%", "market_shock": -0.30}],
+            "confidence": 0.99, "horizon_days": 10,
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert any(s["name"] == "Crash -30%" for s in body["scenarios"])
+    assert body["var"]["confidence"] == 0.99 and body["var"]["horizon_days"] == 10
+
+
+def test_stress_rejects_bad_confidence(client):
+    r = client.post(f"/portfolios/{PID}/stress", json={"confidence": 1.5})
+    assert r.status_code == 422
