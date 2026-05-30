@@ -5,6 +5,28 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-05-30 — Never commit/push on a red suite; verify behavior, not just "tests pass"
+
+**Correction (self-caught after a stop-hook nudge):** While adding the adaptive
+complexity-frontier, a large parallel tool batch committed and pushed a change with a
+**failing** `test_api.py` and a fix that didn't actually work. Two failures compounded:
+
+1. **Committed on red.** A push went out (`a7c42c5`) with the backend suite failing.
+   HARD rule (CLAUDE.md §7): *nothing is marked done until its tests pass* — that
+   includes never committing/pushing on a red suite. Don't batch the commit in the same
+   parallel block as the verification; run tests, read the result, *then* commit.
+2. **"Natural support" was the wrong measure.** The frontier caps were derived from
+   `count(|weight| > 1e-6)` of the uncapped soft QP. That QP sprinkles negligible weights
+   across the *entire* universe, so support came back as N (=60) and the caps were all
+   above the ~7 names where neutralization happens — identical, degenerate rows. Fix:
+   measure the **neutralization threshold** (smallest top-ranked prefix that achieves
+   |net beta| <= tol, via binary search) and straddle it.
+
+**Pattern:** For optimizer/threshold features, verify the *behavior* on the real
+production inputs (here: the live 60-name universe), not just that unit tests on a
+hand-built fixture pass — the fixture and production can exercise different regimes.
+Keep the commit step out of parallel batches that also run the tests.
+
 ## 2026-05-29 — Beta pipeline ordering: Vasicek is the FINAL step
 
 **Correction:** The beta pipeline is **not** EWMA → Vasicek → Dimson applied as three

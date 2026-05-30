@@ -156,7 +156,7 @@ def optimize_hedge_capped(
     if not cands:
         raise ValueError("empty shortable universe after exclusions")
 
-    ranked, _support = _rank_candidates(
+    ranked = _rank_candidates(
         residual_beta, residual_factors, cands, beta_tol, factor_limit, max_position_weight
     )
     return _size_capped(
@@ -178,12 +178,14 @@ def complexity_frontier(
 ) -> list[HedgeProposal]:
     """Run a series of capped optimizations to expose the complexity-quality trade-off.
 
-    The uncapped soft solve is run once to rank names and measure the *natural support*
-    (how many names the unconstrained hedge actually uses). When ``caps`` is None, caps
-    are derived to straddle that support (``_adaptive_caps``) so the frontier always shows
-    a real trade-off rather than identical rows — the roadmap's fixed N<=10/20/50 assume a
-    Russell-3000-scale support and go degenerate on a small book. Explicit ``caps`` are
-    honored (clamped to the universe, deduplicated). Returns proposals sorted by ``n_cap``
+    The uncapped soft solve is run once to rank names; when ``caps`` is None we then find
+    the *neutralization threshold* k (the smallest number of top-ranked names that gets
+    |net beta| <= tol, via binary search) and derive caps straddling it
+    (``_adaptive_caps`` ~ k/3, 2k/3, k) so the frontier always shows a real trade-off
+    rather than identical rows — the roadmap's fixed N<=10/20/50 assume a
+    Russell-3000-scale hedge and go degenerate on a small book (where the soft solve
+    sprinkles tiny weights across the whole universe). Explicit ``caps`` are honored
+    (clamped to the universe, deduplicated). Returns proposals sorted by ``n_cap``
     ascending: fewer names -> higher tracking error / possible beta breach.
     """
     excluded = excluded_tickers or set()
@@ -191,10 +193,17 @@ def complexity_frontier(
     if not usable:
         raise ValueError("empty shortable universe after exclusions")
 
-    ranked, support = _rank_candidates(
+    ranked = _rank_candidates(
         residual_beta, residual_factors, usable, beta_tol, factor_limit, max_position_weight
     )
-    requested = caps if caps is not None else _adaptive_caps(support)
+    if caps is not None:
+        requested: tuple[int, ...] = caps
+    else:
+        k = _min_neutralizing_cap(
+            ranked, residual_beta, residual_factors, beta_tol, factor_limit,
+            max_position_weight,
+        )
+        requested = _adaptive_caps(k)
     distinct = sorted({min(c, len(usable)) for c in requested if c >= 1})
     return [
         _size_capped(
@@ -205,14 +214,52 @@ def complexity_frontier(
     ]
 
 
-def _adaptive_caps(support: int) -> tuple[int, ...]:
-    """Three caps that straddle the natural support so the frontier is informative.
+def _adaptive_caps(k: int) -> tuple[int, ...]:
+    """Three caps that straddle the neutralization threshold ``k`` so the frontier is
+    informative on any book size.
 
-    For a support of ``s`` we return roughly (s/3, 2s/3, s): the tightest under-hedges
-    (likely a beta breach), the middle trades off, and the last matches the natural
-    hedge. Tiny supports collapse to fewer distinct points."""
-    s = max(1, support)
-    return (max(1, round(s / 3)), max(1, round(2 * s / 3)), s)
+    ``k`` is the smallest cap that achieves beta neutrality. Returning roughly
+    (k/3, 2k/3, k) makes the tightest run under-hedge (a beta breach), the middle trade
+    off, and the loosest just reach neutrality — the trade-off the panel is meant to
+    show. Tiny ``k`` collapses to fewer distinct points."""
+    k = max(1, k)
+    return (max(1, round(k / 3)), max(1, round(2 * k / 3)), k)
+
+
+def _min_neutralizing_cap(
+    ranked: list[Candidate],
+    residual_beta: float,
+    residual_factors: dict[str, float],
+    beta_tol: float,
+    factor_limit: float,
+    max_position_weight: float,
+) -> int:
+    """Smallest number of top-ranked names whose soft-sized hedge gets |net beta| <= tol.
+
+    Found by binary search over the ranked prefix (~log2(N) extra QP solves). If even the
+    full set cannot neutralize, returns the universe size so the loosest frontier point is
+    the best achievable (honestly flagged as a breach)."""
+    n = len(ranked)
+
+    def neutralizes(k: int) -> bool:
+        subset = ranked[:k]
+        weights, _ = _solve_qp(
+            residual_beta, residual_factors, subset, beta_tol, factor_limit,
+            max_position_weight, hard=False,
+        )
+        betas = np.array([c.beta for c in subset])
+        return abs(residual_beta - betas @ weights) <= beta_tol
+
+    if not neutralizes(n):
+        return n
+    lo, hi = 1, n
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if neutralizes(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
 
 
 # --- shared solve / proposal helpers ---------------------------------------------
@@ -258,14 +305,12 @@ def _rank_candidates(
     beta_tol: float,
     factor_limit: float,
     max_position_weight: float,
-) -> tuple[list[Candidate], int]:
-    """Uncapped soft solve, then rank names by total hedging contribution.
+) -> list[Candidate]:
+    """Uncapped soft solve, then rank names by total hedging contribution, best-first.
 
     The key is ``|w| * ||(beta, loadings)||`` — the Euclidean norm of the exposure a name
     removes per unit weight (market beta plus style loadings) — so a name valuable purely
-    for factor-neutralizing is not pruned in favor of a pure-beta name. Returns the
-    candidates sorted best-first and the natural support (count of names the uncapped
-    hedge actually uses)."""
+    for factor-neutralizing is not pruned in favor of a pure-beta name."""
     full_weights, _ = _solve_qp(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
         max_position_weight, hard=False,
@@ -275,9 +320,7 @@ def _rank_candidates(
         for w, c in zip(full_weights, cands)
     ])
     order = np.argsort(-contribution)
-    ranked = [cands[i] for i in order]
-    support = int(np.sum(np.abs(full_weights) > ZERO_WEIGHT_TOL))
-    return ranked, support
+    return [cands[i] for i in order]
 
 
 def _size_capped(
