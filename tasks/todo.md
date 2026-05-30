@@ -19,6 +19,26 @@ first vertical slice · 🔵 LATER = deferred.
 - [ ] 🔵 Auth & RBAC (CIO/PM/Analyst/Admin)
 - [ ] 🔵 Tacitus / CATO / Mercury connectors
 
+## Phase 0.5 — Data layer / three-DB topology 🟡 (in progress; see docs/data_architecture.md)
+
+- [x] Design doc: three-DB split (cato_securities read-only universe, neptune_securities
+      market data, neptune_portfolios app) + app-level identity projection link
+- [x] Multi-engine wiring: portfolio/securities/universe URLs in `config.py` (each falls
+      back to `DATABASE_URL`); separate `SecuritiesBase`/engine/session in `db/base.py`
+      with backward-compatible `Base`/`engine`/`SessionLocal`/`init_db` aliases
+- [x] `neptune_securities` schema (`src/neptune/securities/models.py`): `securities`
+      projection (PK = `instrument_id`, the cato surrogate), `prices` (raw+adj, source-tagged,
+      append-only), `dividends`, `corporate_actions` (split ratio / symbol change / delisting),
+      `trading_calendar`; `test_securities.py` (7 tests; full suite 84 passed)
+- [ ] Multi-tenant `neptune_portfolios` schema: `investor_entity` (tenant) → `portfolio_manager`
+      → `book` → `position` → `lot`; migrate existing portfolio models under it
+      (OPEN: PM cardinality + Book-of-Books grouping — awaiting user)
+- [ ] Universe read-only adapter (`src/neptune/universe/`) against cato_securities +
+      projection sync into `securities` (keyed on `instrument_id`)
+- [ ] `PriceProvider` protocol + yfinance impl + idempotent ingest (backfill run off-sandbox)
+- [ ] `MarketData` protocol + `DbMarketData`; wire engine to stored prices behind config
+- [ ] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`
+
 ## Phase 1 — Position Manager 🟢
 
 - [x] 🟢 Domain models: `Side`, `ShortType`, `Position` (with read-only `thesis`/`target`,
