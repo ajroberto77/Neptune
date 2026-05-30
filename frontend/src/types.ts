@@ -92,15 +92,18 @@ export interface ScenarioResult {
 }
 
 export interface VaR {
+  method: string;
   confidence: number;
   horizon_days: number;
   volatility: number;
   var: number;
   expected_shortfall: number;
+  n_observations: number;
 }
 
 export interface StressReport {
   portfolio_id: string;
   scenarios: ScenarioResult[];
   var: VaR;
+  var_methods: VaR[];
 }

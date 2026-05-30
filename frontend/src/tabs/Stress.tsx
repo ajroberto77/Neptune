@@ -1,7 +1,13 @@
 import type { StressReport } from "../types";
 import { money, pnlColor, signedMoney } from "../format";
 
-/** Stress tab: scenario shocks (P&L impact split by book) and parametric VaR/ES. */
+const METHOD_LABELS: Record<string, string> = {
+  parametric: "Parametric",
+  historical: "Historical simulation",
+  monte_carlo: "Monte Carlo",
+};
+
+/** Stress tab: scenario shocks (P&L impact split by book) and VaR/ES (3 methods). */
 export function Stress({
   report,
   onRun,
@@ -30,23 +36,42 @@ export function Stress({
         <>
           <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
             <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-              Value at Risk
+              Value at Risk{" "}
+              <span className="text-ocean-muted/60">
+                ({(report.var.confidence * 100).toFixed(0)}%, {report.var.horizon_days}d)
+              </span>
             </h3>
-            <div className="flex flex-wrap gap-8">
-              <Stat
-                label={`VaR (${(report.var.confidence * 100).toFixed(0)}%, ${report.var.horizon_days}d)`}
-                value={money(report.var.var)}
-                tone="text-status-breach"
-              />
-              <Stat
-                label="Expected shortfall"
-                value={money(report.var.expected_shortfall)}
-                tone="text-status-breach"
-              />
-              <Stat label="1σ volatility" value={money(report.var.volatility)} />
-            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-ocean-muted">
+                  <th className="pb-2 font-medium">Method</th>
+                  <th className="pb-2 text-right font-medium">VaR</th>
+                  <th className="pb-2 text-right font-medium">Expected shortfall</th>
+                  <th className="pb-2 text-right font-medium">1σ vol</th>
+                  <th className="pb-2 text-right font-medium">Observations</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.var_methods.map((m) => (
+                  <tr key={m.method} className="border-t border-ocean-border/60">
+                    <td className="py-2">{METHOD_LABELS[m.method] ?? m.method}</td>
+                    <td className="py-2 text-right font-mono text-status-breach">
+                      {money(m.var)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-status-breach">
+                      {money(m.expected_shortfall)}
+                    </td>
+                    <td className="py-2 text-right font-mono">{money(m.volatility)}</td>
+                    <td className="py-2 text-right font-mono text-ocean-muted">
+                      {m.n_observations > 0 ? m.n_observations.toLocaleString() : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             <p className="mt-3 text-xs text-ocean-muted">
-              Parametric (variance-covariance) estimate — potential loss over the horizon.
+              Three estimates of potential loss over the horizon — parametric
+              (variance-covariance), historical simulation, and Monte Carlo.
             </p>
           </div>
 
@@ -92,14 +117,5 @@ export function Stress({
 function Cell({ value }: { value: number }) {
   return (
     <td className={`py-2 text-right font-mono ${pnlColor(value)}`}>{signedMoney(value)}</td>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div>
-      <div className="text-xs uppercase text-ocean-muted">{label}</div>
-      <div className={`font-mono text-lg ${tone ?? ""}`}>{value}</div>
-    </div>
   );
 }

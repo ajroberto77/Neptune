@@ -63,6 +63,8 @@ class VaRResult:
     volatility: float        # 1-sigma P&L (currency) over the horizon
     var: float               # positive number = potential loss at the confidence level
     expected_shortfall: float  # average loss beyond VaR (positive number)
+    method: str = "parametric"   # parametric | historical | monte_carlo
+    n_observations: int = 0      # scenarios in the empirical distribution (0 = parametric)
 
 
 def position_shock_return(exposure: StressExposure, scenario: Scenario) -> float:
@@ -149,7 +151,89 @@ def parametric_var(
         volatility=sigma,
         var=z * sigma,
         expected_shortfall=es_multiplier * sigma,
+        method="parametric",
+        n_observations=0,
     )
+
+
+def _empirical_var(
+    pnls: np.ndarray, confidence: float, horizon_days: int, method: str
+) -> VaRResult:
+    """VaR/ES read off an empirical P&L distribution (1-period losses).
+
+    Losses are ``-pnls``; VaR is the ``confidence`` quantile of the loss distribution,
+    ES the mean loss in the tail beyond it. Scaled to the horizon by sqrt-time. Both are
+    returned as positive potential losses (clamped at >= 0)."""
+    if not 0.5 < confidence < 1.0:
+        raise ValueError("confidence must be in (0.5, 1.0)")
+    pnls = np.asarray(pnls, dtype=float)
+    if pnls.size == 0:
+        raise ValueError("empty P&L distribution")
+    losses = -pnls
+    scale = math.sqrt(horizon_days)
+    var_1d = float(np.quantile(losses, confidence))
+    tail = losses[losses >= var_1d]
+    es_1d = float(tail.mean()) if tail.size else var_1d
+    return VaRResult(
+        confidence=confidence,
+        horizon_days=horizon_days,
+        volatility=float(pnls.std(ddof=1)) * scale if pnls.size > 1 else 0.0,
+        var=max(var_1d, 0.0) * scale,
+        expected_shortfall=max(es_1d, 0.0) * scale,
+        method=method,
+        n_observations=int(pnls.size),
+    )
+
+
+def historical_var(
+    exposures: list[StressExposure],
+    factor_returns: np.ndarray,
+    confidence: float = 0.95,
+    horizon_days: int = 1,
+    factors: tuple[str, ...] = RISK_FACTORS,
+) -> VaRResult:
+    """Historical-simulation VaR/ES.
+
+    ``factor_returns`` is a (T, F) matrix of the RISK_FACTORS' historical periodic
+    returns. Each historical row is replayed as a scenario: the portfolio P&L for day t
+    is e · factor_returns[t] (dollar exposure dotted with that day's factor moves). VaR/ES
+    are read off the resulting empirical distribution — no distributional assumption.
+    """
+    returns = np.asarray(factor_returns, dtype=float)
+    f = len(factors)
+    if returns.ndim != 2 or returns.shape[1] != f:
+        raise ValueError(f"factor_returns must be (T, {f}) for factors {factors}")
+    e = dollar_factor_exposures(exposures, factors)
+    pnls = returns @ e  # P&L per historical day
+    return _empirical_var(pnls, confidence, horizon_days, "historical")
+
+
+def monte_carlo_var(
+    exposures: list[StressExposure],
+    factor_cov: np.ndarray,
+    confidence: float = 0.95,
+    horizon_days: int = 1,
+    n_draws: int = 50_000,
+    seed: int = 12345,
+    factors: tuple[str, ...] = RISK_FACTORS,
+) -> VaRResult:
+    """Monte-Carlo VaR/ES.
+
+    Draw ``n_draws`` factor-return vectors from a multivariate normal with covariance
+    ``factor_cov`` (mean zero), revalue the book under each (e · draw), and read VaR/ES
+    off the simulated P&L distribution. Deterministic given ``seed``.
+    """
+    cov = np.asarray(factor_cov, dtype=float)
+    f = len(factors)
+    if cov.shape != (f, f):
+        raise ValueError(f"factor_cov must be {f}x{f} for factors {factors}")
+    if n_draws < 1:
+        raise ValueError("n_draws must be >= 1")
+    e = dollar_factor_exposures(exposures, factors)
+    rng = np.random.default_rng(seed)
+    draws = rng.multivariate_normal(np.zeros(f), cov, size=n_draws)
+    pnls = draws @ e
+    return _empirical_var(pnls, confidence, horizon_days, "monte_carlo")
 
 
 # --- standard-normal helpers (kept local so the engine has no SciPy dependency) ---

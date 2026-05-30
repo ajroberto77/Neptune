@@ -12,6 +12,8 @@ from neptune.stress import (
     StressExposure,
     apply_scenario,
     dollar_factor_exposures,
+    historical_var,
+    monte_carlo_var,
     parametric_var,
     position_shock_return,
     _norm_ppf,
@@ -130,3 +132,59 @@ def test_norm_ppf_known_quantiles():
     assert _norm_ppf(0.95) == pytest.approx(1.6448536, abs=1e-5)
     assert _norm_ppf(0.975) == pytest.approx(1.9599640, abs=1e-5)
     assert _norm_ppf(0.99) == pytest.approx(2.3263479, abs=1e-5)
+
+
+# --- historical & Monte-Carlo VaR ------------------------------------------------
+
+def test_historical_var_reads_empirical_quantile():
+    # Single market-only $1 dollar-beta position so P&L_t == market_return_t (in $).
+    book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
+    # 100 days of factor returns; only MKT moves, a known spread.
+    rng = np.random.default_rng(0)
+    mkt = rng.normal(0.0, 0.02, 200)
+    returns = np.zeros((200, len(RISK_FACTORS)))
+    returns[:, 0] = mkt
+    res = historical_var(book, returns, confidence=0.95, horizon_days=1)
+    # P&L = 1,000,000 * mkt; loss = -P&L. VaR is the 95th pct of losses.
+    losses = -(1_000_000 * mkt)
+    assert res.var == pytest.approx(np.quantile(losses, 0.95), rel=1e-9)
+    # ES is the mean of losses at or beyond VaR, >= VaR.
+    assert res.expected_shortfall >= res.var
+    assert res.method == "historical"
+    assert res.n_observations == 200
+
+
+def test_historical_var_short_hedge_lowers_risk():
+    rng = np.random.default_rng(1)
+    returns = np.zeros((300, len(RISK_FACTORS)))
+    returns[:, 0] = rng.normal(0, 0.02, 300)
+    long_only = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
+    hedged = long_only + [StressExposure("S", SYS, -900_000, beta=1.0)]
+    assert historical_var(hedged, returns).var < historical_var(long_only, returns).var
+
+
+def test_monte_carlo_var_is_deterministic_and_close_to_parametric():
+    book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
+    cov = np.diag([0.02 ** 2, 0.0, 0.0, 0.0])
+    a = monte_carlo_var(book, cov, confidence=0.95, n_draws=100_000, seed=42)
+    b = monte_carlo_var(book, cov, confidence=0.95, n_draws=100_000, seed=42)
+    assert a.var == b.var  # deterministic given seed
+    assert a.method == "monte_carlo" and a.n_observations == 100_000
+    # With enough draws, MC VaR converges to the parametric (normal) VaR.
+    p = parametric_var(book, cov, confidence=0.95)
+    assert a.var == pytest.approx(p.var, rel=0.03)
+    assert a.expected_shortfall >= a.var
+
+
+def test_historical_var_rejects_bad_shape_and_confidence():
+    book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
+    with pytest.raises(ValueError):
+        historical_var(book, np.zeros((10, 3)))  # wrong factor count
+    with pytest.raises(ValueError):
+        historical_var(book, np.zeros((10, 4)), confidence=0.4)
+
+
+def test_monte_carlo_rejects_bad_draws():
+    book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
+    with pytest.raises(ValueError):
+        monte_carlo_var(book, np.eye(4), n_draws=0)

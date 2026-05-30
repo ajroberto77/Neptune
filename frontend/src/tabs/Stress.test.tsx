@@ -14,12 +14,43 @@ const report: StressReport = {
     },
   ],
   var: {
+    method: "parametric",
     confidence: 0.95,
     horizon_days: 1,
     volatility: 23898,
     var: 39308,
     expected_shortfall: 49294,
+    n_observations: 0,
   },
+  var_methods: [
+    {
+      method: "parametric",
+      confidence: 0.95,
+      horizon_days: 1,
+      volatility: 23898,
+      var: 39308,
+      expected_shortfall: 49294,
+      n_observations: 0,
+    },
+    {
+      method: "historical",
+      confidence: 0.95,
+      horizon_days: 1,
+      volatility: 23100,
+      var: 37365,
+      expected_shortfall: 47478,
+      n_observations: 300,
+    },
+    {
+      method: "monte_carlo",
+      confidence: 0.95,
+      horizon_days: 1,
+      volatility: 23850,
+      var: 38997,
+      expected_shortfall: 48928,
+      n_observations: 50000,
+    },
+  ],
 };
 
 describe("Stress", () => {
@@ -30,13 +61,17 @@ describe("Stress", () => {
     expect(onRun).toHaveBeenCalledOnce();
   });
 
-  it("renders VaR and the scenario rows when a report is present", () => {
+  it("renders all three VaR methods and the scenario rows", () => {
     render(<Stress report={report} onRun={() => {}} loading={false} />);
-    expect(screen.getByText("Value at Risk")).toBeInTheDocument();
+    expect(screen.getByText(/Value at Risk/)).toBeInTheDocument();
+    // The three VaR methods appear side by side.
+    expect(screen.getByText("Parametric")).toBeInTheDocument();
+    expect(screen.getByText("Historical simulation")).toBeInTheDocument();
+    expect(screen.getByText("Monte Carlo")).toBeInTheDocument();
+    expect(screen.getByText("$39,308")).toBeInTheDocument(); // parametric VaR
+    expect(screen.getByText("$37,365")).toBeInTheDocument(); // historical VaR
+    // Scenario row + signed total P&L.
     expect(screen.getByText("Market -10%")).toBeInTheDocument();
-    // Total P&L of the scenario is shown, signed.
     expect(screen.getByText("-$235,000")).toBeInTheDocument();
-    // VaR figure.
-    expect(screen.getByText("$39,308")).toBeInTheDocument();
   });
 });

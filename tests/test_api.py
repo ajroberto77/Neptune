@@ -216,3 +216,18 @@ def test_stress_accepts_custom_scenario_and_var_params(client):
 def test_stress_rejects_bad_confidence(client):
     r = client.post(f"/portfolios/{PID}/stress", json={"confidence": 1.5})
     assert r.status_code == 422
+
+
+def test_stress_returns_three_var_methods(client):
+    body = client.post(f"/portfolios/{PID}/stress").json()
+    methods = [m["method"] for m in body["var_methods"]]
+    assert methods == ["parametric", "historical", "monte_carlo"]
+    for m in body["var_methods"]:
+        assert m["var"] > 0 and m["expected_shortfall"] >= m["var"]
+    # Historical & Monte-Carlo carry an observation count; parametric does not.
+    by = {m["method"]: m for m in body["var_methods"]}
+    assert by["historical"]["n_observations"] > 0
+    assert by["monte_carlo"]["n_observations"] > 0
+    assert by["parametric"]["n_observations"] == 0
+    # Back-compat: top-level `var` is the parametric result.
+    assert body["var"]["method"] == "parametric"

@@ -92,7 +92,10 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 `/stress` endpoint (standard + custom scenarios, VaR confidence/horizon) + Stress tab
 - [x] 🟢 Tests: scenario golden numbers, VaR closed-form + sqrt-horizon scaling, hedged<unhedged
       (`test_stress.py`, `test_api.py`, `Stress.test.tsx`)
-- [ ] 🔵 Historical / Monte-Carlo VaR; correlated multi-factor scenario library
+- [x] 🟢 Historical-simulation VaR (replay factor-return days) + Monte-Carlo VaR (draws from
+      the factor covariance); `/stress` returns all three methods side by side, compared in
+      the Stress tab
+- [ ] 🔵 Correlated multi-factor scenario library; fat-tailed MC (Student-t)
 
 ## Phase 7 — Book of Books 🔵 (STUB in slice)
 

@@ -336,8 +336,9 @@ def stress(
     body: StressIn | None = None,
     session: Session = Depends(get_session),
 ):
-    """Scenario shocks (P&L impact split by book) plus parametric VaR/ES. The standard
-    scenario library always runs; custom scenarios in the body are appended."""
+    """Scenario shocks (P&L impact split by book) plus VaR/ES by three methods
+    (parametric, historical simulation, Monte Carlo). The standard scenario library
+    always runs; custom scenarios in the body are appended."""
     body = body or StressIn()
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
@@ -347,9 +348,23 @@ def stress(
         for s in body.scenarios
     ]
     results = stress_engine.run_scenarios(portfolio, MARKET_DATA, scenarios)
-    var = stress_engine.value_at_risk(
-        portfolio, MARKET_DATA, confidence=body.confidence, horizon_days=body.horizon_days
-    )
+
+    def _var(method: str):
+        v = stress_engine.value_at_risk(
+            portfolio, MARKET_DATA, confidence=body.confidence,
+            horizon_days=body.horizon_days, method=method,
+        )
+        return {
+            "method": v.method,
+            "confidence": v.confidence,
+            "horizon_days": v.horizon_days,
+            "volatility": v.volatility,
+            "var": v.var,
+            "expected_shortfall": v.expected_shortfall,
+            "n_observations": v.n_observations,
+        }
+
+    var_methods = [_var(m) for m in ("parametric", "historical", "monte_carlo")]
     return {
         "portfolio_id": portfolio_id,
         "scenarios": [
@@ -361,11 +376,8 @@ def stress(
             }
             for r in results
         ],
-        "var": {
-            "confidence": var.confidence,
-            "horizon_days": var.horizon_days,
-            "volatility": var.volatility,
-            "var": var.var,
-            "expected_shortfall": var.expected_shortfall,
-        },
+        # `var` stays the parametric result for backward compatibility; `var_methods`
+        # carries all three for side-by-side comparison.
+        "var": var_methods[0],
+        "var_methods": var_methods,
     }
