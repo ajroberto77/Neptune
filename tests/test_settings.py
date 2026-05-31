@@ -82,3 +82,18 @@ def test_universe_sync_falls_back_to_synthetic_when_unconfigured(client):
     body = r.json()
     assert body["source"] == "synthetic"
     assert body["synced"] > 0
+
+
+def test_ingest_requires_a_populated_projection(client):
+    # Fresh securities DB, nothing projected → clear 409, not an opaque crash.
+    r = client.post("/securities/ingest", json={})
+    assert r.status_code == 409
+
+
+def test_ingest_reports_feed_unavailable_when_yfinance_missing(client):
+    # Populate the projection, then ingest: yfinance isn't installed here, so the
+    # endpoint must surface a clean 503 rather than a 500.
+    client.post("/settings/universe/sync")
+    r = client.post("/securities/ingest", json={"tickers": ["U0001"]})
+    assert r.status_code == 503
+    assert "yfinance" in r.json()["detail"]

@@ -15,12 +15,22 @@ const rows: ConnectionRow[] = [
 const saveConnection = vi.fn(async (_role: string, _body: unknown) => rows[2]);
 const testConnection = vi.fn(async (role: string) => ({ role, ok: true }));
 const syncUniverse = vi.fn(async () => ({ synced: 42, source: "cato_securities" }));
+const ingestPrices = vi.fn(async () => ({
+  start: "2025-04-26",
+  end: "2026-05-31",
+  ingested: [
+    { ticker: "AAPL", prices: 252, dividends: 4, corporate_actions: 0 },
+    { ticker: "MSFT", prices: 252, dividends: 4, corporate_actions: 1 },
+  ],
+  errors: [],
+}));
 
 vi.mock("../api/client", () => ({
   fetchConnections: () => Promise.resolve(rows),
   saveConnection: (role: string, body: unknown) => saveConnection(role, body),
   testConnection: (role: string) => testConnection(role),
   syncUniverse: () => syncUniverse(),
+  ingestPrices: () => ingestPrices(),
 }));
 
 describe("Settings", () => {
@@ -28,6 +38,7 @@ describe("Settings", () => {
     saveConnection.mockClear();
     testConnection.mockClear();
     syncUniverse.mockClear();
+    ingestPrices.mockClear();
   });
 
   it("renders all three connection roles and flags the bootstrap DB", async () => {
@@ -58,5 +69,16 @@ describe("Settings", () => {
     fireEvent.click(screen.getByText("Sync universe"));
     await waitFor(() => expect(syncUniverse).toHaveBeenCalledOnce());
     expect(await screen.findByText(/Synced 42 securities/)).toBeInTheDocument();
+  });
+
+  it("backfills prices and reports total bars across names", async () => {
+    render(<Settings />);
+    await screen.findByText(/Securities DB/);
+    fireEvent.click(screen.getByText("Backfill prices"));
+    await waitFor(() => expect(ingestPrices).toHaveBeenCalledOnce());
+    // 252 + 252 bars across 2 names.
+    expect(
+      await screen.findByText(/Ingested 504 price bars across 2 names/),
+    ).toBeInTheDocument();
   });
 });

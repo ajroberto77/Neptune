@@ -46,7 +46,12 @@ export function fetchStress(portfolioId: string): Promise<StressReport> {
 }
 
 // --- Settings: configurable DB connections ---
-import type { ConnectionRow, ConnectionInput, SyncResult } from "../types";
+import type {
+  ConnectionRow,
+  ConnectionInput,
+  SyncResult,
+  IngestResult,
+} from "../types";
 
 export function fetchConnections(): Promise<ConnectionRow[]> {
   return getJSON<ConnectionRow[]>(`/settings/connections`);
@@ -71,4 +76,12 @@ export function testConnection(
 
 export function syncUniverse(): Promise<SyncResult> {
   return getJSON<SyncResult>(`/settings/universe/sync`, { method: "POST" });
+}
+
+export function ingestPrices(): Promise<IngestResult> {
+  return getJSON<IngestResult>(`/securities/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
 }

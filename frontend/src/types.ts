@@ -136,3 +136,17 @@ export interface SyncResult {
   synced: number;
   source: string;
 }
+
+export interface IngestRow {
+  ticker: string | null;
+  prices: number;
+  dividends: number;
+  corporate_actions: number;
+}
+
+export interface IngestResult {
+  start: string;
+  end: string;
+  ingested: IngestRow[];
+  errors: { ticker: string; error: string }[];
+}

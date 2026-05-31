@@ -20,7 +20,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from datetime import date
+from datetime import date, timedelta
+
+from sqlalchemy import select
 
 from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
@@ -38,6 +40,9 @@ from neptune.stress import STANDARD_SCENARIOS, Scenario
 from neptune.positions.service import ConflictError, PositionService
 from neptune.settings_store import ConnectionRole
 from neptune.settings_store.service import ConnectionSettingsService
+from neptune.securities.ingest import ingest_ticker
+from neptune.securities.models import Security
+from neptune.securities.providers import YFinanceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
 # One shared synthetic market-data source feeds the live beta/factor pipeline.
@@ -512,3 +517,59 @@ def sync_universe(session: Session = Depends(get_session)):
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"universe sync failed: {type(exc).__name__}") from exc
     return {"synced": n, "source": "cato_securities" if url else "synthetic"}
+
+
+class IngestIn(BaseModel):
+    """A price-ingestion request. Tickers default to the whole projected universe; the
+    window defaults to a 252-day-plus lookback ending today (enough for the beta pipeline)."""
+
+    tickers: list[str] | None = None
+    start: date | None = None
+    end: date | None = None
+
+
+@app.post("/securities/ingest")
+def ingest_prices(body: IngestIn):
+    """Backfill OHLCV/dividends/splits from yfinance into the securities DB for the given
+    tickers (or the whole projection). Requires network + the optional yfinance package, so
+    it returns 503 when the feed is unavailable rather than failing opaquely."""
+    end = body.end or date.today()
+    start = body.start or (end - timedelta(days=400))  # ~252 trading days of cushion
+    provider = YFinanceProvider()
+    results = []
+    with SecuritiesSession() as sec_session:
+        tickers = body.tickers or [
+            s.ticker
+            for s in sec_session.scalars(
+                select(Security).where(Security.ticker.is_not(None))
+            ).all()
+        ]
+        if not tickers:
+            raise HTTPException(
+                status_code=409, detail="no securities to ingest — sync the universe first"
+            )
+        # Per-ticker failures are collected, not fatal: ingest is idempotent and
+        # source-tagged, so a partial run is safe to resume. A missing-yfinance
+        # RuntimeError is global, though — fail fast with 503 rather than N times.
+        errors = []
+        for ticker in tickers:
+            try:
+                res = ingest_ticker(sec_session, provider, ticker, start, end)
+            except RuntimeError as exc:  # yfinance not installed — applies to every ticker
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except LookupError as exc:
+                errors.append({"ticker": ticker, "error": str(exc)})
+                continue
+            except Exception as exc:  # noqa: BLE001 — feed/network error, sanitized
+                errors.append({"ticker": ticker, "error": type(exc).__name__})
+                continue
+            results.append(
+                {"ticker": res.ticker, "prices": res.prices,
+                 "dividends": res.dividends, "corporate_actions": res.corporate_actions}
+            )
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "ingested": results,
+        "errors": errors,
+    }

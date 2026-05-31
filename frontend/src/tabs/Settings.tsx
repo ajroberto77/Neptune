@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ConnectionRow } from "../types";
 import {
   fetchConnections,
+  ingestPrices,
   saveConnection,
   syncUniverse,
   testConnection,
@@ -113,6 +114,20 @@ export function Settings() {
     }
   }
 
+  async function handleIngest() {
+    setStatus((s) => ({ ...s, SECURITIES: "Backfilling prices…" }));
+    try {
+      const r = await ingestPrices();
+      const bars = r.ingested.reduce((n, row) => n + row.prices, 0);
+      setStatus((s) => ({
+        ...s,
+        SECURITIES: `Ingested ${bars} price bars across ${r.ingested.length} names (${r.start} → ${r.end})`,
+      }));
+    } catch (e) {
+      setStatus((s) => ({ ...s, SECURITIES: String(e) }));
+    }
+  }
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-ocean-muted">
@@ -214,6 +229,14 @@ export function Settings() {
                   className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
                 >
                   Sync universe
+                </button>
+              )}
+              {row.role === "SECURITIES" && (
+                <button
+                  onClick={handleIngest}
+                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                >
+                  Backfill prices
                 </button>
               )}
               {status[row.role] && (

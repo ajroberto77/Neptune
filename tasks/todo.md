@@ -47,7 +47,12 @@ first vertical slice · 🔵 LATER = deferred.
       URL builder, env fallback), `db_connections` table, `/settings/connections` CRUD +
       `/test` + `/settings/universe/sync` endpoints, and a React Settings tab (all three
       roles; portfolio flagged bootstrap/restart-only). `test_settings.py` + `Settings.test.tsx`
-- [ ] `PriceProvider` protocol + yfinance impl + idempotent ingest (backfill run off-sandbox)
+- [x] `PriceProvider` protocol + yfinance impl + idempotent ingest: `securities/providers.py`
+      (DTOs, `RecordedProvider`, lazy-import `YFinanceProvider`), `securities/adjust.py`
+      (reproducible split/dividend back-adjustment of `adj_close`), `securities/ingest.py`
+      (upsert keyed on `(instrument_id, …, source)`, I-07), `POST /securities/ingest`
+      (resilient per-ticker errors; 503 when yfinance absent), Settings "Backfill prices"
+      button. `test_ingest.py` + endpoint tests. Live backfill itself runs off-sandbox.
 - [ ] `MarketData` protocol + `DbMarketData`; wire engine to stored prices behind config
 - [ ] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`
 
