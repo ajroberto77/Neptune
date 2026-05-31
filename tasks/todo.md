@@ -39,8 +39,14 @@ first vertical slice · 🔵 LATER = deferred.
       to Auth & RBAC. The schema models the firm as isolation root, but queries are not yet
       firm-scoped; a caller with a portfolio_id can read it regardless of firm. Wire real
       enforcement (+ cross-firm isolation tests) with the auth layer.
-- [ ] Universe read-only adapter (`src/neptune/universe/`) against cato_securities +
-      projection sync into `securities` (keyed on `instrument_id`)
+- [x] Universe read-only adapter (`src/neptune/universe/`): `UniverseSource` protocol,
+      `SqlUniverse` (text() SELECTs against cato_securities, keyed on `instrument_id`),
+      `RecordedUniverse` (offline fixtures), and `sync_universe_projection` upserting the
+      identity slice into `securities` (`test_universe.py`)
+- [x] Configurable DB connections + Settings page: `settings_store` (write-only password,
+      URL builder, env fallback), `db_connections` table, `/settings/connections` CRUD +
+      `/test` + `/settings/universe/sync` endpoints, and a React Settings tab (all three
+      roles; portfolio flagged bootstrap/restart-only). `test_settings.py` + `Settings.test.tsx`
 - [ ] `PriceProvider` protocol + yfinance impl + idempotent ingest (backfill run off-sandbox)
 - [ ] `MarketData` protocol + `DbMarketData`; wire engine to stored prices behind config
 - [ ] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`

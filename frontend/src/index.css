@@ -7,3 +7,9 @@
     @apply bg-ocean-bg text-slate-200 font-body antialiased;
   }
 }
+
+@layer components {
+  .np-input {
+    @apply w-full rounded border border-ocean-border bg-ocean-bg px-2 py-1.5 text-sm text-slate-200 placeholder:text-ocean-muted/50 focus:border-ocean-accent focus:outline-none;
+  }
+}

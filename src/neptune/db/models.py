@@ -19,12 +19,13 @@ from datetime import date
 
 from sqlalchemy import Boolean, Date
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import Float, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from neptune.db.base import Base
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod
+from neptune.settings_store import ConnectionRole
 from neptune.domain.models import Side, ShortType
 
 
@@ -165,3 +166,23 @@ class LotORM(Base):
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     position: Mapped[PositionORM] = relationship(back_populates="lots")
+
+
+class DbConnectionORM(Base):
+    """A configurable database connection target (see ``settings_store``).
+
+    One row per role (PORTFOLIO / SECURITIES / UNIVERSE). Lives in the portfolio DB. The
+    ``password`` is stored but NEVER returned by the API — reads go through the masked
+    serializer. The PORTFOLIO row is informational (the app DB is the env-driven
+    bootstrap); SECURITIES/UNIVERSE rows are applied live."""
+
+    __tablename__ = "db_connections"
+
+    role: Mapped[ConnectionRole] = mapped_column(SAEnum(ConnectionRole), primary_key=True)
+    host: Mapped[str] = mapped_column(String, nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=5432)
+    database: Mapped[str] = mapped_column(String, nullable=False)
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    password: Mapped[str | None] = mapped_column(String, nullable=True)  # write-only
+    sslmode: Mapped[str | None] = mapped_column(String, nullable=True)
+    driver: Mapped[str] = mapped_column(String, default="postgresql+psycopg")

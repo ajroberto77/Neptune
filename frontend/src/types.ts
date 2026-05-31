@@ -107,3 +107,32 @@ export interface StressReport {
   var: VaR;
   var_methods: VaR[];
 }
+
+// --- Settings: configurable database connections ---
+export interface ConnectionRow {
+  role: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  username?: string;
+  sslmode?: string | null;
+  driver?: string;
+  has_password?: boolean;
+  configured: boolean;
+  bootstrap?: boolean;
+}
+
+export interface ConnectionInput {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password?: string | null;
+  sslmode?: string | null;
+  driver?: string | null;
+}
+
+export interface SyncResult {
+  synced: number;
+  source: string;
+}

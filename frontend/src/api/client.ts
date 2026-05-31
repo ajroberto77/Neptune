@@ -44,3 +44,31 @@ export function fetchStress(portfolioId: string): Promise<StressReport> {
     method: "POST",
   });
 }
+
+// --- Settings: configurable DB connections ---
+import type { ConnectionRow, ConnectionInput, SyncResult } from "../types";
+
+export function fetchConnections(): Promise<ConnectionRow[]> {
+  return getJSON<ConnectionRow[]>(`/settings/connections`);
+}
+
+export function saveConnection(
+  role: string,
+  body: ConnectionInput,
+): Promise<ConnectionRow> {
+  return getJSON<ConnectionRow>(`/settings/connections/${role}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function testConnection(
+  role: string,
+): Promise<{ role: string; ok: boolean; error?: string }> {
+  return getJSON(`/settings/connections/${role}/test`, { method: "POST" });
+}
+
+export function syncUniverse(): Promise<SyncResult> {
+  return getJSON<SyncResult>(`/settings/universe/sync`, { method: "POST" });
+}

@@ -17,9 +17,10 @@ import { Blotter } from "./tabs/Blotter";
 import { RiskDashboard } from "./tabs/RiskDashboard";
 import { HedgeApproval } from "./tabs/HedgeApproval";
 import { Stress } from "./tabs/Stress";
+import { Settings } from "./tabs/Settings";
 
 const PORTFOLIO_ID = "IRIDIUM-CORE";
-const TABS = ["Blotter", "Risk", "Hedge Approval", "Stress"] as const;
+const TABS = ["Blotter", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -114,7 +115,11 @@ export default function App() {
           </div>
         )}
 
-        {!summary ? (
+        {/* Settings never depends on portfolio data — it's how you fix a bad DB target,
+            so it must render even while the rest is still loading. */}
+        {tab === "Settings" ? (
+          <Settings />
+        ) : !summary ? (
           <p className="text-ocean-muted">Loading…</p>
         ) : (
           <>

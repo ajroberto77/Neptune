@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,7 @@ from datetime import date
 from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
-from neptune.db.base import SessionLocal, init_db
+from neptune.db.base import SecuritiesSession, SessionLocal, init_db, init_securities_db, make_engine
 from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
@@ -35,6 +36,9 @@ from neptune.risk import stress as stress_engine
 from neptune.risk.summary import summarize
 from neptune.stress import STANDARD_SCENARIOS, Scenario
 from neptune.positions.service import ConflictError, PositionService
+from neptune.settings_store import ConnectionRole
+from neptune.settings_store.service import ConnectionSettingsService
+from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
 # One shared synthetic market-data source feeds the live beta/factor pipeline.
 MARKET_DATA = SyntheticMarketData()
@@ -130,6 +134,7 @@ def seed_golden(session: Session) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    init_securities_db()  # create the market-data schema too (idempotent)
     with SessionLocal() as session:
         seed_golden(session)
     yield
@@ -419,3 +424,91 @@ def stress(
         "var": var_methods[0],
         "var_methods": var_methods,
     }
+
+
+# --- Settings: configurable database connections ---------------------------------
+
+class ConnectionIn(BaseModel):
+    host: str
+    port: int = 5432
+    database: str
+    username: str
+    # Write-only: omit/null to leave the stored password unchanged; "" clears it.
+    password: str | None = None
+    sslmode: str | None = None
+    driver: str | None = None
+
+
+@app.get("/settings/connections")
+def list_connections(session: Session = Depends(get_session)):
+    """All configured DB connections, password-masked. Roles with no row fall back to env."""
+    svc = ConnectionSettingsService(session)
+    stored = {c.role: c.masked() for c in svc.list_all()}
+    # Always report all three roles so the UI can render a complete form.
+    out = []
+    for role in ConnectionRole:
+        entry = stored.get(role, {"role": role.value, "configured": False})
+        entry.setdefault("configured", True)
+        # The portfolio DB is the env-driven bootstrap; flag it so the UI marks it
+        # restart-only.
+        entry["bootstrap"] = role is ConnectionRole.PORTFOLIO
+        out.append(entry)
+    return out
+
+
+@app.put("/settings/connections/{role}")
+def upsert_connection(
+    role: ConnectionRole, body: ConnectionIn, session: Session = Depends(get_session)
+):
+    svc = ConnectionSettingsService(session)
+    cfg = svc.upsert(
+        role, host=body.host, port=body.port, database=body.database,
+        username=body.username, password=body.password, sslmode=body.sslmode,
+        driver=body.driver,
+    )
+    return cfg.masked()
+
+
+@app.post("/settings/connections/{role}/test")
+def test_connection(role: ConnectionRole, session: Session = Depends(get_session)):
+    """Open a throwaway connection to the resolved URL and run SELECT 1. Never exposes
+    the password; returns ok/false plus a sanitized error message."""
+    svc = ConnectionSettingsService(session)
+    url = svc.resolve_url(role)
+    if not url:
+        raise HTTPException(status_code=400, detail=f"no connection configured for {role.value}")
+    try:
+        eng = make_engine(url)
+        with eng.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        eng.dispose()
+    except Exception as exc:  # noqa: BLE001 — surface a sanitized message, not the URL
+        return {"role": role.value, "ok": False, "error": type(exc).__name__}
+    return {"role": role.value, "ok": True}
+
+
+@app.post("/settings/universe/sync")
+def sync_universe(session: Session = Depends(get_session)):
+    """Project the cato_securities universe into neptune_securities.securities. Reads the
+    UNIVERSE connection read-only; if none is configured, falls back to the synthetic
+    universe so the action is always runnable offline."""
+    svc = ConnectionSettingsService(session)
+    url = svc.resolve_url(ConnectionRole.UNIVERSE)
+    if url:
+        source = SqlUniverse(make_engine(url))
+    else:
+        # Offline / unconfigured: project the synthetic catalog so the table is populated.
+        rows = [
+            UniverseSecurity(
+                instrument_id=abs(hash(t)) % 10_000_000, ticker=t,
+                security_name=f"{t} Synthetic", security_type="Common Stock",
+            )
+            for t in UNIVERSE_TICKERS
+        ]
+        source = RecordedUniverse(rows)
+    with SecuritiesSession() as sec_session:
+        try:
+            n = sync_universe_projection(sec_session, source)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"universe sync failed: {type(exc).__name__}") from exc
+    return {"synced": n, "source": "cato_securities" if url else "synthetic"}
