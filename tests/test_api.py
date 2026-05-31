@@ -122,6 +122,12 @@ def test_positions_carry_pm_attribution(client):
 
 
 def test_position_pm_override_is_surfaced(client):
+    # pm_id/analyst_id are FKs to people, so create the firm staff first (FK enforced on
+    # both SQLite and Postgres). The seed already created firm "IRIDIUM".
+    client.post("/people", json={"id": "pm-override", "firm_id": "IRIDIUM",
+                                 "name": "Override PM", "role": "PM"})
+    client.post("/people", json={"id": "an-x", "firm_id": "IRIDIUM",
+                                 "name": "Analyst X", "role": "ANALYST"})
     client.post(
         f"/portfolios/{PID}/positions",
         json={"ticker": "HHH", "side": "LONG", "notional": 100000, "forward_beta": 1.0,

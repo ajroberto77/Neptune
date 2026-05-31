@@ -30,9 +30,15 @@ first vertical slice · 🔵 LATER = deferred.
       projection (PK = `instrument_id`, the cato surrogate), `prices` (raw+adj, source-tagged,
       append-only), `dividends`, `corporate_actions` (split ratio / symbol change / delisting),
       `trading_calendar`; `test_securities.py` (7 tests; full suite 84 passed)
-- [ ] Multi-tenant `neptune_portfolios` schema: `investor_entity` (tenant) → `portfolio_manager`
-      → `book` → `position` → `lot`; migrate existing portfolio models under it
-      (OPEN: PM cardinality + Book-of-Books grouping — awaiting user)
+- [x] Multi-tenant ownership graph: `management_firm` (tenant) → `person` (PM/Analyst/
+      CIO/Admin firm staff) + `investor_entity` (client) → `portfolio`(=book, with lead
+      PM(s) via `book_managers`, co-PMs supported) → `position` (per-name `pm_id`/`analyst_id`,
+      lead-PM fallback). Layered onto the existing `portfolios` table (no Portfolio→Book
+      rename); ownership columns nullable so the synthetic slice still runs (`test_org.py`)
+- [ ] **Tenant isolation ENFORCEMENT** (row-level firm scoping on reads/writes) — deferred
+      to Auth & RBAC. The schema models the firm as isolation root, but queries are not yet
+      firm-scoped; a caller with a portfolio_id can read it regardless of firm. Wire real
+      enforcement (+ cross-firm isolation tests) with the auth layer.
 - [ ] Universe read-only adapter (`src/neptune/universe/`) against cato_securities +
       projection sync into `securities` (keyed on `instrument_id`)
 - [ ] `PriceProvider` protocol + yfinance impl + idempotent ingest (backfill run off-sandbox)

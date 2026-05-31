@@ -97,7 +97,8 @@ class PortfolioORM(Base):
         back_populates="portfolios"
     )
     managers: Mapped[list["BookManagerORM"]] = relationship(
-        back_populates="portfolio", cascade="all, delete-orphan"
+        back_populates="portfolio", cascade="all, delete-orphan",
+        order_by="BookManagerORM.id",  # stable order so "first lead PM" is deterministic
     )
     positions: Mapped[list["PositionORM"]] = relationship(
         back_populates="portfolio", cascade="all, delete-orphan"

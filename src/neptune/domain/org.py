@@ -59,11 +59,3 @@ class InvestorEntity:
     firm_id: str
     name: str
     base_currency: str = "USD"
-
-
-@dataclass
-class BookManager:
-    """A book↔person management link. ``is_lead`` marks lead PM(s); co-PMs are >1 lead."""
-
-    person_id: str
-    is_lead: bool = True

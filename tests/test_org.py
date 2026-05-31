@@ -2,6 +2,9 @@
 per-name PM/analyst attribution, and the lead-PM fallback (in-memory SQLite)."""
 from __future__ import annotations
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from neptune.domain.models import Position, Side, ShortType
 from neptune.domain.org import PersonRole
 from neptune.positions.service import PositionService
@@ -68,3 +71,14 @@ def test_effective_pm_none_when_unassigned(session):
     service = PositionService(session)
     service.create_portfolio("B5", "Bare Book")
     assert service.effective_pm("B5", Position("AAA", Side.LONG, 100, forward_beta=1.0)) is None
+
+
+def test_dangling_pm_id_is_rejected(session):
+    """A position.pm_id with no matching people row is a FK violation — enforced on both
+    SQLite (via PRAGMA foreign_keys=ON) and Postgres."""
+    service = PositionService(session)
+    service.create_portfolio("B6", "Book")
+    with pytest.raises(IntegrityError):
+        service.add_position(
+            "B6", Position("AAA", Side.LONG, 100, forward_beta=1.0, pm_id="ghost")
+        )

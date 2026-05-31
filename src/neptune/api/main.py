@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from datetime import date
@@ -156,6 +157,25 @@ def health():
     return {"status": "ok", "beta_tol": settings.beta_tol}
 
 
+class PersonIn(BaseModel):
+    id: str
+    firm_id: str
+    name: str
+    role: PersonRole
+    email: str | None = None
+
+
+@app.post("/people", status_code=201)
+def create_person(body: PersonIn, session: Session = Depends(get_session)):
+    """Register a firm person (PM / analyst / CIO / admin). Firm staff, not a client."""
+    service = PositionService(session)
+    try:
+        service.create_person(body.id, body.firm_id, body.name, body.role, email=body.email)
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="person id or firm invalid") from exc
+    return {"id": body.id}
+
+
 @app.post("/portfolios/{portfolio_id}/positions", status_code=201)
 def add_position(portfolio_id: str, body: PositionIn, session: Session = Depends(get_session)):
     service = PositionService(session)
@@ -172,6 +192,8 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
     metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
+    # Compute the book's lead PM once (not per position) — the per-name fallback.
+    lead_pm = portfolio.lead_pm_ids[0] if portfolio.lead_pm_ids else None
     return [
         {
             "ticker": p.ticker,
@@ -182,8 +204,8 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
             "beta": round(metrics[p.ticker].beta, 4),
             "beta_method": metrics[p.ticker].beta_method,
             "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
-            # Per-name coverage; pm falls back to the book's lead PM via effective_pm.
-            "pm_id": service.effective_pm(portfolio_id, p),
+            # Per-name coverage; pm falls back to the book's lead PM.
+            "pm_id": p.pm_id or lead_pm,
             "analyst_id": p.analyst_id,
             "pnl": _pnl_dict(pnl_engine.position_pnl_for(p, MARKET_DATA)),
         }

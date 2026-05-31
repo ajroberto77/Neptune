@@ -18,11 +18,20 @@ test fixtures keep working unchanged. The securities database adds parallel
 """
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from neptune.config import settings
+
+
+def _enable_sqlite_fks(dbapi_conn, _record):
+    """SQLite ships with foreign-key enforcement OFF. Turn it ON per-connection so the
+    test backend rejects dangling FKs (e.g. a position.pm_id with no people row) the same
+    way Postgres does — otherwise tests give false confidence about referential safety."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 class PortfolioBase(DeclarativeBase):
@@ -47,7 +56,10 @@ def make_engine(url: str | None = None):
             # A single shared in-memory DB across all sessions (otherwise each
             # connection gets its own empty database).
             kwargs["poolclass"] = StaticPool
-    return create_engine(db_url, **kwargs)
+    eng = create_engine(db_url, **kwargs)
+    if db_url.startswith("sqlite"):
+        event.listen(eng, "connect", _enable_sqlite_fks)
+    return eng
 
 
 # --- Portfolio database (the canonical app DB; default target) -------------------
