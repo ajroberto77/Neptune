@@ -103,6 +103,12 @@ export function Stress({
                 ))}
               </tbody>
             </table>
+            <p className="mt-3 text-xs text-ocean-muted/70">
+              Market shocks use each name's <span className="text-slate-300">downside beta</span> when
+              the market falls and <span className="text-slate-300">upside beta</span> when it rises
+              (fit on down vs up days), so a selloff and a rally aren't mirror images. The net-beta
+              limit still uses the single pipeline beta.
+            </p>
           </div>
         </>
       ) : (

@@ -101,3 +101,27 @@ def test_cross_sectional_prior_var():
     assert cross_sectional_prior_var(betas) == pytest.approx(np.var(betas, ddof=1))
     with pytest.raises(ValueError):
         cross_sectional_prior_var(np.array([1.0]))
+
+
+def test_semibetas_capture_down_up_asymmetry():
+    """A name engineered to move 2x with down-markets and 0.5x with up-markets should yield
+    down_beta ~ 2 and up_beta ~ 0.5 — and neither should touch the pipeline beta."""
+    from neptune.quant.beta import semibetas
+
+    rng = np.random.default_rng(0)
+    market = rng.normal(0, 0.01, 400)
+    stock = np.where(market < 0, 2.0 * market, 0.5 * market)
+    sb = semibetas(stock, market, fallback=1.0)
+    assert sb.down_beta == pytest.approx(2.0, abs=1e-6)
+    assert sb.up_beta == pytest.approx(0.5, abs=1e-6)
+
+
+def test_semibetas_fall_back_on_thin_side():
+    """If one side has too few observations, that side returns the fallback (pipeline) beta."""
+    from neptune.quant.beta import semibetas
+
+    market = np.array([-0.02, -0.01, -0.03, -0.015, 0.01])  # only 1 up day
+    stock = market * 1.5
+    sb = semibetas(market * 1.5, market, fallback=0.9, min_obs=3)
+    assert sb.down_beta == pytest.approx(1.5, abs=1e-9)
+    assert sb.up_beta == 0.9  # thin up side -> fallback

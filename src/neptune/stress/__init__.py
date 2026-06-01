@@ -34,6 +34,10 @@ class StressExposure:
     signed_notional: float    # +long / -short, in base currency
     beta: float
     loadings: dict[str, float] = field(default_factory=dict)
+    # Optional downside/upside betas (stress-only). None => use the symmetric `beta` both
+    # ways, so a single beta still behaves exactly as before.
+    down_beta: float | None = None
+    up_beta: float | None = None
 
 
 @dataclass(frozen=True)
@@ -68,8 +72,17 @@ class VaRResult:
 
 
 def position_shock_return(exposure: StressExposure, scenario: Scenario) -> float:
-    """The shocked return of one name under the scenario (factor model)."""
-    r = exposure.beta * scenario.market_shock
+    """The shocked return of one name under the scenario (factor model). The market term uses
+    the DOWNSIDE beta when the market shock is negative and the UPSIDE beta when positive, so
+    a selloff and a rally are no longer mirror images. Falls back to the symmetric ``beta``
+    when a directional beta isn't supplied."""
+    if scenario.market_shock < 0 and exposure.down_beta is not None:
+        market_beta = exposure.down_beta
+    elif scenario.market_shock > 0 and exposure.up_beta is not None:
+        market_beta = exposure.up_beta
+    else:
+        market_beta = exposure.beta
+    r = market_beta * scenario.market_shock
     for factor, shock in scenario.factor_shocks.items():
         r += exposure.loadings.get(factor, 0.0) * shock
     return r

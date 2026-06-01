@@ -188,3 +188,20 @@ def test_monte_carlo_rejects_bad_draws():
     book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
     with pytest.raises(ValueError):
         monte_carlo_var(book, np.eye(4), n_draws=0)
+
+
+def test_scenario_uses_downside_beta_on_selloff_upside_on_rally():
+    """With down_beta > up_beta, a -10% selloff loses MORE than a +10% rally gains — the
+    asymmetry a single beta hides. Without directional betas, the two stay mirror images."""
+    asym = StressExposure("AAA", LONG, signed_notional=1_000_000, beta=1.0,
+                          down_beta=1.5, up_beta=0.5)
+    down = position_shock_return(asym, Scenario("d", market_shock=-0.10))
+    up = position_shock_return(asym, Scenario("u", market_shock=0.10))
+    assert down == pytest.approx(-0.15)   # 1.5 * -0.10
+    assert up == pytest.approx(0.05)      # 0.5 * +0.10
+    assert abs(down) > abs(up)
+
+    sym = StressExposure("BBB", LONG, signed_notional=1_000_000, beta=1.0)
+    d = position_shock_return(sym, Scenario("d", market_shock=-0.10))
+    u = position_shock_return(sym, Scenario("u", market_shock=0.10))
+    assert d == pytest.approx(-u)         # symmetric when no directional betas

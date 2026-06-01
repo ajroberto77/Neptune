@@ -48,6 +48,41 @@ class BetaResult:
     method: str              # "pipeline" or "forward_override"
 
 
+@dataclass(frozen=True)
+class SemiBeta:
+    """Downside vs upside beta — a STRESS-ONLY diagnostic, never the model beta."""
+
+    down_beta: float         # contemporaneous slope on down-market (market < 0) days
+    up_beta: float           # contemporaneous slope on up-market (market > 0) days
+
+
+def semibetas(
+    stock: np.ndarray, market: np.ndarray, fallback: float, min_obs: int = 10
+) -> SemiBeta:
+    """Down/up-market beta: a plain contemporaneous OLS slope fit separately on down-market
+    (``market < 0``) and up-market (``market > 0``) days. This captures how a name behaves in
+    selloffs vs rallies — the asymmetry a single beta hides.
+
+    It is deliberately NOT the beta pipeline: no EWMA weighting, no Dimson lead/lag, no
+    Vasicek. The pipeline beta (EWMA+Dimson → Vasicek → forward override) and the
+    ``|β| ≤ 0.05`` hard constraint are untouched; this feeds the stress scenarios only.
+    Degenerate subsets (fewer than ``min_obs`` days, or zero market variance) fall back to
+    ``fallback`` (the pipeline beta), so a thin side never invents a spurious slope."""
+    stock = np.asarray(stock, dtype=float)
+    market = np.asarray(market, dtype=float)
+
+    def _slope(mask: np.ndarray) -> float:
+        m, s = market[mask], stock[mask]
+        if m.size < min_obs:
+            return fallback
+        var = float(np.var(m))
+        if var == 0.0:
+            return fallback
+        return float(np.cov(s, m, bias=True)[0, 1] / var)
+
+    return SemiBeta(down_beta=_slope(market < 0.0), up_beta=_slope(market > 0.0))
+
+
 def _ewma_weights(n: int, lam: float) -> np.ndarray:
     """EWMA weights for ``n`` chronological rows (oldest first, newest last).
 

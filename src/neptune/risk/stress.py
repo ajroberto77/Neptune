@@ -10,6 +10,7 @@ import numpy as np
 
 from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio
+from neptune.quant.beta import semibetas
 from neptune.risk import analytics
 from neptune.stress import (
     RISK_FACTORS,
@@ -27,18 +28,30 @@ from neptune.stress import (
 def build_exposures(
     portfolio: Portfolio, market: MarketData
 ) -> list[StressExposure]:
-    """Per-position stress exposures, using the live beta pipeline + factor loadings."""
+    """Per-position stress exposures, using the live beta pipeline + factor loadings. For
+    pipeline-beta names we also attach downside/upside betas (stress-only) so selloff and
+    rally scenarios differ; forward-override and insufficient-data names stay symmetric."""
     metrics = analytics.compute_metrics(portfolio, market)
-    return [
-        StressExposure(
-            ticker=p.ticker,
-            book=p.book.value,
-            signed_notional=p.signed_notional,
-            beta=metrics[p.ticker].beta,
-            loadings=metrics[p.ticker].loadings,
+    mkt = market.market_returns()
+    exposures: list[StressExposure] = []
+    for p in portfolio.positions:
+        m = metrics[p.ticker]
+        down = up = None
+        if m.beta_method == "pipeline":
+            sb = semibetas(market.ticker_returns(p.ticker), mkt, fallback=m.beta)
+            down, up = sb.down_beta, sb.up_beta
+        exposures.append(
+            StressExposure(
+                ticker=p.ticker,
+                book=p.book.value,
+                signed_notional=p.signed_notional,
+                beta=m.beta,
+                loadings=m.loadings,
+                down_beta=down,
+                up_beta=up,
+            )
         )
-        for p in portfolio.positions
-    ]
+    return exposures
 
 
 def risk_factor_matrix(
