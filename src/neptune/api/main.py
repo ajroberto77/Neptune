@@ -338,6 +338,33 @@ def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
     }
 
 
+@app.post("/portfolios/{portfolio_id}/refresh-prices")
+def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
+    """Re-pull the latest prices for this book's tickers + the benchmark (a recent window,
+    so today's live bar is updated), so day P&L reflects current prices. Requires yfinance;
+    returns 503 if it's unavailable. Per-ticker failures are collected, not fatal."""
+    service = PositionService(session)
+    portfolio = _require_portfolio(service, portfolio_id)
+    tickers = {p.ticker for p in portfolio.positions} | {settings.benchmark}
+    end = date.today()
+    start = end - timedelta(days=7)  # short window — just refresh the latest bars
+    provider = YFinanceProvider()
+    updated, errors = 0, []
+    with securities_session(session) as sec_session:
+        for ticker in tickers:
+            try:
+                res = ingest_ticker(
+                    sec_session, provider, ticker, start, end, create_if_missing=True
+                )
+            except RuntimeError as exc:  # yfinance not installed — global condition
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            except Exception:  # noqa: BLE001 — per-ticker feed error, non-fatal
+                errors.append(ticker)
+            else:
+                updated += res.prices
+    return {"updated_bars": updated, "tickers": len(tickers), "errors": errors}
+
+
 @app.get("/portfolios/{portfolio_id}/risk")
 def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)

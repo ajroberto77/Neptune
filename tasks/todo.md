@@ -147,10 +147,12 @@ first vertical slice · 🔵 LATER = deferred.
 - [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
       it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show
       the fee-inclusive blended basis. (Avg execution price already shown.)
-- [ ] **Configurable price-refresh interval** (default 10 min): re-fetch latest prices on a
-      schedule so day P&L stays current intraday + a Settings control for the interval.
-      Depends on the DbMarketData flip (refreshing DB prices only matters once the engine
-      reads them) and a scheduler (APScheduler/Celery).
+- [~] **Live pricing (configurable interval).** `POST /portfolios/{id}/refresh-prices`
+      re-pulls a recent window for the book's tickers + benchmark (updates today's live bar);
+      the Portfolio tab auto-polls it every N minutes (default 10, 0=off, persisted in
+      localStorage) + a "Refresh now" button. `test_market_flip.py` (503 offline) +
+      `Blotter.test.tsx`. REMAINING: always-on server-side scheduler (APScheduler) so prices
+      refresh even with no browser open; intraday last-price via yfinance fast_info.
 - [ ] 🔵 Multi-currency (FX P&L tracked separately); WebSocket price pipeline (<400ms)
 
 ## Phase 2 — Beta Engine 🟢

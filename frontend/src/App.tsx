@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   Frontier,
   HedgeProposal,
@@ -14,6 +14,7 @@ import {
   fetchStress,
   proposeHedge,
   recordTransaction,
+  refreshPrices,
 } from "./api/client";
 import type { TransactionInput } from "./types";
 import { Blotter } from "./tabs/Blotter";
@@ -39,6 +40,12 @@ export default function App() {
   const [stressLoading, setStressLoading] = useState(false);
   const [trading, setTrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Live pricing: poll /refresh-prices every `refreshMins` minutes (0 = off), persisted.
+  const [refreshMins, setRefreshMins] = useState<number>(
+    () => Number(localStorage.getItem("np_refresh_mins")) || 10,
+  );
+  const [pricing, setPricing] = useState(false);
+  const [lastPriced, setLastPriced] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([fetchRisk(PORTFOLIO_ID), fetchPositions(PORTFOLIO_ID)])
@@ -118,6 +125,34 @@ export default function App() {
     }
   }
 
+  async function handleRefreshPrices() {
+    setPricing(true);
+    try {
+      await refreshPrices(PORTFOLIO_ID);
+      await refreshBook();
+      setLastPriced(new Date().toLocaleTimeString());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPricing(false);
+    }
+  }
+
+  function changeRefreshMins(m: number) {
+    setRefreshMins(m);
+    localStorage.setItem("np_refresh_mins", String(m));
+  }
+
+  // Auto-poll latest prices. A ref holds the freshest handler so the interval isn't reset
+  // on every render — only when the interval length changes.
+  const refreshRef = useRef(handleRefreshPrices);
+  refreshRef.current = handleRefreshPrices;
+  useEffect(() => {
+    if (!refreshMins || refreshMins <= 0) return; // 0 = off
+    const id = setInterval(() => refreshRef.current(), refreshMins * 60_000);
+    return () => clearInterval(id);
+  }, [refreshMins]);
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-ocean-border bg-ocean-panel/60">
@@ -173,7 +208,16 @@ export default function App() {
                 frontierLoading={frontierLoading}
               />
             )}
-            {tab === "Portfolio" && <Blotter positions={positions} />}
+            {tab === "Portfolio" && (
+              <Blotter
+                positions={positions}
+                refreshMins={refreshMins}
+                onChangeMins={changeRefreshMins}
+                onRefreshNow={handleRefreshPrices}
+                lastPriced={lastPriced}
+                pricing={pricing}
+              />
+            )}
             {tab === "Trade" && (
               <Trade
                 positions={positions}

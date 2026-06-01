@@ -72,6 +72,12 @@ export function closePosition(
   });
 }
 
+export function refreshPrices(
+  portfolioId: string,
+): Promise<{ updated_bars: number; tickers: number; errors: string[] }> {
+  return getJSON(`/portfolios/${portfolioId}/refresh-prices`, { method: "POST" });
+}
+
 // --- Settings: configurable DB connections ---
 import type {
   ConnectionRow,

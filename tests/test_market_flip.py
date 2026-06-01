@@ -94,3 +94,17 @@ def test_ingest_unknown_still_raises_without_create_flag(securities_session):
     provider = RecordedProvider({})
     with pytest.raises(LookupError):
         ingest_ticker(securities_session, provider, "NOPE", START, date(2025, 1, 31))
+
+
+def test_refresh_prices_reports_feed_unavailable_offline():
+    # /refresh-prices needs yfinance (absent here) → clean 503, not a 500.
+    from fastapi.testclient import TestClient
+    from neptune.api.main import app
+    from neptune.db.base import Base, SecuritiesBase, engine, securities_engine
+
+    Base.metadata.drop_all(bind=engine)
+    SecuritiesBase.metadata.drop_all(bind=securities_engine)
+    with TestClient(app) as client:
+        r = client.post("/portfolios/IRIDIUM-CORE/refresh-prices")
+        assert r.status_code == 503
+        assert "yfinance" in r.json()["detail"]

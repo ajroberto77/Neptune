@@ -7,11 +7,47 @@ const BOOKS: { title: string; book: string }[] = [
   { title: "Discretionary Short", book: "DISCRETIONARY_SHORT" },
 ];
 
-/** Live blotter: long / systematic short / discretionary short sub-panels with the four
- * P&L dimensions. Systematic and discretionary shorts are kept separate (invariant I-03). */
-export function Blotter({ positions }: { positions: PositionRow[] }) {
+/** Portfolio view: long / systematic short / discretionary short sub-panels with the four
+ * P&L dimensions. Systematic and discretionary shorts are kept separate (invariant I-03).
+ * Optional live-pricing control polls the latest prices on a configurable interval. */
+export function Blotter({
+  positions,
+  refreshMins,
+  onChangeMins,
+  onRefreshNow,
+  lastPriced,
+  pricing,
+}: {
+  positions: PositionRow[];
+  refreshMins?: number;
+  onChangeMins?: (m: number) => void;
+  onRefreshNow?: () => void;
+  lastPriced?: string | null;
+  pricing?: boolean;
+}) {
   return (
     <div className="space-y-6">
+      {onRefreshNow && (
+        <div className="flex items-center justify-end gap-3 text-sm text-ocean-muted">
+          <span>Live prices: every</span>
+          <input
+            type="number"
+            min={0}
+            value={refreshMins ?? 0}
+            onChange={(e) => onChangeMins?.(Number(e.target.value))}
+            className="np-input w-16 text-right"
+          />
+          <span>min {refreshMins ? "" : "(off)"}</span>
+          <button
+            onClick={onRefreshNow}
+            disabled={pricing}
+            className="rounded border border-ocean-border px-3 py-1.5 hover:text-slate-200 disabled:opacity-50"
+          >
+            {pricing ? "Refreshing…" : "Refresh now"}
+          </button>
+          {lastPriced && <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>}
+        </div>
+      )}
       {BOOKS.map(({ title, book }) => {
         const rows = positions.filter((p) => p.book === book);
         return (
