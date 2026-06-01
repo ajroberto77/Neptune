@@ -10,7 +10,7 @@ const BOOKS: { title: string; book: string }[] = [
 /** Portfolio view: long / systematic short / discretionary short sub-panels with the four
  * P&L dimensions. Systematic and discretionary shorts are kept separate (invariant I-03).
  * Optional live-pricing control polls the latest prices on a configurable interval. */
-export function Blotter({
+export function Portfolio({
   positions,
   refreshMins,
   onChangeMins,

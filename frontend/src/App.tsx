@@ -19,7 +19,7 @@ import {
   setPriceRefresh,
 } from "./api/client";
 import type { TransactionInput } from "./types";
-import { Blotter } from "./tabs/Blotter";
+import { Portfolio } from "./tabs/Portfolio";
 import { Trade } from "./tabs/Trade";
 import { RiskDashboard } from "./tabs/RiskDashboard";
 import { HedgeApproval } from "./tabs/HedgeApproval";
@@ -221,7 +221,7 @@ export default function App() {
               />
             )}
             {tab === "Portfolio" && (
-              <Blotter
+              <Portfolio
                 positions={positions}
                 refreshMins={refreshMins}
                 onChangeMins={changeRefreshMins}

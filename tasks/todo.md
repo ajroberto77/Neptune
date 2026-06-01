@@ -127,7 +127,7 @@ first vertical slice · 🔵 LATER = deferred.
       lots persisted (`lots` table), `reduce_position` matches lots + accrues realised
 - [x] 🟢 Live P&L (Day / ITD / Unrealised / Realised) split by Long / Systematic /
       Discretionary (`risk/pnl.py`); `/positions` carries per-name P&L, `/pnl` the book split;
-      blotter shows P&L columns (`test_pnl.py`, `test_api.py`, `Blotter.test.tsx`)
+      blotter shows P&L columns (`test_pnl.py`, `test_api.py`, `Portfolio.test.tsx`)
 - [x] Trade workflow (the single entry path for all executions): `record_trade` service
       method aggregates lots into the open position for a (ticker, book) or opens a new one,
       growing `notional` by executed value; closing scales `notional` down (full close → 0).
@@ -154,7 +154,7 @@ first vertical slice · 🔵 LATER = deferred.
       Interval is persisted (`app_settings` kv) + runtime-reschedulable via
       `GET/PUT /settings/price-refresh` (default `NEPTUNE_PRICE_REFRESH_MINUTES`=10, 0=off).
       The Portfolio tab reads/writes the server interval and re-displays on that cadence +
-      "Refresh now". `test_price_scheduler.py`, `test_market_flip.py`, `Blotter.test.tsx`.
+      "Refresh now". `test_price_scheduler.py`, `test_market_flip.py`, `Portfolio.test.tsx`.
       LATER: intraday last-price via yfinance fast_info (today it re-pulls daily bars).
 - [ ] 🔵 Multi-currency (FX P&L tracked separately); WebSocket price pipeline (<400ms)
 

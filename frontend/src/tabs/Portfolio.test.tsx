@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { Blotter } from "./Blotter";
+import { Portfolio } from "./Portfolio";
 import type { PositionRow } from "../types";
 
 function pos(over: Partial<PositionRow>): PositionRow {
@@ -21,14 +21,14 @@ function pos(over: Partial<PositionRow>): PositionRow {
   };
 }
 
-describe("Blotter", () => {
+describe("Portfolio", () => {
   it("separates the three books (invariant I-03)", () => {
     const positions = [
       pos({ ticker: "AAA", book: "LONG" }),
       pos({ ticker: "SYS1", book: "SYSTEMATIC_SHORT", side: "SHORT", short_type: "SYSTEMATIC" }),
       pos({ ticker: "DSC1", book: "DISCRETIONARY_SHORT", side: "SHORT", short_type: "DISCRETIONARY" }),
     ];
-    render(<Blotter positions={positions} />);
+    render(<Portfolio positions={positions} />);
     expect(screen.getByText("Long Book")).toBeInTheDocument();
     expect(screen.getByText("Systematic Short")).toBeInTheDocument();
     expect(screen.getByText("Discretionary Short")).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("Blotter", () => {
 
   it("renders signed P&L for a position", () => {
     render(
-      <Blotter
+      <Portfolio
         positions={[pos({ pnl: { day: -100, total: 5000, unrealised: 5000, realised: 0 } })]}
       />,
     );
@@ -50,7 +50,7 @@ describe("Blotter", () => {
   });
 
   it("shows an empty message for a book with no positions", () => {
-    render(<Blotter positions={[pos({ book: "LONG" })]} />);
+    render(<Portfolio positions={[pos({ book: "LONG" })]} />);
     // Systematic and discretionary books are empty.
     expect(screen.getAllByText("No positions.").length).toBe(2);
   });
@@ -59,7 +59,7 @@ describe("Blotter", () => {
     const { fireEvent } = await import("@testing-library/react");
     const onRefreshNow = vi.fn();
     render(
-      <Blotter
+      <Portfolio
         positions={[pos({})]}
         refreshMins={10}
         onChangeMins={() => {}}
