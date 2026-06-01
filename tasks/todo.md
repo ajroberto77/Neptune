@@ -16,8 +16,33 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 `docker-compose.yml` (postgres:16 + redis) — canonical DB target
 - [x] 🟢 `config.py` (pydantic-settings; `DATABASE_URL`, `LAMBDA=0.94`, `BETA_TOL=0.05`)
 - [ ] 🔵 Alembic migrations (Postgres dialect) for the full schema
-- [ ] 🔵 Auth & RBAC (CIO/PM/Analyst/Admin)
 - [ ] 🔵 Tacitus / CATO / Mercury connectors
+
+### Unified identity & access (cross-platform) 🔵
+
+> **Decision (2026-06-01):** identity, roles, and access are NOT built per-app. A single
+> shared identity service spans CATO, Mercury, and Neptune — one place to define users and
+> what they can do on each platform. This supersedes the roadmap's Neptune-local "Auth &
+> RBAC" item (JWT+OAuth2, roles CIO/PM/Analyst/Admin) by hoisting it out of Neptune.
+> Same shape as the `cato_securities` universe: one authoritative store; each platform
+> reads it and projects the slice it needs; Neptune never mutates it (read-only input).
+
+- [ ] **Shared identity service** (separate, cross-repo initiative — not Neptune-owned):
+      authoritative users + per-platform roles/entitlements. Likely evolves from / replaces
+      the existing `cato_identity` DB; name should be platform-neutral if it's truly shared
+      (cf. how `cato_securities` is shared despite the `cato_` prefix).
+- [ ] **Neptune's slice** (what lands in this repo):
+      - read identity/roles **read-only** from the shared service (adapter + projection,
+        mirroring the universe adapter); Neptune's `people` table becomes that projection,
+        not a second source of truth.
+      - `require_role()` FastAPI dependency gating endpoints to CIO/PM/Analyst/Admin per the
+        roadmap's Roles & access-control matrix.
+      - authn integration point (SSO/OIDC token validation) — mechanism owned by the shared
+        service, Neptune just validates.
+- [ ] **Open questions to resolve before building:** (a) is `cato_identity` the seed of the
+      shared store or to be superseded? (b) authentication mechanism (OIDC/SSO provider vs.
+      home-grown JWT)? (c) where do per-platform entitlements live — central, or per-app
+      mapping off central roles? (d) shared-service ownership/repo + neutral DB name.
 
 ## Phase 0.5 — Data layer / three-DB topology 🟡 (in progress; see docs/data_architecture.md)
 
