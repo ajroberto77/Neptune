@@ -46,10 +46,27 @@ first vertical slice · 🔵 LATER = deferred.
         roadmap's Roles & access-control matrix.
       - authn integration point (SSO/OIDC token validation) — mechanism owned centrally,
         Neptune just validates.
-- [ ] **Open questions to resolve before building:** (a) authentication mechanism (OIDC/SSO
-      provider vs. home-grown JWT)? (b) where do per-platform entitlements live — central in
-      `iridium_users`, or central roles with each app mapping its own permissions? (c)
-      `iridium_users` schema + which repo/service owns it.
+**Decisions (2026-06-01):**
+
+- [ ] **Authentication — delegate via OIDC; never home-grown passwords.** All three apps are
+      OIDC clients of the firm's corporate IdP (Entra ID if on M365, Google if on Workspace),
+      or a self-hosted Keycloak if independence is wanted. Apps *validate* IdP-issued tokens
+      against the provider's JWKS; no app stores passwords or issues its own login tokens.
+- [ ] **Entitlements live in `iridium_users`, keyed by the OIDC `sub` claim** (stable subject
+      id — not email, which can change). Division of labor: IdP = authentication + coarse
+      identity; `iridium_users` = the rich, queryable authorization model (users ↔ per-platform
+      roles ↔ entitlements, e.g. PM↔assigned books). Don't cram per-book entitlements into IdP
+      groups.
+- [ ] **A dedicated Identity & Access service owns `iridium_users`** (sole writer; owns schema +
+      migrations; exposes an API for "roles/entitlements for this `sub` on platform X"; hosts
+      the admin/provisioning UI; integrates with the IdP). Apps are **clients** — they call the
+      API, never the raw schema. (Identity has writes + is security-sensitive, so NOT the pure
+      shared-DB read pattern used for the read-only `cato_securities` universe.)
+- [ ] **Neptune's client behavior:** validate the OIDC token (authn) → fetch roles/entitlements
+      from the Identity service (authz) → gate endpoints with `require_role()` → keep a
+      read-only local projection of its users for domain joins/attribution (`pm_id`/`analyst_id`).
+- [ ] **Still to detail (cross-platform, not Neptune-only):** the `iridium_users` schema, the
+      Identity service's API surface + repo/ownership, and which concrete IdP is adopted.
 
 ## Phase 0.5 — Data layer / three-DB topology 🟡 (in progress; see docs/data_architecture.md)
 
