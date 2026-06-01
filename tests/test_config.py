@@ -1,0 +1,27 @@
+"""Config resolution: a .env file with bare connection names must take effect, but the
+shell environment still wins (so the test suite's DATABASE_URL stays authoritative)."""
+from __future__ import annotations
+
+from neptune.config import get_settings
+
+
+def test_dotenv_bare_name_is_honored(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PORTFOLIO_DATABASE_URL", raising=False)
+    (tmp_path / ".env").write_text(
+        "PORTFOLIO_DATABASE_URL=postgresql+psycopg://u:p@h:5432/neptune_portfolios\n"
+    )
+    assert get_settings().portfolio_url.endswith("/neptune_portfolios")
+
+
+def test_shell_env_wins_over_dotenv(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("DATABASE_URL=sqlite+pysqlite:///from_dotenv\n")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///from_shell")
+    assert "from_shell" in get_settings().database_url
+
+
+def test_no_dotenv_falls_back_to_default(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # empty dir, no .env
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert get_settings().database_url.startswith("sqlite")

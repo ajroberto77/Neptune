@@ -67,11 +67,35 @@ _URL_ENV = {
 }
 
 
+def _dotenv_values(path: str = ".env") -> dict[str, str]:
+    """Minimal ``.env`` parser for the bare connection names. pydantic-settings only reads
+    ``.env`` for the ``NEPTUNE_``-prefixed fields, so without this a ``.env`` copied from
+    ``.env.example`` (which uses bare ``DATABASE_URL=…``) would be silently ignored and the
+    app would keep using the in-memory SQLite default. No extra dependency — just the four
+    keys we care about."""
+    values: dict[str, str] = {}
+    if not os.path.exists(path):
+        return values
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            values[key.strip()] = val.strip().strip('"').strip("'")
+    return values
+
+
 def get_settings() -> Settings:
+    """Resolve settings with precedence: shell environment > ``.env`` file > defaults.
+    Shell-first keeps tests (which set ``DATABASE_URL`` in ``os.environ``) authoritative."""
+    dotenv = _dotenv_values()
     overrides: dict[str, str] = {}
     for field, env in _URL_ENV.items():
         if env in os.environ:
             overrides[field] = os.environ[env]
+        elif env in dotenv:
+            overrides[field] = dotenv[env]
     return Settings(**overrides)
 
 
