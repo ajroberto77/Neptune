@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Book, PositionRow, TransactionInput } from "../types";
-import { money } from "../format";
+import { money, price } from "../format";
 
 const BOOK_LABELS: { value: Book; label: string }[] = [
   { value: "LONG", label: "Long" },
@@ -145,6 +145,7 @@ export function Trade({
                 <th className="pb-2 font-medium">Ticker</th>
                 <th className="pb-2 font-medium">Book</th>
                 <th className="pb-2 text-right font-medium">Qty</th>
+                <th className="pb-2 text-right font-medium">Avg price</th>
                 <th className="pb-2 text-right font-medium">Notional</th>
                 <th className="pb-2 text-right font-medium">Close @ price</th>
                 <th className="pb-2 text-right font-medium"></th>
@@ -156,6 +157,9 @@ export function Trade({
                   <td className="py-2 font-mono">{p.ticker}</td>
                   <td className="py-2 text-xs text-ocean-muted">{p.book}</td>
                   <td className="py-2 text-right font-mono">{p.quantity}</td>
+                  <td className="py-2 text-right font-mono">
+                    {p.quantity > 0 ? price(p.notional / p.quantity) : "—"}
+                  </td>
                   <td className="py-2 text-right font-mono">{money(p.notional)}</td>
                   <td className="py-2 text-right">
                     <input

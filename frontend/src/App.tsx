@@ -24,7 +24,7 @@ import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 
 const PORTFOLIO_ID = "IRIDIUM-CORE";
-const TABS = ["Blotter", "Trade", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
+const TABS = ["Portfolio", "Trade", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -173,7 +173,7 @@ export default function App() {
                 frontierLoading={frontierLoading}
               />
             )}
-            {tab === "Blotter" && <Blotter positions={positions} />}
+            {tab === "Portfolio" && <Blotter positions={positions} />}
             {tab === "Trade" && (
               <Trade
                 positions={positions}
