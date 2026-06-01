@@ -147,8 +147,17 @@ def raw_beta_ewma_dimson(
     dof = max(n - p, 1)
     sigma2_resid = float((w * resid**2).sum() / dof)
 
-    # Variance of the *sum* of the market coefficients: a^T Cov(coef) a.
-    cov_coef = sigma2_resid * XtWX_inv
+    # Variance of the *sum* of the market coefficients: aᵀ Cov(coef) a.
+    #
+    # EWMA weights are a RECENCY decay, not inverse-variance (GLS) weights, so the naive WLS
+    # covariance σ²·(XᵀWX)⁻¹ is wrong here — it treats all 252 rows as equally informative
+    # and badly understates the estimate's uncertainty (effective sample ≈ 1/(1-λ) ≈ 17). The
+    # correct standard error for a weighted estimator with arbitrary weights is the SANDWICH
+    # form σ²·(XᵀWX)⁻¹(XᵀW²X)(XᵀWX)⁻¹. Without it var_ols is several-fold too small (~6x at
+    # λ=0.94, where the effective sample ≈ 32 of 252), so Vasicek sees "precise" betas and
+    # barely shrinks — leaving the wild ±3 raw estimates intact.
+    XtW2X = (X.T * (w**2)) @ X
+    cov_coef = sigma2_resid * (XtWX_inv @ XtW2X @ XtWX_inv)
     var_ols = float(selector @ cov_coef @ selector)
 
     return RawBetaResult(beta_raw=beta_raw, var_ols=var_ols, coefficients=coef, n_obs=n)
