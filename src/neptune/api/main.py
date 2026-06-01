@@ -35,7 +35,7 @@ from neptune.settings_store.app_settings import AppSettingsService
 from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
 from neptune.db.models import PositionORM
 from neptune.db.runtime import securities_session
-from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType, TradeAction
+from neptune.domain.models import BookType, LotEntry, Portfolio, Position, Side, ShortType, TradeAction
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
 from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
@@ -223,11 +223,31 @@ def get_session():
         yield session
 
 
+# The consolidated ("Consolidated") view: every book's positions rolled into one virtual
+# portfolio. A read/analysis-only target — you cannot trade against it (pick a real book).
+CONSOLIDATED_ID = "__consolidated__"
+
+
 def _require_portfolio(service: PositionService, portfolio_id: str):
+    """A real, mutable book. Rejects the consolidated sentinel — you trade into a real book."""
+    if portfolio_id == CONSOLIDATED_ID:
+        raise HTTPException(
+            status_code=409,
+            detail="Consolidated is a read-only roll-up; select a specific portfolio to trade.",
+        )
     portfolio = service.get_portfolio(portfolio_id)
     if portfolio is None:
         raise HTTPException(status_code=404, detail=f"portfolio {portfolio_id} not found")
     return portfolio
+
+
+def _resolve_portfolio(service: PositionService, portfolio_id: str):
+    """A book for read/analysis. The consolidated sentinel yields a virtual portfolio that
+    concatenates every book's positions (the firm roll-up); otherwise a real book."""
+    if portfolio_id == CONSOLIDATED_ID:
+        positions = [p for b in service.list_portfolios() for p in b.positions]
+        return Portfolio(id=CONSOLIDATED_ID, name="Consolidated", positions=positions)
+    return _require_portfolio(service, portfolio_id)
 
 
 # --- endpoints -------------------------------------------------------------------
@@ -250,7 +270,7 @@ def hedge_diagnostics(portfolio_id: str, session: Session = Depends(get_session)
     from sqlalchemy import func
 
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     long_tickers = {p.ticker for p in portfolio.longs}
     out: dict = {"portfolio_id": portfolio_id, "benchmark": settings.benchmark}
 
@@ -420,7 +440,7 @@ def record_transaction(
 @app.get("/portfolios/{portfolio_id}/positions")
 def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     # Compute the book's lead PM once (not per position) — the per-name fallback.
     lead_pm = portfolio.lead_pm_ids[0] if portfolio.lead_pm_ids else None
     with market_data_for(session, portfolio) as md:
@@ -475,7 +495,7 @@ def reduce_position(
 def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
     """Four P&L dimensions for the book, split by Long / Systematic / Discretionary."""
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     with market_data_for(session, portfolio) as md:
         result = pnl_engine.portfolio_pnl(portfolio, md)
     return {
@@ -491,7 +511,7 @@ def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
     so today's live bar is updated), so day P&L reflects current prices. Requires yfinance;
     returns 503 if it's unavailable. Per-ticker failures are collected, not fatal."""
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     tickers = {p.ticker for p in portfolio.positions} | {settings.benchmark}
     end = date.today()
     start = end - timedelta(days=7)  # short window — just refresh the latest bars
@@ -515,7 +535,7 @@ def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
 @app.get("/portfolios/{portfolio_id}/risk")
 def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     with market_data_for(session, portfolio) as md:
         metrics = analytics.compute_metrics(portfolio, md)
     net_beta, net_factors = analytics.net_metrics(portfolio, metrics)
@@ -553,7 +573,7 @@ def propose_hedge(
     session: Session = Depends(get_session),
 ):
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     long_tickers = {p.ticker for p in portfolio.longs}
     try:
         with market_data_for(session, portfolio) as md:
@@ -600,7 +620,7 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
     """Complexity-quality frontier: capped runs (N<=10/20/50) showing the trade-off
     between position count and hedge quality (tracking error / net beta)."""
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
     long_tickers = {p.ticker for p in portfolio.longs}
     with market_data_for(session, portfolio) as md:
         metrics = analytics.compute_metrics(portfolio, md)
@@ -644,7 +664,7 @@ def stress(
     always runs; custom scenarios in the body are appended."""
     body = body or StressIn()
     service = PositionService(session)
-    portfolio = _require_portfolio(service, portfolio_id)
+    portfolio = _resolve_portfolio(service, portfolio_id)
 
     scenarios = list(STANDARD_SCENARIOS) + [
         Scenario(name=s.name, market_shock=s.market_shock, factor_shocks=s.factor_shocks)

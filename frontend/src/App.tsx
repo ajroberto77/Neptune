@@ -30,10 +30,13 @@ import { Settings } from "./tabs/Settings";
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
+// The virtual "all books" roll-up; the backend resolves this id to every book's positions.
+const CONSOLIDATED_ID = "__consolidated__";
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("Portfolio");
-  // The selected book. Multiple portfolios roll up into one firm book (Total Book view: TODO).
-  const [portfolioId, setPortfolioId] = useState<string>("IRIDIUM-CORE");
+  // The selected portfolio. Defaults to the Consolidated roll-up across every book.
+  const [portfolioId, setPortfolioId] = useState<string>(CONSOLIDATED_ID);
   const [portfolios, setPortfolios] = useState<{ id: string; name: string }[]>([]);
   const [summary, setSummary] = useState<RiskSummary | null>(null);
   const [positions, setPositions] = useState<PositionRow[]>([]);
@@ -54,10 +57,7 @@ export default function App() {
   // Load the portfolio list (for the switcher) + the server refresh interval, once.
   useEffect(() => {
     fetchPortfolios()
-      .then((ps) => {
-        setPortfolios(ps);
-        if (ps.length && !ps.some((p) => p.id === portfolioId)) setPortfolioId(ps[0].id);
-      })
+      .then(setPortfolios) // keep the Consolidated default; the user picks a book explicitly
       .catch((e) => setError(String(e)));
     getPriceRefresh()
       .then(({ minutes }) => setRefreshMins(minutes))
@@ -183,25 +183,9 @@ export default function App() {
     <div className="min-h-screen">
       <header className="border-b border-ocean-border bg-ocean-panel/60">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-4">
-            <div>
-              <h1 className="font-display text-xl font-semibold text-white">Neptune</h1>
-              <p className="text-xs text-ocean-muted">Iridium Capital Management</p>
-            </div>
-            <label className="flex items-center gap-2 text-xs text-ocean-muted">
-              Book
-              <select
-                className="np-input py-1"
-                value={portfolioId}
-                onChange={(e) => setPortfolioId(e.target.value)}
-              >
-                {portfolios.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div>
+            <h1 className="font-display text-xl font-semibold text-white">Neptune</h1>
+            <p className="text-xs text-ocean-muted">Iridium Capital Management</p>
           </div>
           <nav className="flex gap-1">
             {TABS.map((t) => (
@@ -220,6 +204,29 @@ export default function App() {
           </nav>
         </div>
       </header>
+
+      {/* Portfolio selector sits below the header — Consolidated (all books) is the default. */}
+      <div className="border-b border-ocean-border bg-ocean-panel/30">
+        <div className="mx-auto flex max-w-6xl items-center gap-2 px-6 py-2">
+          <label className="flex items-center gap-2 text-xs text-ocean-muted">
+            Portfolio
+            <select
+              className="np-input py-1"
+              value={portfolioId}
+              onChange={(e) => setPortfolioId(e.target.value)}
+            >
+              <option value={CONSOLIDATED_ID} style={{ fontWeight: 700 }}>
+                Consolidated
+              </option>
+              {portfolios.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
         {error && (

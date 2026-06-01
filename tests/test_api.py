@@ -30,6 +30,24 @@ def test_hedge_diagnostics_reports_source(client):
     assert d["names_with_30plus_bars"] == 0  # nothing backfilled in the test DB
 
 
+def test_consolidated_rolls_up_all_books(client):
+    # A second book with a position; the consolidated view spans both books' positions,
+    # and risk computes on the combined book. Trading into consolidated is rejected.
+    client.post("/portfolios", json={"id": "BOOK-X", "name": "Book X"})
+    client.post("/portfolios/BOOK-X/positions", json={
+        "ticker": "ZZZ", "side": "LONG", "notional": 100000.0,
+    })
+    cons = client.get("/portfolios/__consolidated__/positions").json()
+    tickers = {p["ticker"] for p in cons}
+    assert "ZZZ" in tickers  # spans the new book
+    assert client.get("/portfolios/__consolidated__/risk").status_code == 200
+    # Consolidated is read-only: you must pick a real book to trade.
+    r = client.post("/portfolios/__consolidated__/positions", json={
+        "ticker": "QQQ", "side": "LONG", "notional": 1000.0,
+    })
+    assert r.status_code == 409
+
+
 def test_list_and_create_portfolios(client):
     # The seeded golden book is listed.
     ids = {p["id"] for p in client.get("/portfolios").json()}
