@@ -86,6 +86,21 @@ export function fetchPortfolios(): Promise<{ id: string; name: string }[]> {
   return getJSON("/portfolios");
 }
 
+export interface SecuritiesHealth {
+  benchmark?: string;
+  benchmark_bars?: number;
+  securities_projected: number;
+  names_with_30plus_bars: number;
+  names_with_computable_beta?: number;
+  factor_panel?: string;
+  source: string;
+  reason: string;
+}
+
+export function fetchSecuritiesHealth(): Promise<SecuritiesHealth> {
+  return getJSON<SecuritiesHealth>("/securities/health");
+}
+
 export function getPriceRefresh(): Promise<{ minutes: number }> {
   return getJSON("/settings/price-refresh");
 }

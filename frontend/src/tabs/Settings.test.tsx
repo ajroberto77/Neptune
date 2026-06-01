@@ -32,6 +32,17 @@ const ingestFactors = vi.fn(async () => ({
 
 vi.mock("../api/client", () => ({
   fetchConnections: () => Promise.resolve(rows),
+  fetchSecuritiesHealth: () =>
+    Promise.resolve({
+      benchmark: "SPY",
+      benchmark_bars: 252,
+      securities_projected: 540,
+      names_with_30plus_bars: 539,
+      names_with_computable_beta: 539,
+      factor_panel: "MKT-only",
+      source: "db",
+      reason: "ok",
+    }),
   saveConnection: (role: string, body: unknown) => saveConnection(role, body),
   testConnection: (role: string) => testConnection(role),
   syncUniverse: () => syncUniverse(),

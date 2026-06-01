@@ -262,6 +262,19 @@ def health():
     return {"status": "ok", "beta_tol": settings.beta_tol}
 
 
+@app.get("/securities/health")
+def securities_health(session: Session = Depends(get_session)):
+    """Universe/benchmark data health for the UI: benchmark bar count, projected names, names
+    with enough price history, names that actually produce a beta (regression fits against the
+    benchmark), and whether the style-factor panel is loaded. Read-only; runs against an empty
+    book so the numbers are universe-level (not portfolio-specific)."""
+    empty = Portfolio(id="__health__", name="health", positions=[])
+    with securities_session(session) as sec:
+        out = {"benchmark": settings.benchmark}
+        out.update(_universe_diag(sec, empty))
+        return out
+
+
 @app.get("/portfolios/{portfolio_id}/hedge/diagnostics")
 def hedge_diagnostics(portfolio_id: str, session: Session = Depends(get_session)):
     """Explain WHY the hedge universe is what it is — the silent gates made visible.
