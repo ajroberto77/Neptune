@@ -11,6 +11,7 @@ optimizer therefore minimizes *tracking error to the residual exposure*, not ret
             * |net beta| <= beta_tol                (default 0.05)
             * |net factor[f]| <= factor_limit       (Size/Value/Momentum)
             * 0 <= x_i <= max_position_weight        (15% of long AUM)
+            * sector short share <= sector_limit     (per-GICS sector, default 30%)
 
 Output is a PROPOSAL with status PENDING_APPROVAL. Neptune never executes (I-01).
 """
@@ -126,9 +127,9 @@ def optimize_hedge(
 ) -> HedgeProposal:
     """Pass 2 (recommended run). Solve the QP and return a hedge proposal.
 
-    Market-beta neutrality |net beta| <= beta_tol and the factor limits are HARD
-    constraints; the run fails closed (InfeasibleHedge) if they cannot be met. Sector
-    concentration is a SOFT warning computed against ``sector_limit`` (never a block).
+    Market-beta neutrality |net beta| <= beta_tol, the factor limits, AND the per-sector
+    concentration cap (``sector_limit``) are all HARD constraints; the run fails closed
+    (InfeasibleHedge) if they cannot be jointly met with this universe.
     """
     excluded = excluded_tickers or set()
     cands = [c for c in universe if c.ticker not in excluded]
@@ -137,12 +138,12 @@ def optimize_hedge(
 
     weights, status = _solve_qp(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
-        max_position_weight, hard=True,
+        max_position_weight, hard=True, sector_limit=sector_limit,
     )
     if status not in ("optimal", "optimal_inaccurate"):
         raise InfeasibleHedge(
-            f"no feasible hedge under |net beta| <= {beta_tol} with this universe "
-            f"(solver status: {status})"
+            f"no feasible hedge under |net beta| <= {beta_tol}, factor limit {factor_limit}, "
+            f"and sector cap {sector_limit:.0%} with this universe (solver status: {status})"
         )
     return _build_proposal(
         cands, weights, residual_beta, residual_factors, long_aum, status,
@@ -296,10 +297,12 @@ def _solve_qp(
     factor_limit: float,
     max_position_weight: float,
     hard: bool,
+    sector_limit: float | None = None,
 ) -> tuple[np.ndarray, str]:
     """Minimize tracking error to the residual. With ``hard``, the beta/factor limits
-    are constraints; otherwise only the per-name size ceiling is enforced (the limits
-    live in the objective), guaranteeing a feasible solution."""
+    (and, when given, the per-sector concentration cap) are constraints; otherwise only the
+    per-name size ceiling is enforced (the limits live in the objective), guaranteeing a
+    feasible solution."""
     betas = np.array([c.beta for c in cands])
     loads = np.array([[c.loadings.get(f, 0.0) for f in HEDGE_FACTORS] for c in cands])
 
@@ -315,6 +318,19 @@ def _solve_qp(
         constraints.append(cp.abs(net_beta) <= beta_tol)
         for j in range(len(HEDGE_FACTORS)):
             constraints.append(cp.abs(net_factors[j]) <= factor_limit)
+        if sector_limit is not None:
+            # Sector concentration is a HARD constraint: each sector's share of total short
+            # notional <= sector_limit. Linear (hence convex): share_s = sum(x in s) / sum(x),
+            # so sum(x in s) <= sector_limit * sum(x). The optimizer never proposes a hedge
+            # that breaches the limit (it spreads the short book across sectors instead).
+            by_sector: dict[str, list[int]] = {}
+            for i, c in enumerate(cands):
+                if c.sector is None:
+                    continue  # can't cap a name whose sector we don't know — leave it free
+                by_sector.setdefault(c.sector, []).append(i)
+            total_short = cp.sum(x)
+            for idxs in by_sector.values():
+                constraints.append(cp.sum(x[idxs]) <= sector_limit * total_short)
 
     problem = cp.Problem(objective, constraints)
     problem.solve(solver=cp.CLARABEL)

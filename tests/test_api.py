@@ -47,17 +47,24 @@ def test_hedge_proposal_is_constrained_and_pending(client):
     assert all("sector" in p for p in body["proposed_shorts"])
 
 
-def test_hedge_proposal_sector_limit_is_customizable(client):
+def test_hedge_proposal_enforces_sector_limit(client):
     loose = client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0.9").json()
-    tight = client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0.1").json()
-    assert loose["sector_limit"] == 0.9
-    assert tight["sector_limit"] == 0.1
-    # A tighter limit flags at least as many sectors as a looser one (soft warning only;
-    # the hedge itself is unchanged).
-    assert len(tight["sector_breaches"]) >= len(loose["sector_breaches"])
-    assert len(tight["sector_breaches"]) > 0
-    assert [p["ticker"] for p in loose["proposed_shorts"]] == \
-        [p["ticker"] for p in tight["proposed_shorts"]]
+    tight = client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0.2").json()
+    assert tight["sector_limit"] == 0.2
+    # The cap is a HARD constraint: the proposed hedge never breaches it.
+    assert tight["sector_breaches"] == []
+    assert all(s["fraction"] <= 0.2 + 1e-6 for s in tight["sectors"])
+    # A tighter cap forces a more diversified short book than a loose one.
+    assert max(s["fraction"] for s in tight["sectors"]) <= \
+        max(s["fraction"] for s in loose["sectors"]) + 1e-9
+
+
+def test_hedge_proposal_sector_cap_too_tight_fails_closed(client):
+    # 6 sectors can't each stay under ~10%, so no compliant hedge exists → fail closed (422),
+    # never a breaching proposal.
+    r = client.post(f"/portfolios/{PID}/hedge/propose?sector_limit=0.1")
+    assert r.status_code == 422
+    assert "sector cap" in r.json()["detail"]
 
 
 def test_propose_rejects_out_of_range_sector_limit(client):

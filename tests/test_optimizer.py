@@ -195,20 +195,35 @@ def test_sector_concentration_breakdown_and_flag():
     assert all(not s.breach for s in sectors[1:])
 
 
-def test_sector_limit_is_customizable_and_soft():
+def test_sector_limit_is_enforced_as_a_hard_constraint():
+    # Technology has two cheap names that would otherwise dominate the hedge; the cap must
+    # force the short book to spread across sectors instead of breaching.
     universe = [
-        Candidate("T1", beta=1.0, sector="Technology"),
-        Candidate("T2", beta=1.0, sector="Technology"),
+        Candidate("T1", beta=1.2, sector="Technology"),
+        Candidate("T2", beta=1.2, sector="Technology"),
         Candidate("E1", beta=1.0, sector="Energy"),
+        Candidate("F1", beta=1.0, sector="Financials"),
+        Candidate("H1", beta=1.0, sector="Healthcare"),
     ]
-    # A residual that two tech names will dominate.
     common = dict(residual_beta=0.20, residual_factors={}, universe=universe,
                   long_aum=1_000_000.0, max_position_weight=0.5)
-    loose = optimize_hedge(**common, sector_limit=0.90)
     tight = optimize_hedge(**common, sector_limit=0.30)
-    # Same hedge either way — the flag is a SOFT warning, it never changes the optimization.
-    assert [p.ticker for p in loose.positions] == [p.ticker for p in tight.positions]
-    assert abs(loose.net_beta_after) <= 0.05 + 1e-6
-    # The threshold only changes the flagging.
-    assert loose.sector_limit == 0.90 and tight.sector_limit == 0.30
-    assert "Technology" in tight.sector_breaches
+    assert abs(tight.net_beta_after) <= 0.05 + 1e-6  # still beta-neutral
+    # No sector exceeds the cap, and nothing is flagged as breaching.
+    assert all(s.fraction <= 0.30 + 1e-6 for s in tight.sectors)
+    assert tight.sector_breaches == []
+
+
+def test_sector_cap_fails_closed_when_unsatisfiable():
+    # Only three sectors but a 30% cap (3 * 30% < 100%): no compliant hedge can neutralize
+    # beta, so the optimizer fails closed rather than emitting a breaching proposal.
+    universe = [
+        Candidate("T1", beta=1.0, sector="Technology"),
+        Candidate("E1", beta=1.0, sector="Energy"),
+        Candidate("F1", beta=1.0, sector="Financials"),
+    ]
+    with pytest.raises(InfeasibleHedge):
+        optimize_hedge(
+            residual_beta=0.20, residual_factors={}, universe=universe,
+            long_aum=1_000_000.0, max_position_weight=0.9, sector_limit=0.30,
+        )

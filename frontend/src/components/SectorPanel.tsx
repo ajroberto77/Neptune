@@ -46,7 +46,8 @@ export function SectorPanel({
           {proposal.sector_breaches.length} sector
           {proposal.sector_breaches.length > 1 ? "s" : ""} over the{" "}
           {(proposal.sector_limit * 100).toFixed(0)}% limit:{" "}
-          {proposal.sector_breaches.join(", ")} (warning only — not blocked).
+          {proposal.sector_breaches.join(", ")} — exploratory capped run; the recommended
+          hedge enforces this cap.
         </p>
       )}
 
