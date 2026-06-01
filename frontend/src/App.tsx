@@ -189,29 +189,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Portfolio selector sits below the header — Consolidated (all books) is the default. */}
-      <div className="border-b border-ocean-border bg-ocean-panel/30">
-        <div className="mx-auto flex max-w-6xl items-center gap-2 px-6 py-2">
-          <label className="flex items-center gap-2 text-xs text-ocean-muted">
-            Portfolio
-            <select
-              className="np-input py-1"
-              value={portfolioId}
-              onChange={(e) => setPortfolioId(e.target.value)}
-            >
-              <option value={CONSOLIDATED_ID} style={{ fontWeight: 700 }}>
-                Consolidated
-              </option>
-              {portfolios.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
-
       <main className="mx-auto max-w-6xl px-6 py-8">
         {error && (
           <div className="mb-4 rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">
@@ -240,14 +217,35 @@ export default function App() {
               />
             )}
             {tab === "Portfolio" && (
-              <Portfolio
-                positions={positions}
-                refreshMins={refreshMins}
-                onChangeMins={changeRefreshMins}
-                onRefreshNow={handleRefreshPrices}
-                lastPriced={lastPriced}
-                pricing={pricing}
-              />
+              <div className="space-y-6">
+                {/* The portfolio selector lives on the Portfolio page. Consolidated (all
+                    books) is the default; the choice persists across the other tabs. */}
+                <label className="flex items-center gap-2 text-xs text-ocean-muted">
+                  Portfolio
+                  <select
+                    className="np-input py-1"
+                    value={portfolioId}
+                    onChange={(e) => setPortfolioId(e.target.value)}
+                  >
+                    <option value={CONSOLIDATED_ID} style={{ fontWeight: 700 }}>
+                      Consolidated
+                    </option>
+                    {portfolios.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Portfolio
+                  positions={positions}
+                  refreshMins={refreshMins}
+                  onChangeMins={changeRefreshMins}
+                  onRefreshNow={handleRefreshPrices}
+                  lastPriced={lastPriced}
+                  pricing={pricing}
+                />
+              </div>
             )}
             {tab === "Trade" && (
               <Trade
