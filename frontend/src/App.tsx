@@ -73,11 +73,11 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, [portfolioId]);
 
-  async function handlePropose(sectorLimit?: number) {
+  async function handlePropose(sectorLimit?: number, maxNames?: number) {
     setProposing(true);
     setError(null);
     try {
-      setProposal(await proposeHedge(portfolioId, sectorLimit));
+      setProposal(await proposeHedge(portfolioId, sectorLimit, maxNames));
     } catch (e) {
       setError(String(e));
     } finally {

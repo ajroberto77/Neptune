@@ -71,7 +71,10 @@ def test_proposal_respects_size_ceiling_and_exclusions():
     ceiling = 0.15 * portfolio.long_aum
     for short in proposal.positions:
         assert short.notional > 0
-        assert short.notional <= ceiling + 1e-6
+        # Sparse hedges concentrate, so a name can sit right on the 15% ceiling; allow a
+        # solver-precision relative slack (the weight-space violation is ~1e-11).
+        assert short.weight <= 0.15 + 1e-6
+        assert short.notional <= ceiling * (1 + 1e-6)
         assert short.ticker not in long_tickers
 
 
@@ -90,6 +93,18 @@ def test_factor_limit_is_respected():
     )
     assert abs(proposal.net_beta_after) <= BETA_TOL + 1e-6
     assert abs(proposal.factor_after["SMB"]) <= 0.20 + 1e-6
+
+
+def test_hedge_is_sparse_not_a_dense_universe_basket():
+    """A small residual over a wide universe must produce a PARSIMONIOUS basket — a handful of
+    names that reproduce the exposure — not a tiny short in every name (the L1 gross penalty)."""
+    universe = _wide_universe(n=200, seed=3)
+    proposal = optimize_hedge(
+        residual_beta=0.12, residual_factors={"SMB": 0.0, "HML": 0.0, "MOM": 0.0},
+        universe=universe, long_aum=1_000_000.0, beta_tol=BETA_TOL, max_position_weight=0.15,
+    )
+    assert abs(proposal.net_beta_after) <= BETA_TOL + 1e-6  # still neutral
+    assert proposal.n_selected <= 5  # not 200 — the whole point
 
 
 def test_infeasible_hedge_fails_closed():

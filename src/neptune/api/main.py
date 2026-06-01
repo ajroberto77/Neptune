@@ -38,7 +38,12 @@ from neptune.db.runtime import securities_session
 from neptune.domain.models import BookType, LotEntry, Portfolio, Position, Side, ShortType, TradeAction
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
-from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
+from neptune.quant.optimizer import (
+    InfeasibleHedge,
+    complexity_frontier,
+    optimize_hedge,
+    optimize_hedge_capped,
+)
 from neptune.risk import analytics
 from neptune.risk import pnl as pnl_engine
 from neptune.risk import stress as stress_engine
@@ -606,6 +611,10 @@ def propose_hedge(
         default=settings.sector_limit, gt=0.0, le=1.0,
         description="Flag any GICS sector exceeding this fraction of short notional.",
     ),
+    max_names: int | None = Query(
+        default=None, ge=1,
+        description="Hard cap on the number of hedge names. None = the natural sparse basket.",
+    ),
     session: Session = Depends(get_session),
 ):
     service = PositionService(session)
@@ -616,7 +625,7 @@ def propose_hedge(
             metrics = analytics.compute_metrics(portfolio, md)
             residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
             universe = _shortable_universe(md)
-            proposal = optimize_hedge(
+            common = dict(
                 residual_beta=residual_beta,
                 residual_factors=residual_factors,
                 universe=universe,
@@ -626,6 +635,14 @@ def propose_hedge(
                 max_position_weight=settings.max_position_weight,
                 sector_limit=sector_limit,
                 excluded_tickers=long_tickers,
+            )
+            # Default: the natural sparse basket (L1 gross penalty). With an explicit max_names
+            # the user trades exactness for a hard name-count cap (capped runs are soft, so the
+            # proposal's net_beta_after reports whether neutrality was still achieved).
+            proposal = (
+                optimize_hedge_capped(n_cap=max_names, **common)
+                if max_names is not None
+                else optimize_hedge(**common)
             )
     except (InfeasibleHedge, ValueError) as exc:
         # Cannot hedge to neutral with this universe — a domain state, not a 500. Append the

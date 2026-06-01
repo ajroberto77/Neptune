@@ -3,9 +3,11 @@ import { SectorPanel } from "../components/SectorPanel";
 import { FrontierPanel } from "../components/FrontierPanel";
 import { money } from "../format";
 
+import { useState } from "react";
+
 interface Props {
   proposal: HedgeProposal | null;
-  onPropose: (sectorLimit?: number) => void;
+  onPropose: (sectorLimit?: number, maxNames?: number) => void;
   proposing: boolean;
   onApplySectorLimit: (limit: number) => void;
   frontier: Frontier | null;
@@ -25,20 +27,36 @@ export function Hedge({
   onFrontier,
   frontierLoading,
 }: Props) {
+  // Blank = the natural sparse basket (L1 gross penalty picks the few efficient names).
+  const [maxNames, setMaxNames] = useState<string>("");
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
             Systematic Hedge Proposal
           </h3>
-          <button
-            onClick={() => onPropose()}
-            disabled={proposing}
-            className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80 disabled:opacity-50"
-          >
-            {proposing ? "Optimizing…" : "Propose hedge"}
-          </button>
+          <div className="flex items-end gap-3">
+            <label className="text-xs text-ocean-muted">
+              <span className="mb-1 block">Max hedges</span>
+              <input
+                type="number"
+                min={1}
+                placeholder="auto"
+                value={maxNames}
+                onChange={(e) => setMaxNames(e.target.value)}
+                className="np-input w-24"
+              />
+            </label>
+            <button
+              onClick={() => onPropose(undefined, maxNames ? Number(maxNames) : undefined)}
+              disabled={proposing}
+              className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80 disabled:opacity-50"
+            >
+              {proposing ? "Optimizing…" : "Propose hedge"}
+            </button>
+          </div>
         </div>
 
         {proposal ? (

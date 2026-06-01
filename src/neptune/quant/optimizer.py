@@ -26,6 +26,14 @@ from neptune.quant.factors import FACTORS
 
 HEDGE_FACTORS = ("SMB", "HML", "MOM")  # market beta is constrained separately
 ZERO_WEIGHT_TOL = 1e-6
+# L1 penalty on gross short (sum of weights). Without it the tracking-error objective is
+# degenerate once beta/factors are neutralized — any allocation in the null space is equally
+# optimal, so the interior-point solver returns a DENSE basket (a tiny short in every name).
+# A small positive penalty makes the minimal-gross hedge unique and SPARSE: the optimizer
+# keeps only the few names that efficiently reproduce the book's beta/factor exposures, and
+# zeroes the rest. Kept small so it only breaks ties — it never overrides the hard neutrality
+# constraints (which still pull net beta/factors to ~0 when far from neutral).
+GROSS_PENALTY = 1e-3
 
 
 class InfeasibleHedge(RuntimeError):
@@ -324,7 +332,10 @@ def _solve_qp(
     resid_fac = np.array([residual_factors.get(f, 0.0) for f in HEDGE_FACTORS])
     net_factors = resid_fac - loads.T @ x
 
-    objective = cp.Minimize(cp.square(net_beta) + cp.sum_squares(net_factors))
+    # Tracking error to the residual + an L1 gross-short penalty for a sparse, minimal basket.
+    objective = cp.Minimize(
+        cp.square(net_beta) + cp.sum_squares(net_factors) + GROSS_PENALTY * cp.sum(x)
+    )
     constraints = [x <= max_position_weight]
     if hard:
         constraints.append(cp.abs(net_beta) <= beta_tol)
