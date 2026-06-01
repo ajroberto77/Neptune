@@ -54,11 +54,12 @@ first vertical slice · 🔵 LATER = deferred.
       (resilient per-ticker errors; 503 when yfinance absent), Settings "Backfill prices"
       button. `test_ingest.py` + endpoint tests. Live backfill itself runs off-sandbox.
 - [~] `MarketData` protocol + `DbMarketData`: protocol in `data/source.py`; `DbMarketData`
-      (`data/db_source.py`) reads `adj_close` from `neptune_securities`, aligns every ticker
-      to the SPY date axis, recovers real `market_returns`/`ticker_returns` (full ingest→
-      engine loop tested: recovers the synthetic beta from stored prices). Raw `close` for
-      P&L marks. REMAINING to go live: Ken French factor panel (`factor_returns` raises
-      `FactorDataUnavailable` until injected) + flip the API constructor from synthetic to DB.
+      (`data/db_market.py`) reads `adj_close` from `neptune_securities`, aligns every ticker
+      to the benchmark (SPY) date index, recovers real `market_returns`/`ticker_returns`
+      (tested: raw beta pipeline recovers ~1.2 from stored prices). Raw `close` for P&L
+      marks; deterministic multi-source dedup; optional `lookback`. REMAINING to go live:
+      Ken French factor panel (`factor_returns` is MKT-only until then) + flip the API
+      constructor from `SyntheticMarketData` to `DbMarketData`.
 - [ ] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`
 
 ## Phase 1 — Position Manager 🟢
