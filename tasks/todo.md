@@ -20,29 +20,36 @@ first vertical slice · 🔵 LATER = deferred.
 
 ### Unified identity & access (cross-platform) 🔵
 
-> **Decision (2026-06-01):** identity, roles, and access are NOT built per-app. A single
-> shared identity service spans CATO, Mercury, and Neptune — one place to define users and
-> what they can do on each platform. This supersedes the roadmap's Neptune-local "Auth &
-> RBAC" item (JWT+OAuth2, roles CIO/PM/Analyst/Admin) by hoisting it out of Neptune.
-> Same shape as the `cato_securities` universe: one authoritative store; each platform
-> reads it and projects the slice it needs; Neptune never mutates it (read-only input).
+> **Decision (2026-06-01):** platform users, roles, and access are NOT built per-app. A
+> new firm-wide **`iridium_users`** database (platform-neutral name — shared by CATO,
+> Mercury, and Neptune) is the single source of who the firm's people are and what they can
+> do on each platform. This supersedes the roadmap's Neptune-local "Auth & RBAC" item
+> (JWT+OAuth2, roles CIO/PM/Analyst/Admin) by hoisting it out of Neptune. Same shape as the
+> `cato_securities` universe: one authoritative store; each platform reads it and projects
+> the slice it needs; Neptune never mutates it (read-only input).
+>
+> **NOT to be confused with `cato_identity`** — that is a *universe of people as research
+> subjects* (activists, insiders, board members, execs): domain/reference data, the
+> people-analogue of `cato_securities`. It has nothing to do with platform login/access.
+> `iridium_users` = the firm's employees and their entitlements; `cato_identity` = external
+> people the platforms analyze.
 
-- [ ] **Shared identity service** (separate, cross-repo initiative — not Neptune-owned):
-      authoritative users + per-platform roles/entitlements. Likely evolves from / replaces
-      the existing `cato_identity` DB; name should be platform-neutral if it's truly shared
-      (cf. how `cato_securities` is shared despite the `cato_` prefix).
+- [ ] **`iridium_users` — shared platform-user store** (separate, cross-repo initiative; not
+      Neptune-owned): authoritative firm users (CIO/PM/Analyst/Admin) + per-platform
+      roles/entitlements across CATO/Mercury/Neptune. New database; no relation to
+      `cato_identity`.
 - [ ] **Neptune's slice** (what lands in this repo):
-      - read identity/roles **read-only** from the shared service (adapter + projection,
-        mirroring the universe adapter); Neptune's `people` table becomes that projection,
-        not a second source of truth.
+      - read users/roles **read-only** from `iridium_users` (adapter + projection, mirroring
+        the universe adapter); Neptune's `people` table becomes that projection, not a second
+        source of truth.
       - `require_role()` FastAPI dependency gating endpoints to CIO/PM/Analyst/Admin per the
         roadmap's Roles & access-control matrix.
-      - authn integration point (SSO/OIDC token validation) — mechanism owned by the shared
-        service, Neptune just validates.
-- [ ] **Open questions to resolve before building:** (a) is `cato_identity` the seed of the
-      shared store or to be superseded? (b) authentication mechanism (OIDC/SSO provider vs.
-      home-grown JWT)? (c) where do per-platform entitlements live — central, or per-app
-      mapping off central roles? (d) shared-service ownership/repo + neutral DB name.
+      - authn integration point (SSO/OIDC token validation) — mechanism owned centrally,
+        Neptune just validates.
+- [ ] **Open questions to resolve before building:** (a) authentication mechanism (OIDC/SSO
+      provider vs. home-grown JWT)? (b) where do per-platform entitlements live — central in
+      `iridium_users`, or central roles with each app mapping its own permissions? (c)
+      `iridium_users` schema + which repo/service owns it.
 
 ## Phase 0.5 — Data layer / three-DB topology 🟡 (in progress; see docs/data_architecture.md)
 
