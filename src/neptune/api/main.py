@@ -28,6 +28,9 @@ from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.data.db_market import DbMarketData, TickerNotFound
+from neptune.scheduling import scheduler as price_scheduler
+from neptune.scheduling.scheduler import shutdown_scheduler, start_scheduler
+from neptune.settings_store.app_settings import AppSettingsService
 from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
 from neptune.db.runtime import securities_session
 from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
@@ -171,7 +174,9 @@ async def lifespan(app: FastAPI):
     init_securities_db()  # create the market-data schema too (idempotent)
     with SessionLocal() as session:
         seed_golden(session)
+    start_scheduler()  # always-on price refresh (no-op if apscheduler isn't installed)
     yield
+    shutdown_scheduler()
 
 
 app = FastAPI(title="Neptune", version="0.1.0", lifespan=lifespan)
@@ -548,6 +553,26 @@ class ConnectionIn(BaseModel):
     password: str | None = None
     sslmode: str | None = None
     driver: str | None = None
+
+
+class PriceRefreshIn(BaseModel):
+    """The always-on price-refresh interval in minutes (0 = disabled, max 1 day)."""
+
+    minutes: int = Field(ge=0, le=1440)
+
+
+@app.get("/settings/price-refresh")
+def get_price_refresh(session: Session = Depends(get_session)):
+    """Current server-side price-refresh interval (minutes; 0 = off)."""
+    return {"minutes": AppSettingsService(session).get_price_refresh_minutes()}
+
+
+@app.put("/settings/price-refresh")
+def set_price_refresh(body: PriceRefreshIn, session: Session = Depends(get_session)):
+    """Persist the interval and reschedule the running job (live, no restart)."""
+    minutes = AppSettingsService(session).set_price_refresh_minutes(body.minutes)
+    price_scheduler.reschedule(minutes)
+    return {"minutes": minutes}
 
 
 @app.get("/settings/connections")

@@ -78,6 +78,18 @@ export function refreshPrices(
   return getJSON(`/portfolios/${portfolioId}/refresh-prices`, { method: "POST" });
 }
 
+export function getPriceRefresh(): Promise<{ minutes: number }> {
+  return getJSON("/settings/price-refresh");
+}
+
+export function setPriceRefresh(minutes: number): Promise<{ minutes: number }> {
+  return getJSON("/settings/price-refresh", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ minutes }),
+  });
+}
+
 // --- Settings: configurable DB connections ---
 import type {
   ConnectionRow,

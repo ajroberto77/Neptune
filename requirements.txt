@@ -24,6 +24,9 @@ yfinance==0.2.66
 # Ken French factor panel (SMB/HML/MOM) is fetched from its published CSV zips with the
 # stdlib (urllib + zipfile) — no third-party reader, which keeps us off pandas-datareader.
 
+# --- Scheduling (always-on price refresh; imported lazily, degrades if absent) ---
+apscheduler==3.11.0
+
 # --- Task queue (deferred wiring; pinned for forward compatibility) ---
 celery==5.4.0
 redis==5.0.7

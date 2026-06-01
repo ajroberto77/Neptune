@@ -186,3 +186,13 @@ class DbConnectionORM(Base):
     password: Mapped[str | None] = mapped_column(String, nullable=True)  # write-only
     sslmode: Mapped[str | None] = mapped_column(String, nullable=True)
     driver: Mapped[str] = mapped_column(String, default="postgresql+psycopg")
+
+
+class AppSettingORM(Base):
+    """A persisted runtime app setting (key→value), e.g. the price-refresh interval. Lives in
+    the portfolio DB; values are stored as strings and parsed by the reading service."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str] = mapped_column(String, nullable=False)

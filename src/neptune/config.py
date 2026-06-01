@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     beta_lookback: int = 252           # trading days in the estimation window
     beta_tol: float = 0.05             # |net portfolio beta| hard constraint
     benchmark: str = "SPY"             # market-beta benchmark (NEPTUNE_BENCHMARK)
+    # Always-on price refresh: the server re-pulls latest prices every N minutes (0 = off).
+    # Runtime-overridable + persisted via /settings/price-refresh; this is the default.
+    price_refresh_minutes: int = 10
     max_position_weight: float = 0.15  # position-size ceiling as fraction of long AUM
     factor_limit: float = 0.20         # per-factor exposure limit (Size/Value/Momentum)
     # Sector concentration: flag any GICS sector exceeding this fraction of total short

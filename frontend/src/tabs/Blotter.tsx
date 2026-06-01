@@ -29,7 +29,7 @@ export function Blotter({
     <div className="space-y-6">
       {onRefreshNow && (
         <div className="flex items-center justify-end gap-3 text-sm text-ocean-muted">
-          <span>Live prices: every</span>
+          <span>Server price refresh: every</span>
           <input
             type="number"
             min={0}

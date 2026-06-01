@@ -147,12 +147,15 @@ first vertical slice · 🔵 LATER = deferred.
 - [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
       it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show
       the fee-inclusive blended basis. (Avg execution price already shown.)
-- [~] **Live pricing (configurable interval).** `POST /portfolios/{id}/refresh-prices`
-      re-pulls a recent window for the book's tickers + benchmark (updates today's live bar);
-      the Portfolio tab auto-polls it every N minutes (default 10, 0=off, persisted in
-      localStorage) + a "Refresh now" button. `test_market_flip.py` (503 offline) +
-      `Blotter.test.tsx`. REMAINING: always-on server-side scheduler (APScheduler) so prices
-      refresh even with no browser open; intraday last-price via yfinance fast_info.
+- [x] **Live pricing — manual + always-on.** `POST /portfolios/{id}/refresh-prices` re-pulls
+      a recent window for the book's tickers + benchmark (updates today's live bar). An
+      always-on server-side scheduler (APScheduler, lazy/optional — degrades cleanly if absent)
+      refreshes ALL tracked tickers + benchmark every N minutes even with no browser open.
+      Interval is persisted (`app_settings` kv) + runtime-reschedulable via
+      `GET/PUT /settings/price-refresh` (default `NEPTUNE_PRICE_REFRESH_MINUTES`=10, 0=off).
+      The Portfolio tab reads/writes the server interval and re-displays on that cadence +
+      "Refresh now". `test_price_scheduler.py`, `test_market_flip.py`, `Blotter.test.tsx`.
+      LATER: intraday last-price via yfinance fast_info (today it re-pulls daily bars).
 - [ ] 🔵 Multi-currency (FX P&L tracked separately); WebSocket price pipeline (<400ms)
 
 ## Phase 2 — Beta Engine 🟢
