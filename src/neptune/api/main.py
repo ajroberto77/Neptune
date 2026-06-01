@@ -307,12 +307,22 @@ def _universe_diag(sec: Session, portfolio) -> dict:
         )
         return out
 
-    out["benchmark_bars"] = len(md._series(settings.benchmark))
+    benchmark_bars = len(md._series(settings.benchmark))
+    out["benchmark_bars"] = benchmark_bars
     unpriced = sorted({p.ticker for p in portfolio.positions if _ticker_unpriced(md, p.ticker)})
     out["unpriced_positions"] = unpriced
-    candidates = [t for t in usable_tickers if t not in long_tickers]
-    out["candidates_after_excluding_longs"] = len(candidates)
     out["factor_panel"] = "MKT+SMB+HML+MOM" if md._style_factors() else "MKT-only"
+
+    # The TRUE shortable universe: names whose beta regression actually fits against the
+    # benchmark — not merely names with >=30 of their own bars. The gap between these two is
+    # the usual culprit: a short/misaligned benchmark fails EVERY regression, so price-bar
+    # counts look healthy while the real universe is empty.
+    universe = analytics.db_universe(md)
+    regressable = {c.ticker for c in universe}
+    out["names_with_computable_beta"] = len(regressable)
+    candidates = [t for t in regressable if t not in long_tickers]
+    out["candidates_after_excluding_longs"] = len(candidates)
+
     if unpriced:
         out["source"] = "synthetic"
         out["reason"] = (
@@ -321,10 +331,17 @@ def _universe_diag(sec: Session, portfolio) -> dict:
             f"falls back to the synthetic universe, so your {len(usable_tickers)} backfilled "
             f"names are IGNORED. Backfill these names (or remove them) to hedge real."
         )
+    elif not regressable and usable_tickers:
+        out["source"] = "db"
+        out["reason"] = (
+            f"{len(usable_tickers)} names have prices but NONE produce a beta — the benchmark "
+            f"{settings.benchmark!r} has only {benchmark_bars} bars, so every regression fails. "
+            f"Backfill {settings.benchmark!r} over the full window (it defines the date index)."
+        )
     elif not candidates:
         out["source"] = "db"
         out["reason"] = (
-            "real source is active but every usable name is one of your longs — backfill "
+            "real source is active but every regressable name is one of your longs — backfill "
             "more of the universe to get shortable candidates."
         )
     else:
@@ -342,7 +359,9 @@ def _universe_diag_suffix(session: Session, portfolio) -> str:
         return ""
     return (
         f" [diagnostics: source={d.get('source')}, "
-        f"backfilled names ≥30 bars={d.get('names_with_30plus_bars')}, "
+        f"benchmark {settings.benchmark} bars={d.get('benchmark_bars', '?')}, "
+        f"names with prices={d.get('names_with_30plus_bars')}, "
+        f"names with a computable beta={d.get('names_with_computable_beta', 0)}, "
         f"candidates after excluding longs={d.get('candidates_after_excluding_longs', 0)}. "
         f"{d.get('reason', '')}]"
     )

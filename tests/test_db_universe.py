@@ -45,6 +45,22 @@ def test_db_universe_builds_real_candidates_with_sectors(securities_session):
     assert all(np.isfinite(c.beta) for c in cands)  # real pipeline betas
 
 
+def test_short_benchmark_empties_universe_despite_priced_names(securities_session):
+    """The real failure behind a '539 names but no candidates' report: names have plenty of
+    their OWN bars, but the benchmark is short, so EVERY beta regression fails and the
+    shortable universe is empty. available_tickers (price-bar count) still lists them."""
+    synth = SyntheticMarketData()
+    # Benchmark with only 4 bars — too short to fit the Dimson regression (needs ~7 aligned).
+    _seed(securities_session, "SPY", 1, [0.01, -0.02, 0.0])
+    _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"), sector="Technology")
+    _seed(securities_session, "BBB", 3, synth.ticker_returns("BBB"), sector="Energy")
+    securities_session.commit()
+
+    md = DbMarketData(securities_session, benchmark="SPY")
+    assert set(md.available_tickers()) == {"AAA", "BBB"}  # both have >=30 of their own bars
+    assert analytics.db_universe(md) == []                # …yet NO regressable candidates
+
+
 def test_available_tickers_excludes_benchmark(securities_session):
     _seed(securities_session, "SPY", 1, SyntheticMarketData().market_returns())
     _seed(securities_session, "AAA", 2, SyntheticMarketData().ticker_returns("AAA"))
