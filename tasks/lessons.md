@@ -91,3 +91,20 @@ case).
 **Pattern:** When a "pipeline" of statistical steps is described, check whether a step is
 part of *estimation* (belongs inside the regression) vs. a *transform of the estimate*
 (applied after). Don't blindly chain them in the order listed.
+
+---
+
+## Don't state an inferred cause as fact — especially about the user's data
+
+**Context:** The hedge universe came back empty. I told the user it was because they'd
+"only backfilled their own positions." I had never inspected their DB; I inferred it from
+the symptom. They corrected me: 128k price rows, ~540 companies, ~250 days each.
+
+**Pattern:** When a symptom has several possible causes and the deciding evidence lives in
+data I can't see (the user's DB, their env), say which causes are possible and how to tell
+them apart — or add a diagnostic that surfaces the truth. Never narrate one hypothesis as
+the established reason. For the universe specifically, the real gates are silent: (1)
+`market_data_for` is all-or-nothing — one unpriced position (or an unpriced benchmark)
+drops the WHOLE book to the synthetic 60-name source; (2) `available_tickers` needs the
+`Security`∩`Price` join (projection synced + matching instrument_ids) with >=30 bars. A
+populated price table alone is not sufficient.

@@ -50,7 +50,7 @@ from neptune.settings_store.service import ConnectionSettingsService
 from neptune.securities.ingest import ingest_ticker
 from neptune.securities.factor_ingest import ingest_factors
 from neptune.securities.factor_providers import KenFrenchProvider
-from neptune.securities.models import Security
+from neptune.securities.models import Price, Security
 from neptune.securities.providers import YFinanceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
@@ -235,6 +235,88 @@ def _require_portfolio(service: PositionService, portfolio_id: str):
 @app.get("/health")
 def health():
     return {"status": "ok", "beta_tol": settings.beta_tol}
+
+
+@app.get("/portfolios/{portfolio_id}/hedge/diagnostics")
+def hedge_diagnostics(portfolio_id: str, session: Session = Depends(get_session)):
+    """Explain WHY the hedge universe is what it is — the silent gates made visible.
+
+    Reports which market-data source is actually in force for this book, the benchmark's
+    bar count, how many backfilled names are usable hedge candidates, and how many survive
+    after excluding the book's own longs. Critically, it names any unpriced position: a
+    single one (or an unpriced benchmark) drops the ENTIRE book to the synthetic 60-name
+    source, silently ignoring every real backfilled name. Read-only; never runs the solver.
+    """
+    from sqlalchemy import func
+
+    service = PositionService(session)
+    portfolio = _require_portfolio(service, portfolio_id)
+    long_tickers = {p.ticker for p in portfolio.longs}
+    out: dict = {"portfolio_id": portfolio_id, "benchmark": settings.benchmark}
+
+    with securities_session(session) as sec:
+        # Raw projection∩prices count (independent of the benchmark), so we can report the
+        # real universe size even when the benchmark itself is unpriced.
+        projected = sec.scalar(select(func.count(Security.instrument_id))) or 0
+        usable = sec.execute(
+            select(Security.ticker)
+            .join(Price, Price.instrument_id == Security.instrument_id)
+            .where(Security.ticker.isnot(None), Security.ticker != settings.benchmark)
+            .group_by(Security.ticker)
+            .having(func.count(Price.ts) >= 30)
+        ).all()
+        usable_tickers = sorted(t for (t,) in usable)
+        out["securities_projected"] = projected
+        out["names_with_30plus_bars"] = len(usable_tickers)
+        out["sample"] = usable_tickers[:25]
+
+        try:
+            md = DbMarketData(sec, benchmark=settings.benchmark)
+        except TickerNotFound as exc:
+            out["source"] = "synthetic"
+            out["reason"] = (
+                f"benchmark {settings.benchmark!r} is not priced ({exc}); the whole book "
+                f"falls back to the synthetic 60-name universe — your "
+                f"{len(usable_tickers)} backfilled names are IGNORED for hedging."
+            )
+            return out
+
+        out["benchmark_bars"] = len(md._series(settings.benchmark))
+        unpriced = sorted(
+            {p.ticker for p in portfolio.positions
+             if _ticker_unpriced(md, p.ticker)}
+        )
+        out["unpriced_positions"] = unpriced
+        candidates = [t for t in usable_tickers if t not in long_tickers]
+        out["candidates_after_excluding_longs"] = len(candidates)
+        out["factor_panel"] = "MKT+SMB+HML+MOM" if md._style_factors() else "MKT-only"
+        if unpriced:
+            out["source"] = "synthetic"
+            out["reason"] = (
+                f"{len(unpriced)} position(s) have no stored prices "
+                f"({', '.join(unpriced[:5])}{'…' if len(unpriced) > 5 else ''}); the whole "
+                f"book falls back to the synthetic universe, so your "
+                f"{len(usable_tickers)} backfilled names are IGNORED. Backfill these names "
+                f"(or remove them) to hedge against the real universe."
+            )
+        elif not candidates:
+            out["source"] = "db"
+            out["reason"] = (
+                "real source is active but every usable name is one of your longs — "
+                "backfill more of the universe to get shortable candidates."
+            )
+        else:
+            out["source"] = "db"
+            out["reason"] = f"real backfilled universe in use ({len(candidates)} candidates)."
+    return out
+
+
+def _ticker_unpriced(md: DbMarketData, ticker: str) -> bool:
+    try:
+        md.ticker_returns(ticker)
+        return False
+    except TickerNotFound:
+        return True
 
 
 class PortfolioIn(BaseModel):

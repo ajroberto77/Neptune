@@ -21,6 +21,15 @@ def test_health(client):
     assert r.json()["beta_tol"] == 0.05
 
 
+def test_hedge_diagnostics_reports_source(client):
+    # The seeded golden book has no stored prices, so it must report the synthetic fallback
+    # with a human reason — never a bare empty universe.
+    d = client.get(f"/portfolios/{PID}/hedge/diagnostics").json()
+    assert d["source"] == "synthetic"
+    assert "reason" in d and d["reason"]
+    assert d["names_with_30plus_bars"] == 0  # nothing backfilled in the test DB
+
+
 def test_list_and_create_portfolios(client):
     # The seeded golden book is listed.
     ids = {p["id"] for p in client.get("/portfolios").json()}
