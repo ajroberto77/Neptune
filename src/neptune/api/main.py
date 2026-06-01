@@ -883,6 +883,10 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
             raise HTTPException(
                 status_code=409, detail="no securities to ingest — sync the universe first"
             )
+        # ALWAYS backfill the benchmark over the full window: it defines the date index for
+        # every beta regression, so a short benchmark empties the whole hedge universe. The
+        # 7-day "Refresh now" must never be its only source. Dedupe, benchmark first.
+        tickers = list(dict.fromkeys([settings.benchmark, *tickers]))
         # Per-ticker failures are collected, not fatal: ingest is idempotent and
         # source-tagged, so a partial run is safe to resume. A missing-yfinance
         # RuntimeError is global, though — fail fast with 503 rather than N times.

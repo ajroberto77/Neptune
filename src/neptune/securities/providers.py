@@ -111,7 +111,10 @@ class YFinanceProvider:
         # Dividends / Stock Splits columns. end is exclusive in yfinance, so +1 day.
         from datetime import timedelta
 
-        df = yf.Ticker(ticker).history(
+        from neptune.securities.symbology import to_provider_symbol
+
+        symbol = to_provider_symbol(ticker, self.source)  # e.g. BRK.B -> BRK-B for Yahoo
+        df = yf.Ticker(symbol).history(
             start=start.isoformat(),
             end=(end + timedelta(days=1)).isoformat(),
             auto_adjust=False,
@@ -154,8 +157,10 @@ class YFinanceProvider:
             import yfinance as yf
         except ImportError:  # pragma: no cover - optional install
             return None
+        from neptune.securities.symbology import to_provider_symbol
+
         try:
-            return yf.Ticker(ticker).info.get("sector") or None
+            return yf.Ticker(to_provider_symbol(ticker, self.source)).info.get("sector") or None
         except Exception:  # noqa: BLE001 - sector is best-effort enrichment, never fatal
             return None
 
