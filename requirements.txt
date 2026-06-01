@@ -10,7 +10,8 @@ pydantic-settings==2.14.1
 
 # --- Persistence (Postgres canonical; SQLite is stdlib for tests) ---
 SQLAlchemy==2.0.50
-psycopg[binary]==3.1.19
+# 3.2+ ships wheels for newer Pythons (incl. 3.14); 3.1.x predates them.
+psycopg[binary]>=3.2,<4
 alembic==1.13.2
 
 # --- Quant Engine ---
