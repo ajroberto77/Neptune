@@ -1,102 +1,89 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Trade } from "./Trade";
 
-const BOOKS = [
-  { id: "BOOK-A", name: "Book A" },
-  { id: "BOOK-B", name: "Book B" },
+const PORTFOLIOS = [
+  { id: "P-A", name: "Portfolio A" },
+  { id: "P-B", name: "Portfolio B" },
 ];
 
-function setField(label: string, value: string) {
-  // The batch table reuses some header text (e.g. "Ticker"); pick the form label whose
-  // parent <label> actually wraps an input.
-  const el = screen
-    .getAllByText(label)
-    .find((n) => n.parentElement?.querySelector("input"))!;
-  fireEvent.change(el.parentElement!.querySelector("input")!, { target: { value } });
+function fillRow(row: HTMLElement, fields: { ticker: string; qty: string; price: string }) {
+  fireEvent.change(within(row).getByLabelText("Ticker"), { target: { value: fields.ticker } });
+  fireEvent.change(within(row).getByLabelText("Quantity"), { target: { value: fields.qty } });
+  fireEvent.change(within(row).getByLabelText("Price"), { target: { value: fields.price } });
 }
 
-describe("Trade", () => {
-  it("stages a ticket into the batch, then submits it to the chosen book", async () => {
+describe("Trade grid", () => {
+  it("submits each row to its own chosen portfolio (per-row mode)", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     const onAfterBatch = vi.fn().mockResolvedValue(undefined);
     render(
       <Trade
-        portfolios={BOOKS}
-        defaultPortfolioId="BOOK-B"
+        portfolios={PORTFOLIOS}
+        defaultPortfolioId="__consolidated__"  // not a real portfolio -> per-row by default
         onSubmit={onSubmit}
         onAfterBatch={onAfterBatch}
         busy={false}
       />,
     );
 
-    setField("Ticker", "msft");
-    setField("Quantity", "10");
-    setField("Price", "100");
-    fireEvent.click(screen.getByText("Add to batch"));
-
-    // Staged, not yet submitted.
-    expect(screen.getByText("MSFT")).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    // One row to start; add a second.
+    fireEvent.click(screen.getByText("+ Add row"));
+    const rows = screen.getAllByLabelText("Ticker").map((i) => i.closest("tr")!);
+    fillRow(rows[0], { ticker: "msft", qty: "10", price: "100" });
+    fillRow(rows[1], { ticker: "aapl", qty: "5", price: "200" });
+    // Point the second row at Portfolio B.
+    fireEvent.change(within(rows[1]).getAllByRole("combobox")[0], { target: { value: "P-B" } });
 
     fireEvent.click(screen.getByText("Submit all"));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
-    const [targetId, t] = onSubmit.mock.calls[0];
-    expect(targetId).toBe("BOOK-B"); // honors the global selection when it's a real book
-    expect(t.ticker).toBe("MSFT"); // uppercased
-    expect(t.quantity).toBe(10);
-    expect(t.action).toBe("BUY");
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    const calls = Object.fromEntries(onSubmit.mock.calls.map(([pid, t]) => [t.ticker, pid]));
+    expect(calls).toEqual({ MSFT: "P-A", AAPL: "P-B" });
     await waitFor(() => expect(onAfterBatch).toHaveBeenCalled());
   });
 
-  it("flags a failed ticket and keeps it in the batch", async () => {
-    const onSubmit = vi
-      .fn()
-      .mockResolvedValueOnce(undefined) // first ok
-      .mockRejectedValueOnce(new Error("boom")); // second fails
-    render(
-      <Trade
-        portfolios={BOOKS}
-        defaultPortfolioId="BOOK-A"
-        onSubmit={onSubmit}
-        onAfterBatch={vi.fn().mockResolvedValue(undefined)}
-        busy={false}
-      />,
-    );
-
-    setField("Ticker", "aaa");
-    setField("Quantity", "1");
-    setField("Price", "10");
-    fireEvent.click(screen.getByText("Add to batch"));
-    setField("Ticker", "bbb");
-    setField("Quantity", "1");
-    setField("Price", "10");
-    fireEvent.click(screen.getByText("Add to batch"));
-
-    fireEvent.click(screen.getByText("Submit all"));
-    // The succeeded one drops off; the failed one stays, flagged.
-    await waitFor(() => expect(screen.getByText("failed")).toBeInTheDocument());
-    expect(screen.queryByText("AAA")).not.toBeInTheDocument();
-    expect(screen.getByText("BBB")).toBeInTheDocument();
-  });
-
-  it("falls back to a real book when the app is on Consolidated", async () => {
+  it("allocate-all sends every row to one portfolio", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(
       <Trade
-        portfolios={BOOKS}
-        defaultPortfolioId="__consolidated__"
+        portfolios={PORTFOLIOS}
+        defaultPortfolioId=""
         onSubmit={onSubmit}
         onAfterBatch={vi.fn().mockResolvedValue(undefined)}
         busy={false}
       />,
     );
-    setField("Ticker", "xyz");
-    setField("Quantity", "1");
-    setField("Price", "10");
-    fireEvent.click(screen.getByText("Add to batch"));
+    // Choose "Allocate all to" Portfolio B.
+    fireEvent.change(screen.getByLabelText("Allocate all to"), { target: { value: "P-B" } });
+    const row = screen.getByLabelText("Ticker").closest("tr")!;
+    fillRow(row, { ticker: "nvda", qty: "1", price: "900" });
     fireEvent.click(screen.getByText("Submit all"));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
-    expect(onSubmit.mock.calls[0][0]).toBe("BOOK-A"); // first real book, not consolidated
+    expect(onSubmit.mock.calls[0][0]).toBe("P-B");
+  });
+
+  it("flags a failed row and keeps it; clears the successful one", async () => {
+    const onSubmit = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("boom"));
+    render(
+      <Trade
+        portfolios={PORTFOLIOS}
+        defaultPortfolioId="P-A"
+        onSubmit={onSubmit}
+        onAfterBatch={vi.fn().mockResolvedValue(undefined)}
+        busy={false}
+      />,
+    );
+    fireEvent.click(screen.getByText("+ Add row"));
+    const rows = screen.getAllByLabelText("Ticker").map((i) => i.closest("tr")!);
+    fillRow(rows[0], { ticker: "ok", qty: "1", price: "10" });
+    fillRow(rows[1], { ticker: "bad", qty: "1", price: "10" });
+
+    fireEvent.click(screen.getByText("Submit all"));
+    // Only the failed row remains, flagged.
+    await waitFor(() => expect(screen.getAllByLabelText("Ticker")).toHaveLength(1));
+    expect((screen.getByLabelText("Ticker") as HTMLInputElement).value).toBe("bad");
   });
 });

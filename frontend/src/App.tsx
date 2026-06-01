@@ -22,11 +22,11 @@ import type { TransactionInput } from "./types";
 import { Portfolio } from "./tabs/Portfolio";
 import { Trade } from "./tabs/Trade";
 import { RiskDashboard } from "./tabs/RiskDashboard";
-import { HedgeApproval } from "./tabs/HedgeApproval";
+import { Hedge } from "./tabs/Hedge";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 
-const TABS = ["Portfolio", "Trade", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
+const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 // The virtual "all books" roll-up; the backend resolves this id to every book's positions.
@@ -227,9 +227,9 @@ export default function App() {
           <p className="text-ocean-muted">Loading…</p>
         ) : (
           <>
-            {tab === "Risk" && (
-              <RiskDashboard
-                summary={summary}
+            {tab === "Risk" && <RiskDashboard summary={summary} />}
+            {tab === "Hedge" && (
+              <Hedge
                 proposal={proposal}
                 onPropose={handlePropose}
                 proposing={proposing}
@@ -258,7 +258,6 @@ export default function App() {
                 busy={trading}
               />
             )}
-            {tab === "Hedge Approval" && <HedgeApproval proposal={proposal} />}
             {tab === "Stress" && (
               <Stress report={stress} onRun={handleStress} loading={stressLoading} />
             )}
