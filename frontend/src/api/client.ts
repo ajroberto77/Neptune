@@ -45,6 +45,33 @@ export function fetchStress(portfolioId: string): Promise<StressReport> {
   });
 }
 
+// --- Trade: record an executed transaction / close a position ---
+import type { TransactionInput } from "../types";
+
+export function recordTransaction(
+  portfolioId: string,
+  body: TransactionInput,
+): Promise<{ id: number }> {
+  return getJSON(`/portfolios/${portfolioId}/transactions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function closePosition(
+  portfolioId: string,
+  positionId: number,
+  quantity: number,
+  exitPrice: number,
+): Promise<{ realised_pnl: number }> {
+  return getJSON(`/portfolios/${portfolioId}/positions/${positionId}/reduce`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quantity, exit_price: exitPrice }),
+  });
+}
+
 // --- Settings: configurable DB connections ---
 import type {
   ConnectionRow,

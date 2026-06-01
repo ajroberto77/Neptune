@@ -13,7 +13,7 @@ from neptune.db.models import (
     PortfolioORM,
     PositionORM,
 )
-from neptune.domain.models import LotEntry, Portfolio, Position
+from neptune.domain.models import LotEntry, Portfolio, Position, Side, ShortType
 from neptune.domain.org import InvestorEntity, ManagementFirm, Person, PersonRole
 from neptune.pnl import CostBasisMethod
 
@@ -36,6 +36,7 @@ def _to_domain_position(row: PositionORM) -> Position:
         ],
         thesis=row.thesis,
         target=row.target,
+        id=row.id,
     )
 
 
@@ -110,11 +111,42 @@ class PositionRepository:
         ).all()
         return [_to_domain_position(r) for r in rows]
 
+    def find_position_id(
+        self, portfolio_id: str, ticker: str, side: Side, short_type: ShortType
+    ) -> int | None:
+        """The id of the open position for a (ticker, side, short_type) in a portfolio, or
+        None. Used to aggregate repeat trades of the same name+book into one position."""
+        row = self.session.scalars(
+            select(PositionORM).where(
+                PositionORM.portfolio_id == portfolio_id,
+                PositionORM.ticker == ticker,
+                PositionORM.side == side,
+                PositionORM.short_type == short_type,
+            )
+        ).first()
+        return row.id if row else None
+
+    def append_lot(self, position_id: int, lot: LotEntry, new_notional: float) -> None:
+        """Add one lot to an existing position and update its notional (the trade-tab
+        'add to position' path)."""
+        row = self.session.get(PositionORM, position_id)
+        if row is None:
+            raise ValueError(f"position {position_id} not found")
+        row.lots.append(
+            LotORM(quantity=lot.quantity, entry_price=lot.entry_price, entry_date=lot.entry_date)
+        )
+        row.notional = new_notional
+        self.session.commit()
+
     def replace_lots(
-        self, position_id: int, lots: list[LotEntry], realised_pnl: float
+        self,
+        position_id: int,
+        lots: list[LotEntry],
+        realised_pnl: float,
+        notional: float | None = None,
     ) -> None:
-        """Overwrite a position's open lots and its accumulated realised P&L. Used after
-        a reduction recomputes both."""
+        """Overwrite a position's open lots and its accumulated realised P&L (and, when
+        given, its notional). Used after a reduction recomputes them."""
         row = self.session.get(PositionORM, position_id)
         if row is None:
             raise ValueError(f"position {position_id} not found")
@@ -123,6 +155,8 @@ class PositionRepository:
             for l in lots
         ]
         row.realised_pnl = realised_pnl
+        if notional is not None:
+            row.notional = notional
         self.session.commit()
 
     def delete_position(self, position_id: int) -> bool:

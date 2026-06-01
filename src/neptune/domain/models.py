@@ -80,6 +80,13 @@ class Position:
     # --- Fundamental Layer (read-only to the system) ---
     thesis: str | None = None
     target: str | None = None
+    # Persistence id, populated when read back from the DB (None for in-memory positions).
+    id: int | None = None
+
+    @property
+    def quantity(self) -> float:
+        """Total open quantity across lots (0 for notional-only positions)."""
+        return sum(l.quantity for l in self.lots)
 
     def __post_init__(self) -> None:
         if self.notional < 0:

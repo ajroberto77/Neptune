@@ -59,6 +59,57 @@ class PositionService:
         self._check_long_short_conflict(position, existing)
         return self.repo.add_position(portfolio_id, position)
 
+    def record_trade(
+        self,
+        portfolio_id: str,
+        ticker: str,
+        side: Side,
+        short_type: ShortType,
+        quantity: float,
+        price: float,
+        trade_date: date,
+        sector: str | None = None,
+        forward_beta: float | None = None,
+        thesis: str | None = None,
+        target: str | None = None,
+    ) -> int:
+        """Record an executed trade as a lot on the (ticker, side, short_type) position,
+        aggregating into the open position for that name+book if one exists, else opening a
+        new one. ``notional`` grows by the executed value (quantity × price), so it tracks
+        book exposure for trade-tab positions. Returns the position id.
+
+        This is the single entry path for ALL executions, including systematic-short hedges
+        once approved: recording an execution is not auto-execution (no broker routing), and
+        the book tag (``short_type``) keeps systematic and discretionary shorts distinct
+        (I-03)."""
+        lot = LotEntry(quantity=quantity, entry_price=price, entry_date=trade_date)
+        existing = self.repo.list_positions(portfolio_id)
+        probe = Position(
+            ticker=ticker, side=side, notional=quantity * price, short_type=short_type
+        )
+        self._check_long_short_conflict(probe, existing)
+
+        position_id = self.repo.find_position_id(portfolio_id, ticker, side, short_type)
+        if position_id is not None:
+            current = self.repo.get_position(position_id)
+            self.repo.append_lot(position_id, lot, current.notional + quantity * price)
+            return position_id
+
+        return self.repo.add_position(
+            portfolio_id,
+            Position(
+                ticker=ticker,
+                side=side,
+                notional=quantity * price,
+                short_type=short_type,
+                sector=sector,
+                forward_beta=forward_beta,
+                lots=[lot],
+                thesis=thesis,
+                target=target,
+            ),
+        )
+
     def get_position(self, position_id: int) -> Position | None:
         return self.repo.get_position(position_id)
 
@@ -81,6 +132,7 @@ class PositionService:
             raise ValueError(f"position {position_id} not found")
         lots = [Lot(l.quantity, l.entry_price, l.entry_date) for l in position.lots]
         method = position.cost_basis_method or CostBasisMethod.FIFO
+        total_qty = sum(l.quantity for l in position.lots)
         remaining, realised = reduce_position(
             lots, quantity, exit_price, position.direction, method, specific_index
         )
@@ -88,7 +140,15 @@ class PositionService:
             LotEntry(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date)
             for l in remaining
         ]
-        self.repo.replace_lots(position_id, new_lots, position.realised_pnl + realised)
+        # Scale notional down by the fraction of quantity closed, so a full close → 0
+        # exposure. Notional-only positions (no lots) are left untouched.
+        new_notional = None
+        if total_qty > 0:
+            remaining_qty = sum(l.quantity for l in remaining)
+            new_notional = position.notional * (remaining_qty / total_qty)
+        self.repo.replace_lots(
+            position_id, new_lots, position.realised_pnl + realised, notional=new_notional
+        )
         return realised
 
     def delete_position(self, position_id: int) -> bool:

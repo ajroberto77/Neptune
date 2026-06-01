@@ -5,11 +5,13 @@ import type { PositionRow } from "../types";
 
 function pos(over: Partial<PositionRow>): PositionRow {
   return {
+    id: 1,
     ticker: "AAA",
     side: "LONG",
     short_type: "NA",
     book: "LONG",
     notional: 1_000_000,
+    quantity: 1000,
     beta: 1.2,
     beta_method: "forward_override",
     cost_basis_method: "FIFO",

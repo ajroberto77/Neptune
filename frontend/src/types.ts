@@ -26,15 +26,29 @@ export interface PnL {
 }
 
 export interface PositionRow {
+  id: number | null;
   ticker: string;
   side: "LONG" | "SHORT";
   short_type: string;
   book: string;
   notional: number;
+  quantity: number;
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
   cost_basis_method?: string;
   pnl: PnL;
+}
+
+export type Book = "LONG" | "DISCRETIONARY_SHORT" | "SYSTEMATIC_SHORT";
+
+export interface TransactionInput {
+  ticker: string;
+  book: Book;
+  quantity: number;
+  price: number;
+  trade_date: string; // YYYY-MM-DD
+  sector?: string | null;
+  forward_beta?: number | null;
 }
 
 export interface PortfolioPnL {

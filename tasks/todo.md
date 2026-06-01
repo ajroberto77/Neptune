@@ -128,6 +128,14 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 Live P&L (Day / ITD / Unrealised / Realised) split by Long / Systematic /
       Discretionary (`risk/pnl.py`); `/positions` carries per-name P&L, `/pnl` the book split;
       blotter shows P&L columns (`test_pnl.py`, `test_api.py`, `Blotter.test.tsx`)
+- [x] Trade workflow (the single entry path for all executions): `record_trade` service
+      method aggregates lots into the open position for a (ticker, book) or opens a new one,
+      growing `notional` by executed value; closing scales `notional` down (full close → 0).
+      `POST /portfolios/{id}/transactions` (book = LONG / DISCRETIONARY_SHORT /
+      SYSTEMATIC_SHORT → side+short_type); `/positions` now exposes `id`+`quantity`. React
+      **Trade** tab: record-transaction form + per-position Close. Systematic-short executions
+      recordable here (origination stays with the optimizer; book tag keeps I-03).
+      `test_trade.py` + `Trade.test.tsx`.
 - [ ] 🔵 Multi-currency (FX P&L tracked separately); WebSocket price pipeline (<400ms)
 
 ## Phase 2 — Beta Engine 🟢

@@ -200,6 +200,50 @@ def add_position(portfolio_id: str, body: PositionIn, session: Session = Depends
     return {"id": position_id}
 
 
+class TransactionIn(BaseModel):
+    """An executed trade recorded against a book. ``book`` chooses the allocation:
+    LONG, DISCRETIONARY_SHORT, or SYSTEMATIC_SHORT (the last for recording an approved
+    hedge's execution). sector/forward_beta/thesis/target are optional — auto/added later."""
+
+    ticker: str
+    book: BookType
+    quantity: float = Field(gt=0)
+    price: float = Field(gt=0)
+    trade_date: date
+    sector: str | None = None
+    forward_beta: float | None = None
+    thesis: str | None = None
+    target: str | None = None
+
+
+# Map a chosen book to the (side, short_type) the domain stores.
+_BOOK_TO_SIDE: dict[BookType, tuple[Side, ShortType]] = {
+    BookType.LONG: (Side.LONG, ShortType.NA),
+    BookType.DISCRETIONARY_SHORT: (Side.SHORT, ShortType.DISCRETIONARY),
+    BookType.SYSTEMATIC_SHORT: (Side.SHORT, ShortType.SYSTEMATIC),
+}
+
+
+@app.post("/portfolios/{portfolio_id}/transactions", status_code=201)
+def record_transaction(
+    portfolio_id: str, body: TransactionIn, session: Session = Depends(get_session)
+):
+    """Record an executed trade (a lot) against a book, aggregating into the open position
+    for that name+book or opening a new one. The single entry path for all executions."""
+    service = PositionService(session)
+    _require_portfolio(service, portfolio_id)
+    side, short_type = _BOOK_TO_SIDE[body.book]
+    try:
+        position_id = service.record_trade(
+            portfolio_id, body.ticker, side, short_type, body.quantity, body.price,
+            body.trade_date, sector=body.sector, forward_beta=body.forward_beta,
+            thesis=body.thesis, target=body.target,
+        )
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": position_id}
+
+
 @app.get("/portfolios/{portfolio_id}/positions")
 def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
@@ -209,11 +253,13 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
     lead_pm = portfolio.lead_pm_ids[0] if portfolio.lead_pm_ids else None
     return [
         {
+            "id": p.id,
             "ticker": p.ticker,
             "side": p.side.value,
             "short_type": p.short_type.value,
             "book": p.book.value,
             "notional": p.notional,
+            "quantity": p.quantity,
             "beta": round(metrics[p.ticker].beta, 4),
             "beta_method": metrics[p.ticker].beta_method,
             "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,

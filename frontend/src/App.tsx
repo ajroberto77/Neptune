@@ -7,20 +7,24 @@ import type {
   StressReport,
 } from "./types";
 import {
+  closePosition,
   fetchFrontier,
   fetchPositions,
   fetchRisk,
   fetchStress,
   proposeHedge,
+  recordTransaction,
 } from "./api/client";
+import type { TransactionInput } from "./types";
 import { Blotter } from "./tabs/Blotter";
+import { Trade } from "./tabs/Trade";
 import { RiskDashboard } from "./tabs/RiskDashboard";
 import { HedgeApproval } from "./tabs/HedgeApproval";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 
 const PORTFOLIO_ID = "IRIDIUM-CORE";
-const TABS = ["Blotter", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
+const TABS = ["Blotter", "Trade", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -33,6 +37,7 @@ export default function App() {
   const [frontierLoading, setFrontierLoading] = useState(false);
   const [stress, setStress] = useState<StressReport | null>(null);
   const [stressLoading, setStressLoading] = useState(false);
+  const [trading, setTrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,6 +82,39 @@ export default function App() {
       setError(String(e));
     } finally {
       setStressLoading(false);
+    }
+  }
+
+  // After any trade, refresh both the book and the risk summary so beta/factors reflect it.
+  async function refreshBook() {
+    const [r, p] = await Promise.all([fetchRisk(PORTFOLIO_ID), fetchPositions(PORTFOLIO_ID)]);
+    setSummary(r);
+    setPositions(p);
+  }
+
+  async function handleRecord(t: TransactionInput) {
+    setTrading(true);
+    setError(null);
+    try {
+      await recordTransaction(PORTFOLIO_ID, t);
+      await refreshBook();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setTrading(false);
+    }
+  }
+
+  async function handleClose(positionId: number, quantity: number, exitPrice: number) {
+    setTrading(true);
+    setError(null);
+    try {
+      await closePosition(PORTFOLIO_ID, positionId, quantity, exitPrice);
+      await refreshBook();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setTrading(false);
     }
   }
 
@@ -136,6 +174,14 @@ export default function App() {
               />
             )}
             {tab === "Blotter" && <Blotter positions={positions} />}
+            {tab === "Trade" && (
+              <Trade
+                positions={positions}
+                onRecord={handleRecord}
+                onClose={handleClose}
+                busy={trading}
+              />
+            )}
             {tab === "Hedge Approval" && <HedgeApproval proposal={proposal} />}
             {tab === "Stress" && (
               <Stress report={stress} onRun={handleStress} loading={stressLoading} />
