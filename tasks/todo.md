@@ -230,3 +230,17 @@ first vertical slice · 🔵 LATER = deferred.
 
 - [x] 🟢 Stub module (firm-level aggregation placeholder)
 - [ ] 🔵 `β_firm = Σ(Nᵢβᵢ)/ΣN_long`, cross-portfolio netting, CIO portfolio matrix
+
+## Trade-model rework (PM correction 2026-06-01) — see lessons.md
+
+- [x] **Phase 1: book = portfolio; Buy/Sell netting; Longs/Shorts view.** Trade ticket is
+      Ticker + Buy/Sell + qty/price/date; `book_trade` derives the effect from the holding
+      (initiate/add/reduce/close/cover, flips through zero). Manual trades touch only the long
+      or the *discretionary* short; systematic shorts stay optimizer-only (I-03). Portfolio tab
+      → Longs/Shorts sections with a systematic/discretionary tag on shorts; flat positions
+      hidden. Day P&L = Unrealized for same-day trades (pass `as_of`); realized P&L survives a
+      full close. "unrealized"/"realized" spelling at the API + UI. (`test_trade.py`,
+      `test_analytics.py`, `Portfolio.test.tsx`, `Trade.test.tsx`.)
+- [ ] **Phase 2: Cash vs Swap instrument + swap financing.** Add an `instrument` field
+      (needs a schema migration — no Alembic yet) and model swap funding/borrow accrual in the
+      P&L engine. Deferred from Phase 1 to avoid breaking existing DBs.

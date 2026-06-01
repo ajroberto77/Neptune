@@ -7,17 +7,21 @@ and discretionary shorts are reported separately and never merged (invariant I-0
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from neptune.data.source import MarketData
 from neptune.domain.models import BookType, Portfolio, Position
 from neptune.pnl import Lot, PnL, position_pnl
 
 
-def position_pnl_for(position: Position, market: MarketData) -> PnL:
-    """Mark one position's lots and return its four P&L dimensions. A position with no
-    lots reports zero (notional-only positions carry no cost basis yet)."""
+def position_pnl_for(position: Position, market: MarketData, as_of: date | None = None) -> PnL:
+    """Mark one position's lots and return its four P&L dimensions. ``as_of`` (defaulting to
+    today) lets a lot opened *today* measure its day P&L from its entry price rather than the
+    prior close — so for a same-day trade day P&L == unrealised. A fully-closed position (no
+    open lots) still reports its locked-in realised P&L."""
     if not position.lots:
-        return PnL.zero()
+        realised = position.realised_pnl
+        return PnL(day=0.0, total=realised, unrealised=0.0, realised=realised)
     lots = [Lot(l.quantity, l.entry_price, l.entry_date) for l in position.lots]
     return position_pnl(
         lots=lots,
@@ -25,6 +29,7 @@ def position_pnl_for(position: Position, market: MarketData) -> PnL:
         prev_close=market.prev_close(position.ticker),
         direction=position.direction,
         realised=position.realised_pnl,
+        as_of=as_of if as_of is not None else date.today(),
     )
 
 

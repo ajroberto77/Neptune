@@ -64,7 +64,7 @@ export function closePosition(
   positionId: number,
   quantity: number,
   exitPrice: number,
-): Promise<{ realised_pnl: number }> {
+): Promise<{ realized_pnl: number }> {
   return getJSON(`/portfolios/${portfolioId}/positions/${positionId}/reduce`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

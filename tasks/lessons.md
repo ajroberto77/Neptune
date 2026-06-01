@@ -5,6 +5,32 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-06-01 — "Book" = portfolio; long/short is a position attribute; trade ticket is Buy/Sell
+
+**Correction (PM):** The trade/position model was wrong from a desk perspective. The fixes:
+
+1. **A book IS a portfolio**, not a sub-bucket. The UI wrongly split one portfolio into
+   "Long Book / Systematic Short / Discretionary Short" *books*. The portfolio is the book;
+   a position simply shows whether it's **long or short**. Multiple portfolios (books) come
+   later via a portfolio dropdown on the ticket.
+2. **The trade ticket is just Buy / Sell** (+ Cash/Swap instrument). The action's meaning is
+   *derived from the current position* ("the allocation"): Buy→initiate/add long, or
+   buy-to-cover a short; Sell→reduce/close long, or sell-to-short; crossing zero flips side.
+   Do NOT make the user pick a "book"/side.
+3. **Systematic vs discretionary short is preserved (invariant I-03) but as an origin TAG on
+   the short line**, not a user-selectable book: manual trades are always discretionary;
+   systematic shorts come ONLY from an approved hedge-optimizer proposal. Manual Buy/Sell
+   therefore only ever touches the LONG or DISCRETIONARY-SHORT position, never SYSTEMATIC.
+4. **Day P&L must equal Unrealised for a same-day trade** — a lot opened today had no prior
+   close, so its day-P&L reference is the entry price. (The engine already supported this via
+   `position_pnl(as_of=...)`; the caller just wasn't passing `as_of`.)
+5. Spell it **"unrealized"** (American), not "unrealised".
+
+**Pattern:** Model trades the way a trading desk thinks — direction is an attribute of the
+position derived from buy/sell netting against the current holding, not a category the user
+files into. Keep invariant distinctions (systematic vs discretionary) as provenance metadata,
+not as primary user-facing structure.
+
 ## 2026-05-30 — Fall back to inline review when subagents are unavailable
 
 **Pattern (not a user correction, but worth keeping):** The read-only `quant-researcher`

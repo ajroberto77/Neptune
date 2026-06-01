@@ -21,8 +21,8 @@ export interface RiskSummary {
 export interface PnL {
   day: number;
   total: number;
-  unrealised: number;
-  realised: number;
+  unrealized: number;
+  realized: number;
 }
 
 export interface PositionRow {
@@ -40,16 +40,15 @@ export interface PositionRow {
   pnl: PnL;
 }
 
-export type Book = "LONG" | "DISCRETIONARY_SHORT" | "SYSTEMATIC_SHORT";
+export type TradeAction = "BUY" | "SELL";
 
 export interface TransactionInput {
   ticker: string;
-  book: Book;
+  action: TradeAction; // direction; side & open/close/cover are derived by netting
   quantity: number;
   price: number;
   trade_date: string; // YYYY-MM-DD
   sector?: string | null;
-  forward_beta?: number | null;
 }
 
 export interface PortfolioPnL {

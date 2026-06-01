@@ -1,15 +1,14 @@
 import type { PositionRow } from "../types";
 import { money, pnlColor, price, signedMoney } from "../format";
 
-const BOOKS: { title: string; book: string }[] = [
-  { title: "Long Book", book: "LONG" },
-  { title: "Systematic Short", book: "SYSTEMATIC_SHORT" },
-  { title: "Discretionary Short", book: "DISCRETIONARY_SHORT" },
+const SECTIONS: { title: string; side: string }[] = [
+  { title: "Longs", side: "LONG" },
+  { title: "Shorts", side: "SHORT" },
 ];
 
-/** Portfolio view: long / systematic short / discretionary short sub-panels with the four
- * P&L dimensions. Systematic and discretionary shorts are kept separate (invariant I-03).
- * Optional live-pricing control polls the latest prices on a configurable interval. */
+/** Portfolio view: the book IS the portfolio. Positions are grouped into Longs and Shorts;
+ * each short carries a systematic-vs-discretionary tag (systematic = optimizer hedge), kept
+ * distinct per invariant I-03. Optional live-pricing control polls prices on an interval. */
 export function Portfolio({
   positions,
   refreshMins,
@@ -48,11 +47,12 @@ export function Portfolio({
           {lastPriced && <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>}
         </div>
       )}
-      {BOOKS.map(({ title, book }) => {
-        const rows = positions.filter((p) => p.book === book);
+      {SECTIONS.map(({ title, side }) => {
+        // Hide flat (fully-closed) positions; the book is the portfolio, grouped by side.
+        const rows = positions.filter((p) => p.side === side && p.notional !== 0);
         return (
           <div
-            key={book}
+            key={side}
             className="rounded-lg border border-ocean-border bg-ocean-panel p-5"
           >
             <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
@@ -69,8 +69,8 @@ export function Portfolio({
                     <th className="pb-2 text-right font-medium">Price</th>
                     <th className="pb-2 text-right font-medium">Notional</th>
                     <th className="pb-2 text-right font-medium">Day P&L</th>
-                    <th className="pb-2 text-right font-medium">Unrealised</th>
-                    <th className="pb-2 text-right font-medium">Realised</th>
+                    <th className="pb-2 text-right font-medium">Unrealized</th>
+                    <th className="pb-2 text-right font-medium">Realized</th>
                     <th className="pb-2 text-right font-medium">Total</th>
                   </tr>
                 </thead>
@@ -79,6 +79,17 @@ export function Portfolio({
                     <tr key={p.ticker} className="border-t border-ocean-border/60">
                       <td className="py-2 font-mono">
                         {p.ticker}
+                        {p.side === "SHORT" && (
+                          <span
+                            className={`ml-2 rounded px-1.5 py-0.5 text-[10px] uppercase ${
+                              p.short_type === "SYSTEMATIC"
+                                ? "bg-ocean-accent/20 text-ocean-accent"
+                                : "bg-ocean-border/60 text-ocean-muted"
+                            }`}
+                          >
+                            {p.short_type === "SYSTEMATIC" ? "systematic" : "discretionary"}
+                          </span>
+                        )}
                         <span className="ml-2 text-xs text-ocean-muted/60">
                           {p.beta_method === "forward_override"
                             ? "ovr"
@@ -93,11 +104,11 @@ export function Portfolio({
                       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.day)}`}>
                         {signedMoney(p.pnl.day)}
                       </td>
-                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.unrealised)}`}>
-                        {signedMoney(p.pnl.unrealised)}
+                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.unrealized)}`}>
+                        {signedMoney(p.pnl.unrealized)}
                       </td>
-                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.realised)}`}>
-                        {signedMoney(p.pnl.realised)}
+                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.realized)}`}>
+                        {signedMoney(p.pnl.realized)}
                       </td>
                       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.total)}`}>
                         {signedMoney(p.pnl.total)}

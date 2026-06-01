@@ -16,30 +16,32 @@ function pos(over: Partial<PositionRow>): PositionRow {
     beta: 1.2,
     beta_method: "forward_override",
     cost_basis_method: "FIFO",
-    pnl: { day: 0, total: 0, unrealised: 0, realised: 0 },
+    pnl: { day: 0, total: 0, unrealized: 0, realized: 0 },
     ...over,
   };
 }
 
 describe("Portfolio", () => {
-  it("separates the three books (invariant I-03)", () => {
+  it("groups into Longs/Shorts and tags shorts systematic vs discretionary (I-03)", () => {
     const positions = [
-      pos({ ticker: "AAA", book: "LONG" }),
-      pos({ ticker: "SYS1", book: "SYSTEMATIC_SHORT", side: "SHORT", short_type: "SYSTEMATIC" }),
-      pos({ ticker: "DSC1", book: "DISCRETIONARY_SHORT", side: "SHORT", short_type: "DISCRETIONARY" }),
+      pos({ ticker: "AAA", side: "LONG" }),
+      pos({ ticker: "SYS1", side: "SHORT", short_type: "SYSTEMATIC" }),
+      pos({ ticker: "DSC1", side: "SHORT", short_type: "DISCRETIONARY" }),
     ];
     render(<Portfolio positions={positions} />);
-    expect(screen.getByText("Long Book")).toBeInTheDocument();
-    expect(screen.getByText("Systematic Short")).toBeInTheDocument();
-    expect(screen.getByText("Discretionary Short")).toBeInTheDocument();
+    expect(screen.getByText("Longs")).toBeInTheDocument();
+    expect(screen.getByText("Shorts")).toBeInTheDocument();
     expect(screen.getByText("SYS1")).toBeInTheDocument();
     expect(screen.getByText("DSC1")).toBeInTheDocument();
+    // The short-type tag distinguishes the two shorts (never conflated).
+    expect(screen.getByText("systematic")).toBeInTheDocument();
+    expect(screen.getByText("discretionary")).toBeInTheDocument();
   });
 
   it("renders signed P&L for a position", () => {
     render(
       <Portfolio
-        positions={[pos({ pnl: { day: -100, total: 5000, unrealised: 5000, realised: 0 } })]}
+        positions={[pos({ pnl: { day: -100, total: 5000, unrealized: 5000, realized: 0 } })]}
       />,
     );
     expect(screen.getByText("-$100")).toBeInTheDocument();
@@ -49,10 +51,10 @@ describe("Portfolio", () => {
     expect(screen.getByText("$204.13")).toBeInTheDocument();
   });
 
-  it("shows an empty message for a book with no positions", () => {
-    render(<Portfolio positions={[pos({ book: "LONG" })]} />);
-    // Systematic and discretionary books are empty.
-    expect(screen.getAllByText("No positions.").length).toBe(2);
+  it("shows an empty message for a section with no positions", () => {
+    render(<Portfolio positions={[pos({ side: "LONG" })]} />);
+    // Only the Shorts section is empty.
+    expect(screen.getAllByText("No positions.").length).toBe(1);
   });
 
   it("triggers a manual price refresh from the live-pricing control", async () => {

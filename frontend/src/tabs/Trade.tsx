@@ -1,18 +1,17 @@
 import { useState } from "react";
-import type { Book, PositionRow, TransactionInput } from "../types";
+import type { PositionRow, TradeAction, TransactionInput } from "../types";
 import { money, price } from "../format";
 
-const BOOK_LABELS: { value: Book; label: string }[] = [
-  { value: "LONG", label: "Long" },
-  { value: "DISCRETIONARY_SHORT", label: "Discretionary short" },
-  { value: "SYSTEMATIC_SHORT", label: "Systematic short (approved hedge)" },
+const ACTIONS: { value: TradeAction; label: string }[] = [
+  { value: "BUY", label: "Buy" },
+  { value: "SELL", label: "Sell" },
 ];
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Trade tab: the single entry path for all executions. Record a transaction (a lot)
- *  against a book, or close an existing position. Systematic shorts are recorded here too
- *  — recording an execution isn't auto-execution, and the book tag keeps them distinct. */
+/** Trade tab: book a manual Buy/Sell. Direction (long/short) and whether it opens, adds,
+ *  reduces, closes, or covers is DERIVED from the current holding by netting — the desk
+ *  picks only Buy or Sell. Systematic-short hedges are booked from Hedge Approval, not here. */
 export function Trade({
   positions,
   onRecord,
@@ -26,7 +25,7 @@ export function Trade({
 }) {
   const [form, setForm] = useState<TransactionInput>({
     ticker: "",
-    book: "LONG",
+    action: "BUY",
     quantity: 0,
     price: 0,
     trade_date: today(),
@@ -71,16 +70,16 @@ export function Trade({
               onChange={(e) => up({ ticker: e.target.value })}
             />
           </label>
-          <label className="block lg:col-span-2">
-            <span className="mb-1 block text-xs text-ocean-muted">Book</span>
+          <label className="block">
+            <span className="mb-1 block text-xs text-ocean-muted">Action</span>
             <select
               className="np-input"
-              value={form.book}
-              onChange={(e) => up({ book: e.target.value as Book })}
+              value={form.action}
+              onChange={(e) => up({ action: e.target.value as TradeAction })}
             >
-              {BOOK_LABELS.map((b) => (
-                <option key={b.value} value={b.value}>
-                  {b.label}
+              {ACTIONS.map((a) => (
+                <option key={a.value} value={a.value}>
+                  {a.label}
                 </option>
               ))}
             </select>
@@ -124,8 +123,9 @@ export function Trade({
           {msg && <span className="text-sm text-ocean-muted">{msg}</span>}
         </div>
         <p className="mt-3 text-xs text-ocean-muted/70">
-          Sector, forward-beta, and thesis/target are added later. Systematic shorts are
-          originated by the hedge optimizer (Hedge Approval) — record their execution here.
+          Buy/Sell nets against your current holding: a Sell reduces a long, then opens a
+          (discretionary) short with any remainder; a Buy covers a short, then opens a long.
+          Systematic-short hedges are booked from Hedge Approval, not here.
         </p>
       </form>
 
@@ -143,7 +143,7 @@ export function Trade({
             <thead>
               <tr className="text-left text-xs uppercase text-ocean-muted">
                 <th className="pb-2 font-medium">Ticker</th>
-                <th className="pb-2 font-medium">Book</th>
+                <th className="pb-2 font-medium">Side</th>
                 <th className="pb-2 text-right font-medium">Qty</th>
                 <th className="pb-2 text-right font-medium">Avg price</th>
                 <th className="pb-2 text-right font-medium">Notional</th>
@@ -155,7 +155,10 @@ export function Trade({
               {openPositions.map((p) => (
                 <tr key={p.id!} className="border-t border-ocean-border/60">
                   <td className="py-2 font-mono">{p.ticker}</td>
-                  <td className="py-2 text-xs text-ocean-muted">{p.book}</td>
+                  <td className="py-2 text-xs text-ocean-muted">
+                    {p.side}
+                    {p.side === "SHORT" && ` · ${p.short_type.toLowerCase()}`}
+                  </td>
                   <td className="py-2 text-right font-mono">{p.quantity}</td>
                   <td className="py-2 text-right font-mono">
                     {p.quantity > 0 ? price(p.notional / p.quantity) : "—"}

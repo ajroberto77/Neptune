@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from neptune.db.repository import OrgRepository, PositionRepository
-from neptune.domain.models import LotEntry, Portfolio, Position, Side, ShortType
+from neptune.domain.models import LotEntry, Portfolio, Position, Side, ShortType, TradeAction
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, Lot, reduce_position
 
@@ -110,6 +110,60 @@ class PositionService:
             ),
         )
 
+    def book_trade(
+        self,
+        portfolio_id: str,
+        ticker: str,
+        action: TradeAction,
+        quantity: float,
+        price: float,
+        trade_date: date,
+        sector: str | None = None,
+        thesis: str | None = None,
+        target: str | None = None,
+    ) -> int:
+        """Book a manual Buy/Sell. Direction is DERIVED from the current holding (netting),
+        so the desk never picks a side or a "book":
+
+          * BUY  → cover an open discretionary short first, then open/add a LONG with any
+                   remainder (crossing zero flips short → long).
+          * SELL → reduce an open long first, then open/add a DISCRETIONARY SHORT with any
+                   remainder (crossing zero flips long → short).
+
+        Manual trades only ever touch the long or the *discretionary* short — systematic
+        shorts are the optimizer's hedge and are booked only via the hedge-approval path
+        (invariant I-03). Returns the id of the position the remainder landed on (or the one
+        that was reduced if the trade only closed).
+        """
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+        remaining = quantity
+        if action is TradeAction.BUY:
+            opposite = self.repo.find_position_id(
+                portfolio_id, ticker, Side.SHORT, ShortType.DISCRETIONARY
+            )
+            open_side, open_short = Side.LONG, ShortType.NA
+        else:
+            opposite = self.repo.find_position_id(
+                portfolio_id, ticker, Side.LONG, ShortType.NA
+            )
+            open_side, open_short = Side.SHORT, ShortType.DISCRETIONARY
+
+        landed = opposite
+        if opposite is not None:  # net against the existing opposite-side position first
+            held = self.repo.get_position(opposite).quantity
+            close = min(remaining, held)
+            if close > 0:
+                self.reduce_position(opposite, close, price, as_of=trade_date)
+                remaining -= close
+
+        if remaining > 1e-9:  # remainder opens/adds the resulting side
+            landed = self.record_trade(
+                portfolio_id, ticker, open_side, open_short, remaining, price, trade_date,
+                sector=sector, thesis=thesis, target=target,
+            )
+        return landed
+
     def get_position(self, position_id: int) -> Position | None:
         return self.repo.get_position(position_id)
 
@@ -158,8 +212,8 @@ class PositionService:
     def _check_long_short_conflict(new: Position, existing: list[Position]) -> None:
         """Invariant I-05: a ticker cannot be both long and short in the same book."""
         for p in existing:
-            if p.ticker != new.ticker:
-                continue
+            if p.ticker != new.ticker or p.notional == 0:
+                continue  # a flat (fully-closed) position doesn't block the opposite side
             if {p.side, new.side} == {Side.LONG, Side.SHORT}:
                 raise ConflictError(
                     f"{new.ticker} is already held {p.side.value}; cannot also be "

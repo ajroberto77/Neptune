@@ -6,14 +6,75 @@ from datetime import date
 
 import pytest
 
-from neptune.domain.models import Side, ShortType
+from neptune.domain.models import Side, ShortType, TradeAction
 from neptune.positions.service import ConflictError, PositionService
+
+D = date(2026, 1, 2)
 
 
 def _service(session) -> PositionService:
     svc = PositionService(session)
     svc.create_portfolio("BOOK", "Test Book")
     return svc
+
+
+def _only(svc, ticker):
+    """The single non-flat position for a ticker (book_trade nets, so there's at most one)."""
+    return [p for p in svc.list_positions("BOOK") if p.ticker == ticker and p.notional > 0]
+
+
+# --- Buy/Sell netting (the desk model: direction derived from the holding) ---------
+
+def test_buy_opens_long(session):
+    svc = _service(session)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 100, 50.0, D)
+    pos = _only(svc, "AAPL")[0]
+    assert pos.side is Side.LONG and pos.quantity == 100
+
+
+def test_sell_from_flat_opens_discretionary_short(session):
+    svc = _service(session)
+    svc.book_trade("BOOK", "TSLA", TradeAction.SELL, 40, 200.0, D)
+    pos = _only(svc, "TSLA")[0]
+    assert pos.side is Side.SHORT and pos.short_type is ShortType.DISCRETIONARY
+    assert pos.quantity == 40
+
+
+def test_sell_reduces_then_flips_long_through_zero_to_short(session):
+    svc = _service(session)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 100, 50.0, D)
+    svc.book_trade("BOOK", "AAPL", TradeAction.SELL, 150, 60.0, D)  # close 100 long, short 50
+    pos = _only(svc, "AAPL")[0]
+    assert pos.side is Side.SHORT and pos.short_type is ShortType.DISCRETIONARY
+    assert pos.quantity == 50
+
+
+def test_buy_covers_short_through_zero_to_long(session):
+    svc = _service(session)
+    svc.book_trade("BOOK", "TSLA", TradeAction.SELL, 40, 200.0, D)
+    svc.book_trade("BOOK", "TSLA", TradeAction.BUY, 70, 180.0, D)  # cover 40, long 30
+    pos = _only(svc, "TSLA")[0]
+    assert pos.side is Side.LONG and pos.quantity == 30
+
+
+def test_partial_sell_reduces_long(session):
+    svc = _service(session)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 100, 50.0, D)
+    svc.book_trade("BOOK", "AAPL", TradeAction.SELL, 30, 55.0, D)
+    pos = _only(svc, "AAPL")[0]
+    assert pos.side is Side.LONG and pos.quantity == 70
+
+
+def test_manual_trades_never_touch_systematic_shorts(session):
+    # A systematic hedge short exists; a manual SELL must open a DISCRETIONARY short, not
+    # add to the systematic one (invariant I-03).
+    svc = _service(session)
+    svc.record_trade("BOOK", "SPY", Side.SHORT, ShortType.SYSTEMATIC, 10, 400.0, D)
+    svc.book_trade("BOOK", "SPY", TradeAction.SELL, 5, 410.0, D)
+    kinds = {(p.side, p.short_type): p.quantity
+             for p in svc.list_positions("BOOK") if p.ticker == "SPY"}
+    assert kinds[(Side.SHORT, ShortType.SYSTEMATIC)] == 10  # untouched
+    assert kinds[(Side.SHORT, ShortType.DISCRETIONARY)] == 5  # new manual short
 
 
 def test_record_trade_opens_a_position(session):
@@ -78,7 +139,7 @@ def test_transaction_endpoint_records_and_lists():
         url = "/portfolios/IRIDIUM-CORE"
         r = client.post(
             f"{url}/transactions",
-            json={"ticker": "NVDA", "book": "LONG", "quantity": 10, "price": 100.0,
+            json={"ticker": "NVDA", "action": "BUY", "quantity": 10, "price": 100.0,
                   "trade_date": "2026-01-02"},
         )
         assert r.status_code == 201

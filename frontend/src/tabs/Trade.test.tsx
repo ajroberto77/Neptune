@@ -14,7 +14,7 @@ function pos(over: Partial<PositionRow>): PositionRow {
     quantity: 100,
     price: 500,
     beta: 1.2,
-    pnl: { day: 0, total: 0, unrealised: 0, realised: 0 },
+    pnl: { day: 0, total: 0, unrealized: 0, realized: 0 },
     ...over,
   };
 }
@@ -40,7 +40,7 @@ describe("Trade", () => {
     expect(arg.ticker).toBe("MSFT"); // uppercased
     expect(arg.quantity).toBe(10);
     expect(arg.price).toBe(100);
-    expect(arg.book).toBe("LONG");
+    expect(arg.action).toBe("BUY"); // default action; direction derived by netting
   });
 
   it("closes a position at the entered exit price", async () => {

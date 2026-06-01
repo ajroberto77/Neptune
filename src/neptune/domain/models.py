@@ -21,6 +21,15 @@ class Side(str, Enum):
     SHORT = "SHORT"
 
 
+class TradeAction(str, Enum):
+    """A manual trade ticket is just a direction. The effect on the book is *derived* from
+    the current holding (netting): a BUY covers an open short then opens/adds a long; a SELL
+    reduces an open long then opens/adds a (discretionary) short. Crossing zero flips side."""
+
+    BUY = "BUY"
+    SELL = "SELL"
+
+
 class ShortType(str, Enum):
     """Why a short exists. Systematic shorts are optimizer-generated hedges;
     discretionary shorts are human ideas. These are NEVER conflated (invariant I-03),

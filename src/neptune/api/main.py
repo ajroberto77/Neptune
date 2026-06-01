@@ -35,7 +35,7 @@ from neptune.settings_store.app_settings import AppSettingsService
 from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
 from neptune.db.models import PositionORM
 from neptune.db.runtime import securities_session
-from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
+from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType, TradeAction
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
 from neptune.quant.optimizer import InfeasibleHedge, complexity_frontier, optimize_hedge
@@ -147,7 +147,7 @@ def _to_domain(p: PositionIn) -> Position:
 
 
 def _pnl_dict(p: PnL) -> dict:
-    return {"day": p.day, "total": p.total, "unrealised": p.unrealised, "realised": p.realised}
+    return {"day": p.day, "total": p.total, "unrealized": p.unrealised, "realized": p.realised}
 
 
 # --- lifespan: create tables + seed the golden portfolio -------------------------
@@ -259,43 +259,33 @@ def add_position(portfolio_id: str, body: PositionIn, session: Session = Depends
 
 
 class TransactionIn(BaseModel):
-    """An executed trade recorded against a book. ``book`` chooses the allocation:
-    LONG, DISCRETIONARY_SHORT, or SYSTEMATIC_SHORT (the last for recording an approved
-    hedge's execution). sector/forward_beta/thesis/target are optional — auto/added later."""
+    """A manual executed trade: just a direction (BUY/SELL). The book is the portfolio; the
+    side (long/short) and whether this opens/closes/covers is derived from the current
+    holding by netting. sector/thesis/target are optional Fundamental-Layer inputs."""
 
     ticker: str
-    book: BookType
+    action: TradeAction
     quantity: float = Field(gt=0)
     price: float = Field(gt=0)
     trade_date: date
     sector: str | None = None
-    forward_beta: float | None = None
     thesis: str | None = None
     target: str | None = None
-
-
-# Map a chosen book to the (side, short_type) the domain stores.
-_BOOK_TO_SIDE: dict[BookType, tuple[Side, ShortType]] = {
-    BookType.LONG: (Side.LONG, ShortType.NA),
-    BookType.DISCRETIONARY_SHORT: (Side.SHORT, ShortType.DISCRETIONARY),
-    BookType.SYSTEMATIC_SHORT: (Side.SHORT, ShortType.SYSTEMATIC),
-}
 
 
 @app.post("/portfolios/{portfolio_id}/transactions", status_code=201)
 def record_transaction(
     portfolio_id: str, body: TransactionIn, session: Session = Depends(get_session)
 ):
-    """Record an executed trade (a lot) against a book, aggregating into the open position
-    for that name+book or opening a new one. The single entry path for all executions."""
+    """Book a manual Buy/Sell. Direction (long/short) and open/close/cover are derived from
+    the current holding by netting — the desk picks only Buy or Sell. Systematic-short hedges
+    are booked via the hedge-approval path, not here (invariant I-03)."""
     service = PositionService(session)
     _require_portfolio(service, portfolio_id)
-    side, short_type = _BOOK_TO_SIDE[body.book]
     try:
-        position_id = service.record_trade(
-            portfolio_id, body.ticker, side, short_type, body.quantity, body.price,
-            body.trade_date, sector=body.sector, forward_beta=body.forward_beta,
-            thesis=body.thesis, target=body.target,
+        position_id = service.book_trade(
+            portfolio_id, body.ticker, body.action, body.quantity, body.price,
+            body.trade_date, sector=body.sector, thesis=body.thesis, target=body.target,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -353,7 +343,7 @@ def reduce_position(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"position_id": position_id, "realised_pnl": realised}
+    return {"position_id": position_id, "realized_pnl": realised}
 
 
 @app.get("/portfolios/{portfolio_id}/pnl")

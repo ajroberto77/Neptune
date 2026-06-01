@@ -144,22 +144,22 @@ def test_positions_include_pnl_and_book(client):
     aaa = next(p for p in listing if p["ticker"] == "AAA")
     assert aaa["book"] == "LONG"
     assert aaa["cost_basis_method"] == "FIFO"
-    # Seeded lots are marked against the synthetic close, so unrealised P&L is nonzero.
-    assert "pnl" in aaa and {"day", "total", "unrealised", "realised"} <= aaa["pnl"].keys()
-    assert any(abs(p["pnl"]["unrealised"]) > 0 for p in listing)
+    # Seeded lots are marked against the synthetic close, so unrealized P&L is nonzero.
+    assert "pnl" in aaa and {"day", "total", "unrealized", "realized"} <= aaa["pnl"].keys()
+    assert any(abs(p["pnl"]["unrealized"]) > 0 for p in listing)
 
 
 def test_portfolio_pnl_splits_by_book(client):
     body = client.get(f"/portfolios/{PID}/pnl").json()
-    assert {"day", "total", "unrealised", "realised"} <= body["total"].keys()
+    assert {"day", "total", "unrealized", "realized"} <= body["total"].keys()
     # The three books are reported separately (invariant I-03 — never conflated).
     assert set(body["by_book"]) == {"LONG", "SYSTEMATIC_SHORT", "DISCRETIONARY_SHORT"}
     # Total equals the sum across books (within float tolerance).
     s = sum(b["total"] for b in body["by_book"].values())
     assert body["total"]["total"] == pytest.approx(s, abs=1e-6)
-    # total == unrealised + realised at the book level.
+    # total == unrealized + realized at the book level.
     assert body["total"]["total"] == pytest.approx(
-        body["total"]["unrealised"] + body["total"]["realised"], abs=1e-6
+        body["total"]["unrealized"] + body["total"]["realized"], abs=1e-6
     )
 
 
@@ -179,8 +179,8 @@ def test_reduce_position_realises_pnl(client):
         json={"quantity": 500, "exit_price": 110.0},
     )
     assert r.status_code == 200
-    # 500 * (110 - 100) = 5000 realised.
-    assert r.json()["realised_pnl"] == pytest.approx(5000.0)
+    # 500 * (110 - 100) = 5000 realized.
+    assert r.json()["realized_pnl"] == pytest.approx(5000.0)
 
 
 def test_reduce_more_than_open_returns_422(client):
