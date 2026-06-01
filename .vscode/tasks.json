@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "backend: uvicorn",
+      "type": "shell",
+      "command": "uvicorn neptune.api.main:app --reload --port 8000",
+      "options": { "env": { "PYTHONPATH": "${workspaceFolder}/src" } },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "group": "neptune", "panel": "dedicated" }
+    },
+    {
+      "label": "frontend: dev",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "group": "neptune", "panel": "dedicated" }
+    },
+    {
+      "label": "Neptune: run backend + frontend",
+      "dependsOn": ["backend: uvicorn", "frontend: dev"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
