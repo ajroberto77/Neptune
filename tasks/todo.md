@@ -136,6 +136,19 @@ first vertical slice · 🔵 LATER = deferred.
       **Trade** tab: record-transaction form + per-position Close. Systematic-short executions
       recordable here (origination stays with the optimizer; book tag keeps I-03).
       `test_trade.py` + `Trade.test.tsx`.
+- [ ] **Flip the engine to `DbMarketData`** (the fix for nonsense P&L/price on real tickers):
+      replace the synthetic `MARKET_DATA` in the risk/P&L/stress endpoints with `DbMarketData`
+      reading backfilled prices, with synthetic fallback when data is absent. Requires
+      ingesting the **benchmark (SPY)** — an ETF outside the common-stock universe, so it
+      needs a dedicated ingest path (it isn't in the universe projection). Default benchmark
+      SPY (roadmap); make it configurable.
+- [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
+      it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show
+      the fee-inclusive blended basis. (Avg execution price already shown.)
+- [ ] **Configurable price-refresh interval** (default 10 min): re-fetch latest prices on a
+      schedule so day P&L stays current intraday + a Settings control for the interval.
+      Depends on the DbMarketData flip (refreshing DB prices only matters once the engine
+      reads them) and a scheduler (APScheduler/Celery).
 - [ ] 🔵 Multi-currency (FX P&L tracked separately); WebSocket price pipeline (<400ms)
 
 ## Phase 2 — Beta Engine 🟢
