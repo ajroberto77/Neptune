@@ -12,6 +12,7 @@ PENDING_APPROVAL proposal (invariant I-01).
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager, contextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -32,6 +33,7 @@ from neptune.scheduling import scheduler as price_scheduler
 from neptune.scheduling.scheduler import shutdown_scheduler, start_scheduler
 from neptune.settings_store.app_settings import AppSettingsService
 from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
+from neptune.db.models import PositionORM
 from neptune.db.runtime import securities_session
 from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
 from neptune.domain.org import PersonRole
@@ -150,7 +152,10 @@ def _pnl_dict(p: PnL) -> dict:
 
 # --- lifespan: create tables + seed the golden portfolio -------------------------
 
-def seed_golden(session: Session) -> None:
+def seed_golden(session: Session, *, with_demo_positions: bool = True) -> None:
+    """Ensure the golden portfolio + ownership graph exist. Demo positions
+    (AAA/BBB/CCC/DDD) are seeded only when ``with_demo_positions`` — a real book starts empty
+    so a real benchmark can price every name (see ``market_data_for``)."""
     service = PositionService(session)
     pid = GOLDEN_PORTFOLIO["portfolio_id"]
     if service.get_portfolio(pid) is not None:
@@ -164,8 +169,26 @@ def seed_golden(session: Session) -> None:
         pid, GOLDEN_PORTFOLIO["name"],
         firm_id="IRIDIUM", investor_entity_id="IRIDIUM-FUND", lead_pm_ids=["pm-iridium"],
     )
-    for pos in golden_positions():
-        service.add_position(pid, pos)
+    if with_demo_positions:
+        for pos in golden_positions():
+            service.add_position(pid, pos)
+
+
+def remove_demo_positions(session: Session) -> int:
+    """Delete any golden DEMO positions (by ticker) from the golden portfolio. Idempotent —
+    the cleanup for an existing book when demo seeding is turned off. Returns the count removed
+    (lots cascade-delete with the position)."""
+    pid = GOLDEN_PORTFOLIO["portfolio_id"]
+    demo_tickers = {p.ticker for p in golden_positions()}
+    rows = (
+        session.query(PositionORM)
+        .filter(PositionORM.portfolio_id == pid, PositionORM.ticker.in_(demo_tickers))
+        .all()
+    )
+    for row in rows:
+        session.delete(row)
+    session.commit()
+    return len(rows)
 
 
 @asynccontextmanager
@@ -173,7 +196,11 @@ async def lifespan(app: FastAPI):
     init_db()
     init_securities_db()  # create the market-data schema too (idempotent)
     with SessionLocal() as session:
-        seed_golden(session)
+        seed_golden(session, with_demo_positions=settings.seed_demo_positions)
+        if not settings.seed_demo_positions:
+            removed = remove_demo_positions(session)  # clean an existing book
+            if removed:
+                logging.getLogger(__name__).info("removed %d demo position(s)", removed)
     start_scheduler()  # always-on price refresh (no-op if apscheduler isn't installed)
     yield
     shutdown_scheduler()
