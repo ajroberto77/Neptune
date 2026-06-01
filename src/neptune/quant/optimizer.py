@@ -134,7 +134,11 @@ def optimize_hedge(
     excluded = excluded_tickers or set()
     cands = [c for c in universe if c.ticker not in excluded]
     if not cands:
-        raise ValueError("empty shortable universe after exclusions")
+        raise ValueError(
+            "no shortable candidates: the hedge universe is your backfilled names "
+            "minus current longs. Backfill more names (the instruments you'd short to "
+            "hedge) so the optimizer has something to work with."
+        )
 
     weights, status = _solve_qp(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
@@ -178,7 +182,11 @@ def optimize_hedge_capped(
     excluded = excluded_tickers or set()
     cands = [c for c in universe if c.ticker not in excluded]
     if not cands:
-        raise ValueError("empty shortable universe after exclusions")
+        raise ValueError(
+            "no shortable candidates: the hedge universe is your backfilled names "
+            "minus current longs. Backfill more names (the instruments you'd short to "
+            "hedge) so the optimizer has something to work with."
+        )
 
     ranked = _rank_candidates(
         residual_beta, residual_factors, cands, beta_tol, factor_limit, max_position_weight
@@ -216,7 +224,11 @@ def complexity_frontier(
     excluded = excluded_tickers or set()
     usable = [c for c in universe if c.ticker not in excluded]
     if not usable:
-        raise ValueError("empty shortable universe after exclusions")
+        raise ValueError(
+            "no shortable candidates: the hedge universe is your backfilled names "
+            "minus current longs. Backfill more names (the instruments you'd short to "
+            "hedge) so the optimizer has something to work with."
+        )
 
     ranked = _rank_candidates(
         residual_beta, residual_factors, usable, beta_tol, factor_limit, max_position_weight
