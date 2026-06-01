@@ -150,3 +150,9 @@ export interface IngestResult {
   ingested: IngestRow[];
   errors: { ticker: string; error: string }[];
 }
+
+export interface FactorIngestResult {
+  start: string;
+  end: string;
+  counts: Record<string, number>;
+}

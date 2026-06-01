@@ -24,6 +24,11 @@ const ingestPrices = vi.fn(async () => ({
   ],
   errors: [],
 }));
+const ingestFactors = vi.fn(async () => ({
+  start: "2025-04-26",
+  end: "2026-05-31",
+  counts: { SMB: 252, HML: 252, MOM: 252 },
+}));
 
 vi.mock("../api/client", () => ({
   fetchConnections: () => Promise.resolve(rows),
@@ -31,6 +36,7 @@ vi.mock("../api/client", () => ({
   testConnection: (role: string) => testConnection(role),
   syncUniverse: () => syncUniverse(),
   ingestPrices: () => ingestPrices(),
+  ingestFactors: () => ingestFactors(),
 }));
 
 describe("Settings", () => {
@@ -39,6 +45,7 @@ describe("Settings", () => {
     testConnection.mockClear();
     syncUniverse.mockClear();
     ingestPrices.mockClear();
+    ingestFactors.mockClear();
   });
 
   it("renders all three connection roles and flags the bootstrap DB", async () => {
@@ -79,6 +86,17 @@ describe("Settings", () => {
     // 252 + 252 bars across 2 names.
     expect(
       await screen.findByText(/Ingested 504 price bars across 2 names/),
+    ).toBeInTheDocument();
+  });
+
+  it("backfills Ken French factors and reports the observation count", async () => {
+    render(<Settings />);
+    await screen.findByText(/Securities DB/);
+    fireEvent.click(screen.getByText("Backfill factors"));
+    await waitFor(() => expect(ingestFactors).toHaveBeenCalledOnce());
+    // 252 × 3 factors.
+    expect(
+      await screen.findByText(/Ingested 756 factor observations/),
     ).toBeInTheDocument();
   });
 });

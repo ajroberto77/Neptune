@@ -58,8 +58,13 @@ first vertical slice · 🔵 LATER = deferred.
       to the benchmark (SPY) date index, recovers real `market_returns`/`ticker_returns`
       (tested: raw beta pipeline recovers ~1.2 from stored prices). Raw `close` for P&L
       marks; deterministic multi-source dedup; optional `lookback`. REMAINING to go live:
-      Ken French factor panel (`factor_returns` is MKT-only until then) + flip the API
-      constructor from `SyntheticMarketData` to `DbMarketData`.
+      flip the API constructor from `SyntheticMarketData` to `DbMarketData` (behind config).
+- [x] Ken French factor ingestion: `factor_returns` table; `factor_providers.py`
+      (`KenFrenchProvider` lazy `pandas_datareader`, `RecordedFactorProvider`);
+      `factor_ingest.py` (idempotent `(factor,ts,source)` upsert, I-07); `DbMarketData`
+      now serves the full `{MKT,SMB,HML,MOM}` panel aligned to the market (MKT-only until
+      the panel is fully loaded); `POST /factors/ingest` + Settings "Backfill factors".
+      `test_factor_ingest.py` (incl. engine recovering a 0.8 SMB loading from stored data).
 - [ ] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`
 
 ## Phase 1 — Position Manager 🟢

@@ -41,6 +41,8 @@ from neptune.positions.service import ConflictError, PositionService
 from neptune.settings_store import ConnectionRole
 from neptune.settings_store.service import ConnectionSettingsService
 from neptune.securities.ingest import ingest_ticker
+from neptune.securities.factor_ingest import ingest_factors
+from neptune.securities.factor_providers import KenFrenchProvider
 from neptune.securities.models import Security
 from neptune.securities.providers import YFinanceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
@@ -573,3 +575,30 @@ def ingest_prices(body: IngestIn):
         "ingested": results,
         "errors": errors,
     }
+
+
+class FactorIngestIn(BaseModel):
+    """A factor-ingestion request. Window defaults to a ~400-day lookback ending today."""
+
+    start: date | None = None
+    end: date | None = None
+
+
+@app.post("/factors/ingest")
+def ingest_factor_panel(body: FactorIngestIn):
+    """Backfill the Ken French daily factor panel (SMB/HML/MOM, plus Mkt-RF/RF) into the
+    securities DB. Requires network + the optional pandas-datareader package, so it returns
+    503 when the feed is unavailable rather than failing opaquely."""
+    end = body.end or date.today()
+    start = body.start or (end - timedelta(days=400))
+    provider = KenFrenchProvider()
+    with SecuritiesSession() as sec_session:
+        try:
+            counts = ingest_factors(sec_session, provider, start, end)
+        except RuntimeError as exc:  # pandas-datareader not installed
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — feed/network error, sanitized
+            raise HTTPException(
+                status_code=502, detail=f"factor ingest failed: {type(exc).__name__}"
+            ) from exc
+    return {"start": start.isoformat(), "end": end.isoformat(), "counts": counts}

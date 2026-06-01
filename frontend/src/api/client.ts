@@ -51,6 +51,7 @@ import type {
   ConnectionInput,
   SyncResult,
   IngestResult,
+  FactorIngestResult,
 } from "../types";
 
 export function fetchConnections(): Promise<ConnectionRow[]> {
@@ -80,6 +81,14 @@ export function syncUniverse(): Promise<SyncResult> {
 
 export function ingestPrices(): Promise<IngestResult> {
   return getJSON<IngestResult>(`/securities/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}
+
+export function ingestFactors(): Promise<FactorIngestResult> {
+  return getJSON<FactorIngestResult>(`/factors/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),

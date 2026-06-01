@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ConnectionRow } from "../types";
 import {
   fetchConnections,
+  ingestFactors,
   ingestPrices,
   saveConnection,
   syncUniverse,
@@ -128,6 +129,21 @@ export function Settings() {
     }
   }
 
+  async function handleFactors() {
+    setStatus((s) => ({ ...s, SECURITIES: "Backfilling Ken French factors…" }));
+    try {
+      const r = await ingestFactors();
+      const total = Object.values(r.counts).reduce((n, c) => n + c, 0);
+      const names = Object.keys(r.counts).join(", ") || "none";
+      setStatus((s) => ({
+        ...s,
+        SECURITIES: `Ingested ${total} factor observations (${names}) for ${r.start} → ${r.end}`,
+      }));
+    } catch (e) {
+      setStatus((s) => ({ ...s, SECURITIES: String(e) }));
+    }
+  }
+
   return (
     <div className="space-y-6">
       <p className="text-sm text-ocean-muted">
@@ -232,12 +248,20 @@ export function Settings() {
                 </button>
               )}
               {row.role === "SECURITIES" && (
-                <button
-                  onClick={handleIngest}
-                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
-                >
-                  Backfill prices
-                </button>
+                <>
+                  <button
+                    onClick={handleIngest}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                  >
+                    Backfill prices
+                  </button>
+                  <button
+                    onClick={handleFactors}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                  >
+                    Backfill factors
+                  </button>
+                </>
               )}
               {status[row.role] && (
                 <span className="text-sm text-ocean-muted">{status[row.role]}</span>

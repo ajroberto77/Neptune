@@ -97,3 +97,10 @@ def test_ingest_reports_feed_unavailable_when_yfinance_missing(client):
     r = client.post("/securities/ingest", json={"tickers": ["U0001"]})
     assert r.status_code == 503
     assert "yfinance" in r.json()["detail"]
+
+
+def test_factor_ingest_reports_feed_unavailable(client):
+    # pandas-datareader isn't installed here → clean 503, not a 500.
+    r = client.post("/factors/ingest", json={})
+    assert r.status_code == 503
+    assert "pandas_datareader" in r.json()["detail"]

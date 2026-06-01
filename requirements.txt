@@ -18,8 +18,9 @@ numpy==2.4.6
 scipy==1.17.1
 cvxpy==1.9.1
 
-# --- Market data ingestion (yfinance is imported lazily; only needed for live backfill) ---
+# --- Market data ingestion (imported lazily; only needed for live backfill) ---
 yfinance==0.2.66
+pandas-datareader==0.10.0  # Ken French factor panel (SMB/HML/MOM)
 
 # --- Task queue (deferred wiring; pinned for forward compatibility) ---
 celery==5.4.0

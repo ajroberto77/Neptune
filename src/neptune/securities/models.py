@@ -190,3 +190,24 @@ class TradingDay(SecuritiesBase):
     exchange: Mapped[str] = mapped_column(String, nullable=False, index=True)
     session_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class FactorReturn(SecuritiesBase):
+    """One daily factor return (the Ken French SMB/HML/MOM panel, plus Mkt-RF/RF).
+
+    Not per-security — the factor panel is market-wide — so there's no FK. ``ret`` is a
+    **decimal** return (0.0012, not the percent the Ken French files ship); the ingest
+    layer divides by 100. Append-only with a source tag (I-07): the same ``(factor, day)``
+    from multiple vintages/sources coexists, keyed by the unique constraint below.
+    """
+
+    __tablename__ = "factor_returns"
+    __table_args__ = (
+        UniqueConstraint("factor", "ts", "source", name="uq_factor_ts_source"),
+    )
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    factor: Mapped[str] = mapped_column(String, nullable=False, index=True)  # SMB/HML/MOM/…
+    ts: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    ret: Mapped[float] = mapped_column(Float, nullable=False)  # decimal daily return
+    source: Mapped[str] = mapped_column(String, nullable=False, default="ken_french")

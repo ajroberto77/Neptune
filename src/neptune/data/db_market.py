@@ -26,7 +26,12 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from neptune.securities.models import Price, Security
+from neptune.securities.models import FactorReturn, Price, Security
+
+# The style factors Neptune sources from Ken French (MKT comes from the SPY benchmark).
+# All three must be present for the panel to be considered loaded — half a factor model
+# is worse than none, so otherwise we fall back to MKT-only.
+_STYLE_FACTORS = ("SMB", "HML", "MOM")
 
 
 class TickerNotFound(LookupError):
@@ -128,8 +133,39 @@ class DbMarketData:
         return self._market
 
     def factor_returns(self) -> dict[str, np.ndarray]:
-        # MKT only until the Ken French panel is ingested (see module docstring).
-        return {"MKT": self._market}
+        """``{MKT, SMB, HML, MOM}`` once the Ken French panel is ingested; ``{MKT}`` only
+        until then. MKT is the SPY benchmark; the style factors are read from
+        ``factor_returns`` and aligned to the same return dates as the market series (a
+        missing session is a 0 return — these are returns, not levels)."""
+        factors: dict[str, np.ndarray] = {"MKT": self._market}
+        style = self._style_factors()
+        if style is not None:
+            factors.update(style)
+        return factors
+
+    def _style_factors(self) -> dict[str, np.ndarray] | None:
+        """Load SMB/HML/MOM aligned to the market return dates, or None if the panel is
+        not fully present in the window (then the caller keeps MKT-only)."""
+        if len(self._dates) < 2:
+            return None
+        target_dates = self._dates[1:]  # market_returns[i] is the move into dates[i+1]
+        lo, hi = target_dates[0], target_dates[-1]
+        rows = self.session.execute(
+            select(FactorReturn.factor, FactorReturn.ts, FactorReturn.ret).where(
+                FactorReturn.factor.in_(_STYLE_FACTORS),
+                FactorReturn.ts >= lo,
+                FactorReturn.ts <= hi,
+            )
+        ).all()
+        by_factor: dict[str, dict[date, float]] = {f: {} for f in _STYLE_FACTORS}
+        for factor, ts, ret in rows:
+            by_factor[factor][ts] = ret
+        if not all(by_factor[f] for f in _STYLE_FACTORS):
+            return None  # incomplete panel → MKT-only fallback
+        return {
+            f: np.array([by_factor[f].get(d, 0.0) for d in target_dates], dtype=float)
+            for f in _STYLE_FACTORS
+        }
 
     def ticker_returns(self, ticker: str) -> np.ndarray:
         return _simple_returns(self._adj_aligned(ticker))
