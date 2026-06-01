@@ -426,10 +426,12 @@ def sector_concentration(
     by_sector: dict[str, float] = {}
     for p in positions:
         by_sector[p.sector or "Unknown"] = by_sector.get(p.sector or "Unknown", 0.0) + p.notional
+    # A tolerance so a sector sitting exactly on the hard cap (the efficient sparse hedge
+    # pushes right up to it) isn't flagged as a breach by floating-point noise.
     out = [
         SectorConcentration(
             sector=sec, notional=notional, fraction=notional / total,
-            limit=sector_limit, breach=(notional / total) > sector_limit,
+            limit=sector_limit, breach=(notional / total) > sector_limit + 1e-6,
         )
         for sec, notional in by_sector.items()
     ]
