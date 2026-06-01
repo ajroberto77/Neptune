@@ -16,6 +16,34 @@ def test_market_data_is_deterministic_and_shaped():
     assert set(a.factor_returns().keys()) == {"MKT", "SMB", "HML", "MOM"}
 
 
+class _ThinMarketData:
+    """A market-data source with too few observations to fit the Dimson regression."""
+
+    def __init__(self, n=4):
+        import numpy as np
+
+        self._r = np.linspace(0.001, 0.004, n)
+
+    def market_returns(self):
+        return self._r
+
+    def ticker_returns(self, ticker):
+        return self._r
+
+    def factor_returns(self):
+        return {"MKT": self._r}
+
+
+def test_compute_metrics_degrades_gracefully_on_thin_history():
+    # Freshly-ingested names (e.g. SPY pulled via the 7-day refresh) have too little history
+    # for the beta regression — it must NOT crash the endpoint; beta holds at the prior.
+    portfolio = Portfolio(id="P", name="thin", positions=[Position("PZZA", Side.LONG, 1_000)])
+    metrics = analytics.compute_metrics(portfolio, _ThinMarketData())
+    assert metrics["PZZA"].beta == 1.0
+    assert metrics["PZZA"].beta_method == "insufficient_data"
+    assert metrics["PZZA"].weight == 0.0
+
+
 def test_pipeline_recovers_true_beta_for_non_forward_positions():
     md = SyntheticMarketData()
     # No forward override -> beta comes from the EWMA+Dimson -> Vasicek pipeline.

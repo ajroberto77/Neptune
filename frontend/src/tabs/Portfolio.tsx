@@ -80,7 +80,11 @@ export function Portfolio({
                       <td className="py-2 font-mono">
                         {p.ticker}
                         <span className="ml-2 text-xs text-ocean-muted/60">
-                          {p.beta_method === "forward_override" ? "ovr" : "live"}
+                          {p.beta_method === "forward_override"
+                            ? "ovr"
+                            : p.beta_method === "insufficient_data"
+                              ? "thin"
+                              : "live"}
                         </span>
                       </td>
                       <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>

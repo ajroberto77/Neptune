@@ -12,10 +12,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from neptune.data.market import SyntheticMarketData
 from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio, ShortType
 from neptune.quant.beta import (
+    RawBetaResult,
     cross_sectional_prior_var,
     raw_beta_ewma_dimson,
     vasicek_shrinkage,
@@ -45,10 +48,21 @@ def compute_metrics(
     market = market_data.market_returns()
     factors = market_data.factor_returns()
 
-    raws = {p.ticker: raw_beta_ewma_dimson(market_data.ticker_returns(p.ticker), market)
-            for p in portfolio.positions}
+    # A name with too little price history to fit the Dimson regression yet gets a sentinel
+    # raw beta (prior 1.0, infinite estimation variance) instead of crashing — Vasicek then
+    # shrinks it fully to the prior. Real prices/P&L still work; only the beta waits for data.
+    raws, insufficient = {}, set()
+    for p in portfolio.positions:
+        try:
+            raws[p.ticker] = raw_beta_ewma_dimson(market_data.ticker_returns(p.ticker), market)
+        except ValueError:
+            raws[p.ticker] = RawBetaResult(
+                beta_raw=1.0, var_ols=float("inf"), coefficients=np.array([]), n_obs=0
+            )
+            insufficient.add(p.ticker)
 
-    raw_betas = [r.beta_raw for r in raws.values()]
+    # Only well-estimated names inform the cross-sectional prior.
+    raw_betas = [r.beta_raw for t, r in raws.items() if t not in insufficient]
     prior_var = (
         cross_sectional_prior_var(raw_betas) if len(raw_betas) >= 2 else default_prior_var
     )
@@ -58,6 +72,8 @@ def compute_metrics(
         raw = raws[p.ticker]
         if p.forward_beta is not None:
             beta, method, w = float(p.forward_beta), "forward_override", 1.0
+        elif p.ticker in insufficient:
+            beta, method, w = 1.0, "insufficient_data", 0.0
         else:
             beta, w = vasicek_shrinkage(raw.beta_raw, raw.var_ols, prior_var)
             method = "pipeline"
