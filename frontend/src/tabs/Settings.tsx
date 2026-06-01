@@ -147,8 +147,10 @@ export function Settings() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-ocean-muted">
-        Point Neptune at the right database instances. The password is write-only — leave
-        it blank to keep the stored secret unchanged.
+        Point Neptune at the right database instances. A saved connection (host and port
+        included) overrides the matching environment variable. The portfolio database is the
+        bootstrap — it stores these settings, so it's set via <code>.env</code> and applied
+        at startup. The password is write-only: leave it blank to keep the stored secret.
       </p>
 
       {error && (

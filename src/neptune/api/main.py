@@ -27,7 +27,8 @@ from sqlalchemy import select
 from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
-from neptune.db.base import SecuritiesSession, SessionLocal, init_db, init_securities_db, make_engine
+from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
+from neptune.db.runtime import securities_session
 from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
@@ -513,7 +514,7 @@ def sync_universe(session: Session = Depends(get_session)):
             for t in UNIVERSE_TICKERS
         ]
         source = RecordedUniverse(rows)
-    with SecuritiesSession() as sec_session:
+    with securities_session(session) as sec_session:
         try:
             n = sync_universe_projection(sec_session, source)
         except Exception as exc:  # noqa: BLE001
@@ -531,7 +532,7 @@ class IngestIn(BaseModel):
 
 
 @app.post("/securities/ingest")
-def ingest_prices(body: IngestIn):
+def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
     """Backfill OHLCV/dividends/splits from yfinance into the securities DB for the given
     tickers (or the whole projection). Requires network + the optional yfinance package, so
     it returns 503 when the feed is unavailable rather than failing opaquely."""
@@ -539,7 +540,7 @@ def ingest_prices(body: IngestIn):
     start = body.start or (end - timedelta(days=400))  # ~252 trading days of cushion
     provider = YFinanceProvider()
     results = []
-    with SecuritiesSession() as sec_session:
+    with securities_session(session) as sec_session:
         tickers = body.tickers or [
             s.ticker
             for s in sec_session.scalars(
@@ -585,14 +586,14 @@ class FactorIngestIn(BaseModel):
 
 
 @app.post("/factors/ingest")
-def ingest_factor_panel(body: FactorIngestIn):
+def ingest_factor_panel(body: FactorIngestIn, session: Session = Depends(get_session)):
     """Backfill the Ken French daily factor panel (SMB/HML/MOM, plus Mkt-RF/RF) into the
     securities DB. Requires network + the optional pandas-datareader package, so it returns
     503 when the feed is unavailable rather than failing opaquely."""
     end = body.end or date.today()
     start = body.start or (end - timedelta(days=400))
     provider = KenFrenchProvider()
-    with SecuritiesSession() as sec_session:
+    with securities_session(session) as sec_session:
         try:
             counts = ingest_factors(sec_session, provider, start, end)
         except RuntimeError as exc:  # pandas-datareader not installed
