@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from neptune.data.market import SyntheticMarketData
+from neptune.data.source import MarketData
 from neptune.domain.models import BookType, Portfolio, Position
 from neptune.pnl import Lot, PnL, position_pnl
 
 
-def position_pnl_for(position: Position, market: SyntheticMarketData) -> PnL:
+def position_pnl_for(position: Position, market: MarketData) -> PnL:
     """Mark one position's lots and return its four P&L dimensions. A position with no
     lots reports zero (notional-only positions carry no cost basis yet)."""
     if not position.lots:
@@ -42,7 +42,7 @@ class PortfolioPnL:
     by_book: dict[BookType, PnL]
 
 
-def portfolio_pnl(portfolio: Portfolio, market: SyntheticMarketData) -> PortfolioPnL:
+def portfolio_pnl(portfolio: Portfolio, market: MarketData) -> PortfolioPnL:
     """Aggregate position P&L across the book, split by the three reporting books."""
     by_book: dict[BookType, PnL] = {b: PnL.zero() for b in BookType}
     total = PnL.zero()

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from neptune.data.market import SyntheticMarketData
+from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio
 from neptune.risk import analytics
 from neptune.stress import (
@@ -25,7 +25,7 @@ from neptune.stress import (
 
 
 def build_exposures(
-    portfolio: Portfolio, market: SyntheticMarketData
+    portfolio: Portfolio, market: MarketData
 ) -> list[StressExposure]:
     """Per-position stress exposures, using the live beta pipeline + factor loadings."""
     metrics = analytics.compute_metrics(portfolio, market)
@@ -42,7 +42,7 @@ def build_exposures(
 
 
 def risk_factor_matrix(
-    market: SyntheticMarketData, factors: tuple[str, ...] = RISK_FACTORS
+    market: MarketData, factors: tuple[str, ...] = RISK_FACTORS
 ) -> np.ndarray:
     """(T, F) matrix of the risk factors' periodic returns — rows are days, columns are
     factors in ``RISK_FACTORS`` order. The input to historical simulation."""
@@ -51,14 +51,14 @@ def risk_factor_matrix(
 
 
 def risk_factor_covariance(
-    market: SyntheticMarketData, factors: tuple[str, ...] = RISK_FACTORS
+    market: MarketData, factors: tuple[str, ...] = RISK_FACTORS
 ) -> np.ndarray:
     """Sample covariance of the risk factors' return series (MKT + style factors)."""
     return np.cov(risk_factor_matrix(market, factors), rowvar=False)
 
 
 def run_scenarios(
-    portfolio: Portfolio, market: SyntheticMarketData, scenarios: list[Scenario]
+    portfolio: Portfolio, market: MarketData, scenarios: list[Scenario]
 ) -> list[ScenarioResult]:
     exposures = build_exposures(portfolio, market)
     return [apply_scenario(exposures, s) for s in scenarios]
@@ -66,7 +66,7 @@ def run_scenarios(
 
 def value_at_risk(
     portfolio: Portfolio,
-    market: SyntheticMarketData,
+    market: MarketData,
     confidence: float = 0.95,
     horizon_days: int = 1,
     method: str = "parametric",

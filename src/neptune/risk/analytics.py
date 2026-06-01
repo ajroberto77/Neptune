@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from neptune.data.market import SyntheticMarketData
+from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio, ShortType
 from neptune.quant.beta import (
     cross_sectional_prior_var,
@@ -37,7 +38,7 @@ class PositionMetrics:
 
 def compute_metrics(
     portfolio: Portfolio,
-    market_data: SyntheticMarketData,
+    market_data: MarketData,
     default_prior_var: float = DEFAULT_PRIOR_VAR,
 ) -> dict[str, PositionMetrics]:
     """Two-pass live metrics: raw betas first (to set the Vasicek prior), then shrink."""
