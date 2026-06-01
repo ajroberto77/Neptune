@@ -31,7 +31,7 @@ const TABS = ["Portfolio", "Trade", "Risk", "Hedge Approval", "Stress", "Setting
 type Tab = (typeof TABS)[number];
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("Risk");
+  const [tab, setTab] = useState<Tab>("Portfolio");
   const [summary, setSummary] = useState<RiskSummary | null>(null);
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [proposal, setProposal] = useState<HedgeProposal | null>(null);
