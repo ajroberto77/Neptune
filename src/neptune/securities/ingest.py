@@ -127,13 +127,36 @@ def ingest_ticker(
     ticker: str,
     start: date,
     end: date,
+    create_if_missing: bool = False,
 ) -> IngestResult:
-    """Resolve ``ticker`` to its projected ``Security`` and ingest its history. Raises
-    ``LookupError`` if the ticker isn't in the projection (sync the universe first)."""
+    """Resolve ``ticker`` to its ``Security`` and ingest its history. If the ticker isn't in
+    the projection: raise ``LookupError`` (default), or — when ``create_if_missing`` — create
+    a minimal local Security for it. The latter is how benchmarks/ETFs (e.g. SPY) that live
+    outside the common-stock universe get a home: they're tagged with a stable NEGATIVE
+    instrument_id (never collides with the universe's positive surrogates) and source
+    ``"manual"``, so they're clearly not universe-sourced."""
     security = session.scalar(select(Security).where(Security.ticker == ticker))
     if security is None:
-        raise LookupError(
-            f"ticker {ticker!r} not in securities projection — sync the universe first"
+        if not create_if_missing:
+            raise LookupError(
+                f"ticker {ticker!r} not in securities projection — sync the universe first"
+            )
+        security = Security(
+            instrument_id=_local_instrument_id(ticker),
+            ticker=ticker,
+            source="manual",
         )
+        session.add(security)
+        session.commit()
     history = provider.fetch(ticker, start, end)
     return ingest_history(session, security, history, provider.source)
+
+
+def _local_instrument_id(ticker: str) -> int:
+    """A stable negative surrogate id for a non-universe security (benchmark/ETF). Negative
+    so it can never collide with the universe's positive ``instrument_id``s; stable (sha1,
+    not Python's randomized ``hash``) so re-ingesting the same ticker reuses the row."""
+    import hashlib
+
+    digest = hashlib.sha1(ticker.encode()).hexdigest()
+    return -(int(digest[:12], 16) % 2_000_000_000)

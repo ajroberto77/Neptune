@@ -12,7 +12,7 @@ PENDING_APPROVAL proposal (invariant I-01).
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -27,6 +27,7 @@ from sqlalchemy import select
 from neptune.config import settings
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
+from neptune.data.db_market import DbMarketData, TickerNotFound
 from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
 from neptune.db.runtime import securities_session
 from neptune.domain.models import BookType, LotEntry, Position, Side, ShortType
@@ -48,9 +49,34 @@ from neptune.securities.models import Security
 from neptune.securities.providers import YFinanceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
-# One shared synthetic market-data source feeds the live beta/factor pipeline.
+# Synthetic market data — the fallback (and the candidate-universe source for hedging,
+# which still runs on a synthetic shortable universe).
 MARKET_DATA = SyntheticMarketData()
 UNIVERSE_TICKERS = default_universe_tickers(60)
+
+
+@contextmanager
+def market_data_for(session: Session, portfolio):
+    """Yield the market-data source for a portfolio: real ``DbMarketData`` (backfilled
+    prices + factors) when the benchmark AND every position's ticker have stored prices,
+    else the synthetic fallback. All-or-nothing per book — a real benchmark can't price a
+    synthetic name — so the seeded demo (and tests, which have no stored prices) stay on the
+    synthetic source unchanged. The securities session is held open for the caller because
+    ``DbMarketData`` reads lazily."""
+    sec_cm = securities_session(session)
+    sec = sec_cm.__enter__()
+    try:
+        md = DbMarketData(sec, benchmark=settings.benchmark)
+        for p in portfolio.positions:  # require every ticker to have real prices
+            md.ticker_returns(p.ticker)
+    except TickerNotFound:
+        sec_cm.__exit__(None, None, None)
+        yield MARKET_DATA  # synthetic fallback (benchmark or a name lacks prices)
+        return
+    try:
+        yield md
+    finally:
+        sec_cm.__exit__(None, None, None)
 
 
 # --- request/response schemas ----------------------------------------------------
@@ -248,29 +274,30 @@ def record_transaction(
 def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
     # Compute the book's lead PM once (not per position) — the per-name fallback.
     lead_pm = portfolio.lead_pm_ids[0] if portfolio.lead_pm_ids else None
-    return [
-        {
-            "id": p.id,
-            "ticker": p.ticker,
-            "side": p.side.value,
-            "short_type": p.short_type.value,
-            "book": p.book.value,
-            "notional": p.notional,
-            "quantity": p.quantity,
-            "price": round(MARKET_DATA.current_price(p.ticker), 2),
-            "beta": round(metrics[p.ticker].beta, 4),
-            "beta_method": metrics[p.ticker].beta_method,
-            "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
-            # Per-name coverage; pm falls back to the book's lead PM.
-            "pm_id": p.pm_id or lead_pm,
-            "analyst_id": p.analyst_id,
-            "pnl": _pnl_dict(pnl_engine.position_pnl_for(p, MARKET_DATA)),
-        }
-        for p in portfolio.positions
-    ]
+    with market_data_for(session, portfolio) as md:
+        metrics = analytics.compute_metrics(portfolio, md)
+        return [
+            {
+                "id": p.id,
+                "ticker": p.ticker,
+                "side": p.side.value,
+                "short_type": p.short_type.value,
+                "book": p.book.value,
+                "notional": p.notional,
+                "quantity": p.quantity,
+                "price": round(md.current_price(p.ticker), 2),
+                "beta": round(metrics[p.ticker].beta, 4),
+                "beta_method": metrics[p.ticker].beta_method,
+                "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
+                # Per-name coverage; pm falls back to the book's lead PM.
+                "pm_id": p.pm_id or lead_pm,
+                "analyst_id": p.analyst_id,
+                "pnl": _pnl_dict(pnl_engine.position_pnl_for(p, md)),
+            }
+            for p in portfolio.positions
+        ]
 
 
 @app.post("/portfolios/{portfolio_id}/positions/{position_id}/reduce")
@@ -302,7 +329,8 @@ def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
     """Four P&L dimensions for the book, split by Long / Systematic / Discretionary."""
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    result = pnl_engine.portfolio_pnl(portfolio, MARKET_DATA)
+    with market_data_for(session, portfolio) as md:
+        result = pnl_engine.portfolio_pnl(portfolio, md)
     return {
         "portfolio_id": portfolio_id,
         "total": _pnl_dict(result.total),
@@ -314,7 +342,8 @@ def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
 def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
+    with market_data_for(session, portfolio) as md:
+        metrics = analytics.compute_metrics(portfolio, md)
     net_beta, net_factors = analytics.net_metrics(portfolio, metrics)
     # Market is shown by the net-beta gauge; the factor table covers the style factors.
     style_factors = {f: net_factors[f] for f in ("SMB", "HML", "MOM")}
@@ -604,7 +633,11 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
         errors = []
         for ticker in tickers:
             try:
-                res = ingest_ticker(sec_session, provider, ticker, start, end)
+                # create_if_missing lets benchmarks/ETFs (e.g. SPY) be pulled even though
+                # they're outside the common-stock universe projection.
+                res = ingest_ticker(
+                    sec_session, provider, ticker, start, end, create_if_missing=True
+                )
             except RuntimeError as exc:  # yfinance not installed — applies to every ticker
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
             except LookupError as exc:

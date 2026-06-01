@@ -136,12 +136,14 @@ first vertical slice · 🔵 LATER = deferred.
       **Trade** tab: record-transaction form + per-position Close. Systematic-short executions
       recordable here (origination stays with the optimizer; book tag keeps I-03).
       `test_trade.py` + `Trade.test.tsx`.
-- [ ] **Flip the engine to `DbMarketData`** (the fix for nonsense P&L/price on real tickers):
-      replace the synthetic `MARKET_DATA` in the risk/P&L/stress endpoints with `DbMarketData`
-      reading backfilled prices, with synthetic fallback when data is absent. Requires
-      ingesting the **benchmark (SPY)** — an ETF outside the common-stock universe, so it
-      needs a dedicated ingest path (it isn't in the universe projection). Default benchmark
-      SPY (roadmap); make it configurable.
+- [~] **DbMarketData flip** (fix for nonsense P&L/price on real tickers): `market_data_for()`
+      picks real `DbMarketData` when the benchmark + EVERY portfolio ticker have stored prices,
+      else synthetic (all-or-nothing per book — a real benchmark can't price a synthetic name;
+      keeps the seeded demo + tests synthetic). Wired into `/positions`, `/risk`, `/pnl`.
+      Benchmark **SPY** ingestable via `create_if_missing` (negative instrument_id, outside the
+      universe); `NEPTUNE_BENCHMARK` configurable. `test_market_flip.py`.
+      REMAINING: flip Stress; flip the hedge optimizer once a REAL shortable universe replaces
+      the synthetic `live_universe` candidate set.
 - [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
       it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show
       the fee-inclusive blended basis. (Avg execution price already shown.)
