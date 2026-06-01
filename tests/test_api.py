@@ -21,6 +21,17 @@ def test_health(client):
     assert r.json()["beta_tol"] == 0.05
 
 
+def test_list_and_create_portfolios(client):
+    # The seeded golden book is listed.
+    ids = {p["id"] for p in client.get("/portfolios").json()}
+    assert PID in ids
+    # Create a second book; it shows up; duplicates are rejected.
+    r = client.post("/portfolios", json={"id": "BOOK-2", "name": "Second Book"})
+    assert r.status_code == 201
+    assert "BOOK-2" in {p["id"] for p in client.get("/portfolios").json()}
+    assert client.post("/portfolios", json={"id": "BOOK-2", "name": "dup"}).status_code == 409
+
+
 def test_seeded_risk_summary_shows_net_beta(client):
     r = client.get(f"/portfolios/{PID}/risk")
     assert r.status_code == 200

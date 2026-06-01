@@ -77,6 +77,11 @@ class PositionRepository:
         row = self.session.get(PortfolioORM, portfolio_id)
         return _to_domain_portfolio(row) if row else None
 
+    def list_portfolios(self) -> list[Portfolio]:
+        """All books, for the portfolio switcher / Total Book rollup."""
+        rows = self.session.scalars(select(PortfolioORM).order_by(PortfolioORM.id)).all()
+        return [_to_domain_portfolio(r) for r in rows]
+
     def add_position(self, portfolio_id: str, position: Position) -> int:
         row = PositionORM(
             portfolio_id=portfolio_id,

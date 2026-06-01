@@ -9,6 +9,7 @@ import type {
 import {
   closePosition,
   fetchFrontier,
+  fetchPortfolios,
   fetchPositions,
   fetchRisk,
   fetchStress,
@@ -26,12 +27,14 @@ import { HedgeApproval } from "./tabs/HedgeApproval";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 
-const PORTFOLIO_ID = "IRIDIUM-CORE";
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge Approval", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Portfolio");
+  // The selected book. Multiple portfolios roll up into one firm book (Total Book view: TODO).
+  const [portfolioId, setPortfolioId] = useState<string>("IRIDIUM-CORE");
+  const [portfolios, setPortfolios] = useState<{ id: string; name: string }[]>([]);
   const [summary, setSummary] = useState<RiskSummary | null>(null);
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [proposal, setProposal] = useState<HedgeProposal | null>(null);
@@ -48,23 +51,34 @@ export default function App() {
   const [pricing, setPricing] = useState(false);
   const [lastPriced, setLastPriced] = useState<string | null>(null);
 
+  // Load the portfolio list (for the switcher) + the server refresh interval, once.
   useEffect(() => {
-    Promise.all([fetchRisk(PORTFOLIO_ID), fetchPositions(PORTFOLIO_ID)])
+    fetchPortfolios()
+      .then((ps) => {
+        setPortfolios(ps);
+        if (ps.length && !ps.some((p) => p.id === portfolioId)) setPortfolioId(ps[0].id);
+      })
+      .catch((e) => setError(String(e)));
+    getPriceRefresh()
+      .then(({ minutes }) => setRefreshMins(minutes))
+      .catch(() => {});
+  }, []);
+
+  // (Re)load the selected book whenever it changes.
+  useEffect(() => {
+    Promise.all([fetchRisk(portfolioId), fetchPositions(portfolioId)])
       .then(([r, p]) => {
         setSummary(r);
         setPositions(p);
       })
       .catch((e) => setError(String(e)));
-    getPriceRefresh()
-      .then(({ minutes }) => setRefreshMins(minutes))
-      .catch(() => {}); // non-fatal: fall back to the default
-  }, []);
+  }, [portfolioId]);
 
   async function handlePropose(sectorLimit?: number) {
     setProposing(true);
     setError(null);
     try {
-      setProposal(await proposeHedge(PORTFOLIO_ID, sectorLimit));
+      setProposal(await proposeHedge(portfolioId, sectorLimit));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -76,7 +90,7 @@ export default function App() {
     setFrontierLoading(true);
     setError(null);
     try {
-      setFrontier(await fetchFrontier(PORTFOLIO_ID));
+      setFrontier(await fetchFrontier(portfolioId));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -88,7 +102,7 @@ export default function App() {
     setStressLoading(true);
     setError(null);
     try {
-      setStress(await fetchStress(PORTFOLIO_ID));
+      setStress(await fetchStress(portfolioId));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -98,7 +112,7 @@ export default function App() {
 
   // After any trade, refresh both the book and the risk summary so beta/factors reflect it.
   async function refreshBook() {
-    const [r, p] = await Promise.all([fetchRisk(PORTFOLIO_ID), fetchPositions(PORTFOLIO_ID)]);
+    const [r, p] = await Promise.all([fetchRisk(portfolioId), fetchPositions(portfolioId)]);
     setSummary(r);
     setPositions(p);
   }
@@ -107,7 +121,7 @@ export default function App() {
     setTrading(true);
     setError(null);
     try {
-      await recordTransaction(PORTFOLIO_ID, t);
+      await recordTransaction(portfolioId, t);
       await refreshBook();
     } catch (e) {
       setError(String(e));
@@ -120,7 +134,7 @@ export default function App() {
     setTrading(true);
     setError(null);
     try {
-      await closePosition(PORTFOLIO_ID, positionId, quantity, exitPrice);
+      await closePosition(portfolioId, positionId, quantity, exitPrice);
       await refreshBook();
     } catch (e) {
       setError(String(e));
@@ -133,7 +147,7 @@ export default function App() {
   async function handleRefreshPrices() {
     setPricing(true);
     try {
-      await refreshPrices(PORTFOLIO_ID);
+      await refreshPrices(portfolioId);
       await refreshBook();
       setLastPriced(new Date().toLocaleTimeString());
     } catch (e) {
@@ -169,11 +183,25 @@ export default function App() {
     <div className="min-h-screen">
       <header className="border-b border-ocean-border bg-ocean-panel/60">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="font-display text-xl font-semibold text-white">Neptune</h1>
-            <p className="text-xs text-ocean-muted">
-              Iridium Capital Management &middot; {PORTFOLIO_ID}
-            </p>
+          <div className="flex items-center gap-4">
+            <div>
+              <h1 className="font-display text-xl font-semibold text-white">Neptune</h1>
+              <p className="text-xs text-ocean-muted">Iridium Capital Management</p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-ocean-muted">
+              Book
+              <select
+                className="np-input py-1"
+                value={portfolioId}
+                onChange={(e) => setPortfolioId(e.target.value)}
+              >
+                {portfolios.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <nav className="flex gap-1">
             {TABS.map((t) => (

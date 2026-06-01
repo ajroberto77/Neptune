@@ -78,6 +78,10 @@ export function refreshPrices(
   return getJSON(`/portfolios/${portfolioId}/refresh-prices`, { method: "POST" });
 }
 
+export function fetchPortfolios(): Promise<{ id: string; name: string }[]> {
+  return getJSON("/portfolios");
+}
+
 export function getPriceRefresh(): Promise<{ minutes: number }> {
   return getJSON("/settings/price-refresh");
 }

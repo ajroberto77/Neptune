@@ -237,6 +237,40 @@ def health():
     return {"status": "ok", "beta_tol": settings.beta_tol}
 
 
+class PortfolioIn(BaseModel):
+    """Create a portfolio (book). id is a short slug; the rest are optional ownership links."""
+
+    id: str
+    name: str
+    firm_id: str | None = None
+    investor_entity_id: str | None = None
+    lead_pm_ids: list[str] = Field(default_factory=list)
+
+
+@app.get("/portfolios")
+def list_portfolios(session: Session = Depends(get_session)):
+    """All books, for the portfolio switcher and the Total Book rollup."""
+    svc = PositionService(session)
+    return [
+        {"id": p.id, "name": p.name, "firm_id": p.firm_id,
+         "investor_entity_id": p.investor_entity_id, "lead_pm_ids": p.lead_pm_ids}
+        for p in svc.list_portfolios()
+    ]
+
+
+@app.post("/portfolios", status_code=201)
+def create_portfolio(body: PortfolioIn, session: Session = Depends(get_session)):
+    svc = PositionService(session)
+    if svc.get_portfolio(body.id) is not None:
+        raise HTTPException(status_code=409, detail=f"portfolio {body.id} already exists")
+    kwargs = {k: v for k, v in (
+        ("firm_id", body.firm_id), ("investor_entity_id", body.investor_entity_id),
+        ("lead_pm_ids", body.lead_pm_ids),
+    ) if v}
+    p = svc.create_portfolio(body.id, body.name, **kwargs)
+    return {"id": p.id, "name": p.name}
+
+
 class PersonIn(BaseModel):
     id: str
     firm_id: str

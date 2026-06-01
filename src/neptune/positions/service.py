@@ -54,6 +54,9 @@ class PositionService:
     def get_portfolio(self, portfolio_id: str) -> Portfolio | None:
         return self.repo.get_portfolio(portfolio_id)
 
+    def list_portfolios(self) -> list[Portfolio]:
+        return self.repo.list_portfolios()
+
     def add_position(self, portfolio_id: str, position: Position) -> int:
         existing = self.repo.list_positions(portfolio_id)
         self._check_long_short_conflict(position, existing)
