@@ -260,6 +260,7 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
             "book": p.book.value,
             "notional": p.notional,
             "quantity": p.quantity,
+            "price": round(MARKET_DATA.current_price(p.ticker), 2),
             "beta": round(metrics[p.ticker].beta, 4),
             "beta_method": metrics[p.ticker].beta_method,
             "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,

@@ -12,6 +12,7 @@ function pos(over: Partial<PositionRow>): PositionRow {
     book: "LONG",
     notional: 1_000_000,
     quantity: 1000,
+    price: 204.13,
     beta: 1.2,
     beta_method: "forward_override",
     cost_basis_method: "FIFO",
@@ -44,6 +45,8 @@ describe("Blotter", () => {
     expect(screen.getByText("-$100")).toBeInTheDocument();
     // Unrealised and Total both show +$5,000.
     expect(screen.getAllByText("+$5,000").length).toBe(2);
+    // Per-share price renders with cents.
+    expect(screen.getByText("$204.13")).toBeInTheDocument();
   });
 
   it("shows an empty message for a book with no positions", () => {

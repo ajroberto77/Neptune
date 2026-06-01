@@ -33,6 +33,7 @@ export interface PositionRow {
   book: string;
   notional: number;
   quantity: number;
+  price: number;
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
   cost_basis_method?: string;

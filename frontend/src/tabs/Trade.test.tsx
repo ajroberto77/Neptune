@@ -12,6 +12,7 @@ function pos(over: Partial<PositionRow>): PositionRow {
     book: "LONG",
     notional: 50_000,
     quantity: 100,
+    price: 500,
     beta: 1.2,
     pnl: { day: 0, total: 0, unrealised: 0, realised: 0 },
     ...over,

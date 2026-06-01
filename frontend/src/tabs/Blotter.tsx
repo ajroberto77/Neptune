@@ -1,5 +1,5 @@
 import type { PositionRow } from "../types";
-import { money, pnlColor, signedMoney } from "../format";
+import { money, pnlColor, price, signedMoney } from "../format";
 
 const BOOKS: { title: string; book: string }[] = [
   { title: "Long Book", book: "LONG" },
@@ -30,6 +30,7 @@ export function Blotter({ positions }: { positions: PositionRow[] }) {
                   <tr className="text-left text-xs uppercase text-ocean-muted">
                     <th className="pb-2 font-medium">Ticker</th>
                     <th className="pb-2 text-right font-medium">Beta</th>
+                    <th className="pb-2 text-right font-medium">Price</th>
                     <th className="pb-2 text-right font-medium">Notional</th>
                     <th className="pb-2 text-right font-medium">Day P&L</th>
                     <th className="pb-2 text-right font-medium">Unrealised</th>
@@ -47,6 +48,7 @@ export function Blotter({ positions }: { positions: PositionRow[] }) {
                         </span>
                       </td>
                       <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>
+                      <td className="py-2 text-right font-mono">{price(p.price)}</td>
                       <td className="py-2 text-right font-mono">{money(p.notional)}</td>
                       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.day)}`}>
                         {signedMoney(p.pnl.day)}

@@ -186,6 +186,10 @@ first vertical slice · 🔵 LATER = deferred.
       short basket), Hedge Approval
 - [x] 🟢 API client wired to FastAPI; Vitest component test
 - [x] 🟢 FastAPI: positions CRUD, `/risk`, `/hedge/propose` (+ `test_api.py`)
+- [x] Blotter shows per-name current price (from the active market-data source — synthetic
+      until the `DbMarketData` flip, then the real backfilled mark).
+- [ ] 🔵 Customizable blotter columns (user can add/remove/reorder columns, persisted).
+      Deferred — current price landed first per user priority (2026-06-01).
 - [ ] 🔵 WebSocket price pipeline (<400ms); full P&L columns; Electron shell (fast-follow)
 
 ## Phase 6 — Stress Engine 🟢

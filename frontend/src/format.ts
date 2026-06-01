@@ -6,6 +6,16 @@ export function money(value: number): string {
   });
 }
 
+/** Currency with cents, e.g. "$204.13" — for per-share prices. */
+export function price(value: number): string {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 /** Signed currency, e.g. "+$1,234" / "-$567" — for P&L cells. */
 export function signedMoney(value: number): string {
   const sign = value >= 0 ? "+" : "-";
