@@ -71,6 +71,9 @@ class Security(SecuritiesBase):
     ticker: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
     security_name: Mapped[str | None] = mapped_column(String, nullable=True)
     security_type: Mapped[str | None] = mapped_column(String, nullable=True)  # 'Common Stock'…
+    # GICS-like sector for the hard sector-concentration cap. Populated from yfinance for now
+    # (Yahoo taxonomy); a licensed GICS feed can repopulate this column later.
+    sector: Mapped[str | None] = mapped_column(String, nullable=True)
     # Identifiers carried for cross-reference (all nullable; upstream may not have enriched).
     cusip: Mapped[str | None] = mapped_column(String, nullable=True)
     isin: Mapped[str | None] = mapped_column(String, nullable=True)

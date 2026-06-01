@@ -147,6 +147,18 @@ class YFinanceProvider:
                 )
         return SecurityHistory(prices=prices, dividends=dividends, corporate_actions=actions)
 
+    def fetch_sector(self, ticker: str) -> str | None:
+        """Yahoo's sector classification (GICS-like) for ``ticker``, or None if unavailable.
+        A licensed GICS feed can replace this later — the ingest just writes the column."""
+        try:
+            import yfinance as yf
+        except ImportError:  # pragma: no cover - optional install
+            return None
+        try:
+            return yf.Ticker(ticker).info.get("sector") or None
+        except Exception:  # noqa: BLE001 - sector is best-effort enrichment, never fatal
+            return None
+
 
 def _num(value) -> float | None:
     """Coerce a pandas/NumPy scalar to a plain float, mapping NaN/None to None."""

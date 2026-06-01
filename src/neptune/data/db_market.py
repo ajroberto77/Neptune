@@ -183,3 +183,30 @@ class DbMarketData:
         if not series:
             raise TickerNotFound(f"ticker {ticker!r} has no prices")
         return float(series[-2][2] if len(series) >= 2 else series[-1][2])
+
+    # --- Universe enumeration (for the real shortable universe) --------------------
+
+    def available_tickers(self, min_bars: int = 30) -> list[str]:
+        """Backfilled tickers with at least ``min_bars`` real price bars, excluding the
+        benchmark — the candidate set for the shortable universe. The bar-count floor matters
+        because short series get forward-filled to the benchmark index, so a 3-bar name would
+        otherwise pass through as a (meaningless, near-zero-beta) candidate."""
+        from sqlalchemy import func
+
+        q = (
+            select(Security.ticker)
+            .join(Price, Price.instrument_id == Security.instrument_id)
+            .where(Security.ticker.isnot(None), Security.ticker != self.benchmark)
+        )
+        if self.source is not None:
+            q = q.where(Price.source == self.source)
+        rows = self.session.execute(
+            q.group_by(Security.ticker).having(func.count(Price.ts) >= min_bars)
+        ).all()
+        return sorted(t for (t,) in rows)
+
+    def sector(self, ticker: str) -> str | None:
+        """The Security's stored sector (None until enriched), for the sector cap."""
+        return self.session.scalar(
+            select(Security.sector).where(Security.ticker == ticker)
+        )

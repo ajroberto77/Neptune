@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from neptune.data.db_market import TickerNotFound
 from neptune.data.market import SyntheticMarketData
 from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio, ShortType
@@ -125,4 +126,38 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
         loadings = factor_loadings(market_data.ticker_returns(t), factors).loadings
         sector = market_data.spec_for(t).sector
         candidates.append(Candidate(ticker=t, beta=beta, loadings=loadings, sector=sector))
+    return candidates
+
+
+def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate]:
+    """The REAL shortable universe: build candidates from backfilled names (a ``DbMarketData``
+    source) with their pipeline betas, factor loadings, and stored sectors. Unlike the
+    synthetic ``live_universe``, names with too little price history to fit the Dimson
+    regression are skipped (they can't be sized), and the sector comes from the securities DB.
+    """
+    if tickers is None:
+        tickers = market_data.available_tickers()
+    market = market_data.market_returns()
+    factors = market_data.factor_returns()
+
+    raws = {}
+    for t in tickers:
+        try:
+            raws[t] = raw_beta_ewma_dimson(market_data.ticker_returns(t), market)
+        except (ValueError, TickerNotFound):
+            continue  # insufficient history / no prices — not a usable hedge candidate
+    if not raws:
+        return []
+    prior_var = (
+        cross_sectional_prior_var([r.beta_raw for r in raws.values()])
+        if len(raws) >= 2
+        else DEFAULT_PRIOR_VAR
+    )
+    candidates: list[Candidate] = []
+    for t, raw in raws.items():
+        beta, _ = vasicek_shrinkage(raw.beta_raw, raw.var_ols, prior_var)
+        loadings = factor_loadings(market_data.ticker_returns(t), factors).loadings
+        candidates.append(
+            Candidate(ticker=t, beta=beta, loadings=loadings, sector=market_data.sector(t))
+        )
     return candidates

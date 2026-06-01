@@ -90,3 +90,21 @@ def init_securities_db(target_engine=securities_engine) -> None:
     from neptune.securities import models  # noqa: F401  (register securities mappers)
 
     SecuritiesBase.metadata.create_all(bind=target_engine)
+    # No Alembic yet: `create_all` won't add columns to an EXISTING table. Bridge that for
+    # additive columns so a deployed securities DB picks up new fields without a manual migration.
+    _ensure_columns(target_engine, "securities", {"sector": "VARCHAR"})
+
+
+def _ensure_columns(target_engine, table: str, columns: dict[str, str]) -> None:
+    """Lightweight additive migration: ALTER TABLE ADD COLUMN for any of ``columns`` missing
+    from ``table``. Idempotent; works on SQLite and Postgres. Interim until Alembic lands."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(target_engine)
+    if table not in insp.get_table_names():
+        return
+    existing = {c["name"] for c in insp.get_columns(table)}
+    with target_engine.begin() as conn:
+        for name, ddl_type in columns.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))

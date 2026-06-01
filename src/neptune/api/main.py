@@ -60,6 +60,15 @@ MARKET_DATA = SyntheticMarketData()
 UNIVERSE_TICKERS = default_universe_tickers(60)
 
 
+def _shortable_universe(md):
+    """The hedge candidate universe matching the market-data source: the REAL backfilled
+    names (with pipeline betas + stored sectors) when on ``DbMarketData``, else the synthetic
+    fallback universe. Both are built from the same source so betas are mutually consistent."""
+    if isinstance(md, DbMarketData):
+        return analytics.db_universe(md)
+    return analytics.live_universe(md, UNIVERSE_TICKERS)
+
+
 @contextmanager
 def market_data_for(session: Session, portfolio):
     """Yield the market-data source for a portfolio: real ``DbMarketData`` (backfilled
@@ -429,22 +438,23 @@ def propose_hedge(
 ):
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
-    residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
     long_tickers = {p.ticker for p in portfolio.longs}
-    universe = analytics.live_universe(MARKET_DATA, UNIVERSE_TICKERS)
     try:
-        proposal = optimize_hedge(
-            residual_beta=residual_beta,
-            residual_factors=residual_factors,
-            universe=universe,
-            long_aum=portfolio.long_aum,
-            beta_tol=settings.beta_tol,
-            factor_limit=settings.factor_limit,
-            max_position_weight=settings.max_position_weight,
-            sector_limit=sector_limit,
-            excluded_tickers=long_tickers,
-        )
+        with market_data_for(session, portfolio) as md:
+            metrics = analytics.compute_metrics(portfolio, md)
+            residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
+            universe = _shortable_universe(md)
+            proposal = optimize_hedge(
+                residual_beta=residual_beta,
+                residual_factors=residual_factors,
+                universe=universe,
+                long_aum=portfolio.long_aum,
+                beta_tol=settings.beta_tol,
+                factor_limit=settings.factor_limit,
+                max_position_weight=settings.max_position_weight,
+                sector_limit=sector_limit,
+                excluded_tickers=long_tickers,
+            )
     except (InfeasibleHedge, ValueError) as exc:
         # Cannot hedge to neutral with this universe — a domain state, not a 500.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -475,20 +485,21 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
     between position count and hedge quality (tracking error / net beta)."""
     service = PositionService(session)
     portfolio = _require_portfolio(service, portfolio_id)
-    metrics = analytics.compute_metrics(portfolio, MARKET_DATA)
-    residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
     long_tickers = {p.ticker for p in portfolio.longs}
-    universe = analytics.live_universe(MARKET_DATA, UNIVERSE_TICKERS)
-    runs = complexity_frontier(
-        residual_beta=residual_beta,
-        residual_factors=residual_factors,
-        universe=universe,
-        long_aum=portfolio.long_aum,
-        beta_tol=settings.beta_tol,
-        factor_limit=settings.factor_limit,
-        max_position_weight=settings.max_position_weight,
-        excluded_tickers=long_tickers,
-    )
+    with market_data_for(session, portfolio) as md:
+        metrics = analytics.compute_metrics(portfolio, md)
+        residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
+        universe = _shortable_universe(md)
+        runs = complexity_frontier(
+            residual_beta=residual_beta,
+            residual_factors=residual_factors,
+            universe=universe,
+            long_aum=portfolio.long_aum,
+            beta_tol=settings.beta_tol,
+            factor_limit=settings.factor_limit,
+            max_position_weight=settings.max_position_weight,
+            excluded_tickers=long_tickers,
+        )
     return {
         "portfolio_id": portfolio_id,
         "net_beta_before": residual_beta,
