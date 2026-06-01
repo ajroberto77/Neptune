@@ -695,8 +695,8 @@ class FactorIngestIn(BaseModel):
 @app.post("/factors/ingest")
 def ingest_factor_panel(body: FactorIngestIn, session: Session = Depends(get_session)):
     """Backfill the Ken French daily factor panel (SMB/HML/MOM, plus Mkt-RF/RF) into the
-    securities DB. Requires network + the optional pandas-datareader package, so it returns
-    503 when the feed is unavailable rather than failing opaquely."""
+    securities DB. Fetched from the Ken French Data Library's CSV zips over HTTPS, so it
+    returns 503 when the feed is unreachable rather than failing opaquely."""
     end = body.end or date.today()
     start = body.start or (end - timedelta(days=400))
     provider = KenFrenchProvider()

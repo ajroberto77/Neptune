@@ -99,8 +99,15 @@ def test_ingest_reports_feed_unavailable_when_yfinance_missing(client):
     assert "yfinance" in r.json()["detail"]
 
 
-def test_factor_ingest_reports_feed_unavailable(client):
-    # pandas-datareader isn't installed here → clean 503, not a 500.
+def test_factor_ingest_reports_feed_unavailable(client, monkeypatch):
+    # An unreachable Ken French feed → clean 503, not a 500. Force the download to fail so the
+    # test is deterministic (never hits the real network, even on a connected machine).
+    from neptune.securities.factor_providers import KenFrenchProvider
+
+    def _boom(self, zip_name):
+        raise RuntimeError(f"could not fetch Ken French factor data from {zip_name}: offline")
+
+    monkeypatch.setattr(KenFrenchProvider, "_download_csv", _boom)
     r = client.post("/factors/ingest", json={})
     assert r.status_code == 503
-    assert "pandas_datareader" in r.json()["detail"]
+    assert "Ken French" in r.json()["detail"]

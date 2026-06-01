@@ -21,7 +21,8 @@ cvxpy==1.9.1
 
 # --- Market data ingestion (imported lazily; only needed for live backfill) ---
 yfinance==0.2.66
-pandas-datareader==0.10.0  # Ken French factor panel (SMB/HML/MOM)
+# Ken French factor panel (SMB/HML/MOM) is fetched from its published CSV zips with the
+# stdlib (urllib + zipfile) — no third-party reader, which keeps us off pandas-datareader.
 
 # --- Task queue (deferred wiring; pinned for forward compatibility) ---
 celery==5.4.0

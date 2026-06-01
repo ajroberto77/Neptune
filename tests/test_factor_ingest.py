@@ -14,6 +14,7 @@ from neptune.securities.factor_ingest import ingest_factors
 from neptune.securities.factor_providers import (
     FactorObservation,
     RecordedFactorProvider,
+    parse_french_daily_csv,
 )
 from neptune.securities.models import FactorReturn, Price, Security
 
@@ -65,6 +66,55 @@ def test_ingest_source_tag_coexists(securities_session):
                    ds[0], ds[-1])
     rows = securities_session.scalars(select(FactorReturn)).all()
     assert {r.source for r in rows} == {"ken_french", "other"}
+
+
+# --- Ken French CSV parsing (the real-feed format, without the network) -----------
+
+# Mirrors the published daily files: prose header, column row, YYYYMMDD rows in percent,
+# blank line, then a copyright footer.
+_FACTORS_CSV = """\
+This file was created by CMPT_ME_BEME_RETS using the 202312 CRSP database.
+
+,Mkt-RF,SMB,HML,RF
+20240102,  0.50, -0.24,  0.28, 0.021
+20240103, -1.10,  0.05, -0.15, 0.021
+
+Copyright 2024 Kenneth R. French
+"""
+
+_MOMENTUM_CSV = """\
+This file was created ... Momentum Factor (Mom).
+
+,Mom
+20240102,  0.33
+20240103, -0.40
+
+ Copyright 2024 Kenneth R. French
+"""
+
+
+def test_parse_factors_csv_percent_to_decimal_and_footer_stop():
+    obs = parse_french_daily_csv(_FACTORS_CSV)
+    # 2 days × {Mkt-RF→MKT_RF, SMB, HML, RF} = 8; footer/blank lines ignored.
+    assert len(obs) == 8
+    by = {(o.factor, o.ts): o.ret for o in obs}
+    assert by[("MKT_RF", date(2024, 1, 2))] == pytest.approx(0.005)  # 0.50% → 0.005
+    assert by[("SMB", date(2024, 1, 3))] == pytest.approx(0.0005)
+    assert by[("RF", date(2024, 1, 2))] == pytest.approx(0.00021)
+    assert {o.factor for o in obs} == {"MKT_RF", "SMB", "HML", "RF"}
+
+
+def test_parse_momentum_csv_maps_mom_to_canonical():
+    obs = parse_french_daily_csv(_MOMENTUM_CSV)
+    assert {o.factor for o in obs} == {"MOM"}
+    by = {o.ts: o.ret for o in obs}
+    assert by[date(2024, 1, 2)] == pytest.approx(0.0033)
+    assert by[date(2024, 1, 3)] == pytest.approx(-0.004)
+
+
+def test_parse_handles_prose_only_without_data():
+    # No column/data rows → no observations, and no crash.
+    assert parse_french_daily_csv("just a note\nno table here\n") == []
 
 
 # --- DbMarketData panel -----------------------------------------------------------
