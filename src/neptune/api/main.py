@@ -267,68 +267,85 @@ def hedge_diagnostics(portfolio_id: str, session: Session = Depends(get_session)
     single one (or an unpriced benchmark) drops the ENTIRE book to the synthetic 60-name
     source, silently ignoring every real backfilled name. Read-only; never runs the solver.
     """
-    from sqlalchemy import func
-
     service = PositionService(session)
     portfolio = _resolve_portfolio(service, portfolio_id)
-    long_tickers = {p.ticker for p in portfolio.longs}
-    out: dict = {"portfolio_id": portfolio_id, "benchmark": settings.benchmark}
-
+    out = {"portfolio_id": portfolio_id, "benchmark": settings.benchmark}
     with securities_session(session) as sec:
-        # Raw projection∩prices count (independent of the benchmark), so we can report the
-        # real universe size even when the benchmark itself is unpriced.
-        projected = sec.scalar(select(func.count(Security.instrument_id))) or 0
-        usable = sec.execute(
-            select(Security.ticker)
-            .join(Price, Price.instrument_id == Security.instrument_id)
-            .where(Security.ticker.isnot(None), Security.ticker != settings.benchmark)
-            .group_by(Security.ticker)
-            .having(func.count(Price.ts) >= 30)
-        ).all()
-        usable_tickers = sorted(t for (t,) in usable)
-        out["securities_projected"] = projected
-        out["names_with_30plus_bars"] = len(usable_tickers)
-        out["sample"] = usable_tickers[:25]
-
-        try:
-            md = DbMarketData(sec, benchmark=settings.benchmark)
-        except TickerNotFound as exc:
-            out["source"] = "synthetic"
-            out["reason"] = (
-                f"benchmark {settings.benchmark!r} is not priced ({exc}); the whole book "
-                f"falls back to the synthetic 60-name universe — your "
-                f"{len(usable_tickers)} backfilled names are IGNORED for hedging."
-            )
-            return out
-
-        out["benchmark_bars"] = len(md._series(settings.benchmark))
-        unpriced = sorted(
-            {p.ticker for p in portfolio.positions
-             if _ticker_unpriced(md, p.ticker)}
-        )
-        out["unpriced_positions"] = unpriced
-        candidates = [t for t in usable_tickers if t not in long_tickers]
-        out["candidates_after_excluding_longs"] = len(candidates)
-        out["factor_panel"] = "MKT+SMB+HML+MOM" if md._style_factors() else "MKT-only"
-        if unpriced:
-            out["source"] = "synthetic"
-            out["reason"] = (
-                f"{len(unpriced)} position(s) have no stored prices "
-                f"({', '.join(unpriced[:5])}{'…' if len(unpriced) > 5 else ''}); the whole "
-                f"book falls back to the synthetic universe, so your "
-                f"{len(usable_tickers)} backfilled names are IGNORED. Backfill these names "
-                f"(or remove them) to hedge against the real universe."
-            )
-        elif not candidates:
-            out["source"] = "db"
-            out["reason"] = (
-                "real source is active but every usable name is one of your longs — "
-                "backfill more of the universe to get shortable candidates."
-            )
-        else:
-            out["source"] = "db"
-            out["reason"] = f"real backfilled universe in use ({len(candidates)} candidates)."
+        out.update(_universe_diag(sec, portfolio))
     return out
+
+
+def _universe_diag(sec: Session, portfolio) -> dict:
+    """The universe gate, made visible: which market-data source is in force and why, plus
+    the candidate counts. Takes an open securities session; pure read."""
+    from sqlalchemy import func
+
+    long_tickers = {p.ticker for p in portfolio.longs}
+    out: dict = {}
+    # Raw projection∩prices count (independent of the benchmark), so we can report the real
+    # universe size even when the benchmark itself is unpriced.
+    out["securities_projected"] = sec.scalar(select(func.count(Security.instrument_id))) or 0
+    usable = sec.execute(
+        select(Security.ticker)
+        .join(Price, Price.instrument_id == Security.instrument_id)
+        .where(Security.ticker.isnot(None), Security.ticker != settings.benchmark)
+        .group_by(Security.ticker)
+        .having(func.count(Price.ts) >= 30)
+    ).all()
+    usable_tickers = sorted(t for (t,) in usable)
+    out["names_with_30plus_bars"] = len(usable_tickers)
+    out["sample"] = usable_tickers[:25]
+
+    try:
+        md = DbMarketData(sec, benchmark=settings.benchmark)
+    except TickerNotFound as exc:
+        out["source"] = "synthetic"
+        out["reason"] = (
+            f"benchmark {settings.benchmark!r} is not priced ({exc}); the whole book "
+            f"falls back to the synthetic 60-name universe — your "
+            f"{len(usable_tickers)} backfilled names are IGNORED for hedging."
+        )
+        return out
+
+    out["benchmark_bars"] = len(md._series(settings.benchmark))
+    unpriced = sorted({p.ticker for p in portfolio.positions if _ticker_unpriced(md, p.ticker)})
+    out["unpriced_positions"] = unpriced
+    candidates = [t for t in usable_tickers if t not in long_tickers]
+    out["candidates_after_excluding_longs"] = len(candidates)
+    out["factor_panel"] = "MKT+SMB+HML+MOM" if md._style_factors() else "MKT-only"
+    if unpriced:
+        out["source"] = "synthetic"
+        out["reason"] = (
+            f"{len(unpriced)} position(s) have no stored prices "
+            f"({', '.join(unpriced[:5])}{'…' if len(unpriced) > 5 else ''}); the whole book "
+            f"falls back to the synthetic universe, so your {len(usable_tickers)} backfilled "
+            f"names are IGNORED. Backfill these names (or remove them) to hedge real."
+        )
+    elif not candidates:
+        out["source"] = "db"
+        out["reason"] = (
+            "real source is active but every usable name is one of your longs — backfill "
+            "more of the universe to get shortable candidates."
+        )
+    else:
+        out["source"] = "db"
+        out["reason"] = f"real backfilled universe in use ({len(candidates)} candidates)."
+    return out
+
+
+def _universe_diag_suffix(session: Session, portfolio) -> str:
+    """A one-line diagnostic to append to an empty-universe hedge error."""
+    try:
+        with securities_session(session) as sec:
+            d = _universe_diag(sec, portfolio)
+    except Exception:  # noqa: BLE001 — diagnostics must never mask the original error
+        return ""
+    return (
+        f" [diagnostics: source={d.get('source')}, "
+        f"backfilled names ≥30 bars={d.get('names_with_30plus_bars')}, "
+        f"candidates after excluding longs={d.get('candidates_after_excluding_longs', 0)}. "
+        f"{d.get('reason', '')}]"
+    )
 
 
 def _ticker_unpriced(md: DbMarketData, ticker: str) -> bool:
@@ -592,8 +609,12 @@ def propose_hedge(
                 excluded_tickers=long_tickers,
             )
     except (InfeasibleHedge, ValueError) as exc:
-        # Cannot hedge to neutral with this universe — a domain state, not a 500.
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Cannot hedge to neutral with this universe — a domain state, not a 500. Append the
+        # live universe diagnostics so the message is self-explanatory (why is it empty?).
+        detail = str(exc)
+        if "shortable candidates" in detail:
+            detail += _universe_diag_suffix(session, portfolio)
+        raise HTTPException(status_code=422, detail=detail) from exc
     return {
         "portfolio_id": portfolio_id,
         "status": proposal.status,

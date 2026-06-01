@@ -1,69 +1,102 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Trade } from "./Trade";
-import type { PositionRow } from "../types";
 
-function pos(over: Partial<PositionRow>): PositionRow {
-  return {
-    id: 1,
-    ticker: "AAA",
-    side: "LONG",
-    short_type: "NA",
-    book: "LONG",
-    notional: 50_000,
-    quantity: 100,
-    price: 500,
-    beta: 1.2,
-    pnl: { day: 0, total: 0, unrealized: 0, realized: 0 },
-    ...over,
-  };
+const BOOKS = [
+  { id: "BOOK-A", name: "Book A" },
+  { id: "BOOK-B", name: "Book B" },
+];
+
+function setField(label: string, value: string) {
+  // The batch table reuses some header text (e.g. "Ticker"); pick the form label whose
+  // parent <label> actually wraps an input.
+  const el = screen
+    .getAllByText(label)
+    .find((n) => n.parentElement?.querySelector("input"))!;
+  fireEvent.change(el.parentElement!.querySelector("input")!, { target: { value } });
 }
 
 describe("Trade", () => {
-  it("records a transaction with the entered fields", async () => {
-    const onRecord = vi.fn().mockResolvedValue(undefined);
-    render(<Trade positions={[]} onRecord={onRecord} onClose={vi.fn()} busy={false} />);
-
-    fireEvent.change(screen.getByText("Ticker").parentElement!.querySelector("input")!, {
-      target: { value: "msft" },
-    });
-    fireEvent.change(screen.getByText("Quantity").parentElement!.querySelector("input")!, {
-      target: { value: "10" },
-    });
-    fireEvent.change(screen.getByText("Price").parentElement!.querySelector("input")!, {
-      target: { value: "100" },
-    });
-    fireEvent.click(screen.getByText("Record transaction"));
-
-    await waitFor(() => expect(onRecord).toHaveBeenCalledOnce());
-    const arg = onRecord.mock.calls[0][0];
-    expect(arg.ticker).toBe("MSFT"); // uppercased
-    expect(arg.quantity).toBe(10);
-    expect(arg.price).toBe(100);
-    expect(arg.action).toBe("BUY"); // default action; direction derived by netting
-  });
-
-  it("closes a position at the entered exit price", async () => {
-    const onClose = vi.fn().mockResolvedValue(undefined);
-    render(
-      <Trade positions={[pos({ id: 7, quantity: 100 })]} onRecord={vi.fn()} onClose={onClose} busy={false} />,
-    );
-    // Enter an exit price, then Close all.
-    fireEvent.change(screen.getByPlaceholderText("exit price"), { target: { value: "60" } });
-    fireEvent.click(screen.getByText("Close all"));
-    await waitFor(() => expect(onClose).toHaveBeenCalledWith(7, 100, 60));
-  });
-
-  it("only lists positions with recorded lots as closeable", () => {
+  it("stages a ticket into the batch, then submits it to the chosen book", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    const onAfterBatch = vi.fn().mockResolvedValue(undefined);
     render(
       <Trade
-        positions={[pos({ ticker: "AAA", quantity: 100 }), pos({ ticker: "NOLOTS", quantity: 0 })]}
-        onRecord={vi.fn()}
-        onClose={vi.fn()}
+        portfolios={BOOKS}
+        defaultPortfolioId="BOOK-B"
+        onSubmit={onSubmit}
+        onAfterBatch={onAfterBatch}
         busy={false}
       />,
     );
-    expect(screen.getByText("AAA")).toBeInTheDocument();
-    expect(screen.queryByText("NOLOTS")).not.toBeInTheDocument();
+
+    setField("Ticker", "msft");
+    setField("Quantity", "10");
+    setField("Price", "100");
+    fireEvent.click(screen.getByText("Add to batch"));
+
+    // Staged, not yet submitted.
+    expect(screen.getByText("MSFT")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Submit all"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    const [targetId, t] = onSubmit.mock.calls[0];
+    expect(targetId).toBe("BOOK-B"); // honors the global selection when it's a real book
+    expect(t.ticker).toBe("MSFT"); // uppercased
+    expect(t.quantity).toBe(10);
+    expect(t.action).toBe("BUY");
+    await waitFor(() => expect(onAfterBatch).toHaveBeenCalled());
+  });
+
+  it("flags a failed ticket and keeps it in the batch", async () => {
+    const onSubmit = vi
+      .fn()
+      .mockResolvedValueOnce(undefined) // first ok
+      .mockRejectedValueOnce(new Error("boom")); // second fails
+    render(
+      <Trade
+        portfolios={BOOKS}
+        defaultPortfolioId="BOOK-A"
+        onSubmit={onSubmit}
+        onAfterBatch={vi.fn().mockResolvedValue(undefined)}
+        busy={false}
+      />,
+    );
+
+    setField("Ticker", "aaa");
+    setField("Quantity", "1");
+    setField("Price", "10");
+    fireEvent.click(screen.getByText("Add to batch"));
+    setField("Ticker", "bbb");
+    setField("Quantity", "1");
+    setField("Price", "10");
+    fireEvent.click(screen.getByText("Add to batch"));
+
+    fireEvent.click(screen.getByText("Submit all"));
+    // The succeeded one drops off; the failed one stays, flagged.
+    await waitFor(() => expect(screen.getByText("failed")).toBeInTheDocument());
+    expect(screen.queryByText("AAA")).not.toBeInTheDocument();
+    expect(screen.getByText("BBB")).toBeInTheDocument();
+  });
+
+  it("falls back to a real book when the app is on Consolidated", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <Trade
+        portfolios={BOOKS}
+        defaultPortfolioId="__consolidated__"
+        onSubmit={onSubmit}
+        onAfterBatch={vi.fn().mockResolvedValue(undefined)}
+        busy={false}
+      />,
+    );
+    setField("Ticker", "xyz");
+    setField("Quantity", "1");
+    setField("Price", "10");
+    fireEvent.click(screen.getByText("Add to batch"));
+    fireEvent.click(screen.getByText("Submit all"));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][0]).toBe("BOOK-A"); // first real book, not consolidated
   });
 });

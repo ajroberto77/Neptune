@@ -7,7 +7,6 @@ import type {
   StressReport,
 } from "./types";
 import {
-  closePosition,
   fetchFrontier,
   fetchPortfolios,
   fetchPositions,
@@ -117,27 +116,12 @@ export default function App() {
     setPositions(p);
   }
 
-  async function handleRecord(t: TransactionInput) {
+  // Submit one ticket into a specific book. Throws on failure so the Trade tab can flag the
+  // individual ticket; the batch driver refreshes the book once at the end.
+  async function submitTrade(targetId: string, t: TransactionInput) {
     setTrading(true);
-    setError(null);
     try {
-      await recordTransaction(portfolioId, t);
-      await refreshBook();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setTrading(false);
-    }
-  }
-
-  async function handleClose(positionId: number, quantity: number, exitPrice: number) {
-    setTrading(true);
-    setError(null);
-    try {
-      await closePosition(portfolioId, positionId, quantity, exitPrice);
-      await refreshBook();
-    } catch (e) {
-      setError(String(e));
+      await recordTransaction(targetId, t);
     } finally {
       setTrading(false);
     }
@@ -267,9 +251,10 @@ export default function App() {
             )}
             {tab === "Trade" && (
               <Trade
-                positions={positions}
-                onRecord={handleRecord}
-                onClose={handleClose}
+                portfolios={portfolios}
+                defaultPortfolioId={portfolioId}
+                onSubmit={submitTrade}
+                onAfterBatch={refreshBook}
                 busy={trading}
               />
             )}
