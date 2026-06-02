@@ -104,6 +104,34 @@ def market_data_for(session: Session, portfolio):
         sec_cm.__exit__(None, None, None)
 
 
+def _try_backfill_prices(session: Session, *tickers: str) -> None:
+    """Best-effort: pull a full price history for newly-traded names so a real book stays on
+    REAL market data instead of silently falling back to synthetic when a fresh ticker is added.
+    Idempotent and non-fatal: names already well-priced are skipped, and any feed/network/
+    missing-yfinance failure is swallowed (the trade is booked; pricing retries from Settings)."""
+    from sqlalchemy import func
+
+    end = date.today()
+    start = end - timedelta(days=DEFAULT_BACKFILL_DAYS)
+    provider = YFinanceProvider()
+    try:
+        with securities_session(session) as sec:
+            for t in dict.fromkeys(tickers):
+                iid = sec.scalar(select(Security.instrument_id).where(Security.ticker == t))
+                if iid is not None:
+                    bars = sec.scalar(
+                        select(func.count(Price.ts)).where(Price.instrument_id == iid)
+                    ) or 0
+                    if bars >= 200:
+                        continue  # already has enough history — don't re-pull
+                try:
+                    ingest_ticker(sec, provider, t, start, end, create_if_missing=True)
+                except Exception:  # noqa: BLE001 — per-ticker feed error, non-fatal
+                    continue
+    except Exception:  # noqa: BLE001 — securities session/provider unavailable
+        return
+
+
 # --- request/response schemas ----------------------------------------------------
 
 class LotIn(BaseModel):
@@ -460,6 +488,7 @@ def add_position(portfolio_id: str, body: PositionIn, session: Session = Depends
         position_id = service.add_position(portfolio_id, _to_domain(body))
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _try_backfill_prices(session, body.ticker)
     return {"id": position_id}
 
 
@@ -496,6 +525,8 @@ def record_transaction(
         )
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Price the new name immediately so the book stays on real data (never silently synthetic).
+    _try_backfill_prices(session, body.ticker)
     return {"id": position_id}
 
 
