@@ -250,9 +250,14 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 Materialized daily **betas** (`betas` table, vectorized rolling OLS, one-pass sweep
       on ingest) and **style loadings** (`factor_loadings` table, `model` tag) — read by the
       hedge backtest + propose path instead of computing on the fly.
-- [ ] 🔵 **Build price-only differentiating factors** (after C & D): Sector, IVOL/low-vol, BAB,
-      Amihud illiquidity. Compute daily return series → `factor_returns` (+ a `factor_definition`
-      row) → flows into materialized loadings under an expanded `model` → optimizer neutralizes.
+- [x] 🟢 **Build price-only differentiating factors — Stage 1 (construction).** IVOL, BAB,
+      Amihud, and per-sector SECTOR_* daily return series (`quant/factor_build.py`, pure; lagged
+      baskets, BAB beta-floor) persisted to `factor_returns` (source `neptune`) + a
+      `factor_definitions` registry row (`risk/factor_build.py`). Quant-reviewed.
+- [ ] 🔵 **Stage 2 (wiring).** Flow the `neptune` family into the materialized loadings sweep
+      under an expanded `model` + optimizer neutralization (touches the widely-imported `FACTORS`
+      set), then surface in the API/UI. Decide: neutralize-by-default vs opt-in; how SECTOR_*
+      relates to the existing per-sector concentration cap (factor vs constraint).
 - [ ] 🔵 **Fundamentals feed (Mercury; ingest interim).** REQUIRED for:
       * **value-weighting** the sector factor (needs market cap = price × **shares outstanding**;
         until then the sector factor is **equal-weighted** — a documented proxy);
