@@ -209,6 +209,7 @@ export function Trade({
                 <input
                   className="np-input w-20"
                   type="number"
+                  step="any"
                   aria-label="Quantity"
                   value={r.quantity || ""}
                   onChange={(e) => update(r.key, { quantity: Number(e.target.value) })}
@@ -218,6 +219,7 @@ export function Trade({
                 <input
                   className="np-input w-24"
                   type="number"
+                  step="any"
                   aria-label="Average Price"
                   value={r.price || ""}
                   onChange={(e) => update(r.key, { price: Number(e.target.value) })}
@@ -227,6 +229,7 @@ export function Trade({
                 <input
                   className="np-input w-20"
                   type="number"
+                  step="any"
                   aria-label="Transaction Fees"
                   value={r.fees || ""}
                   onChange={(e) => update(r.key, { fees: Number(e.target.value) })}

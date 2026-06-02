@@ -26,14 +26,13 @@ from neptune.quant.factors import FACTORS, STYLE_FACTORS
 
 HEDGE_FACTORS = STYLE_FACTORS  # the style factors; market beta is constrained separately
 ZERO_WEIGHT_TOL = 1e-6
-# L1 penalty on gross short (sum of weights). Without it the tracking-error objective is
-# degenerate once beta/factors are neutralized — any allocation in the null space is equally
-# optimal, so the interior-point solver returns a DENSE basket (a tiny short in every name).
-# A small positive penalty makes the minimal-gross hedge unique and SPARSE: the optimizer
-# keeps only the few names that efficiently reproduce the book's beta/factor exposures, and
-# zeroes the rest. Kept small so it only breaks ties — it never overrides the hard neutrality
-# constraints (which still pull net beta/factors to ~0 when far from neutral).
-GROSS_PENALTY = 1e-3
+# Risk-aversion on the hedge's own variance: the objective adds RISK_AVERSION * Σ varᵢ·wᵢ².
+# This is the DIVERSIFICATION term. Minimizing the basket's variance spreads weight across many
+# moderate-vol names and steers AWAY from concentrating in a few high-beta/high-vol lottery
+# names — the opposite of an L1 gross penalty (which would collapse to the fewest names). It is
+# scaled so it shapes the spread within the feasible set without overriding the hard neutrality
+# constraints. Pair it with a name-count cap (target basket size) to land a diversified basket.
+RISK_AVERSION = 0.5
 
 
 class InfeasibleHedge(RuntimeError):
@@ -46,12 +45,16 @@ class InfeasibleHedge(RuntimeError):
 
 @dataclass
 class Candidate:
-    """A shortable-universe name the optimizer may select."""
+    """A shortable-universe name the optimizer may select. ``variance`` is the name's daily
+    return variance — a risk proxy used to DIVERSIFY the hedge (spread weight across many
+    moderate names instead of piling into a few high-beta/high-vol ones). Default 1.0 makes
+    the term a plain ridge (equal risk) when variance isn't supplied."""
 
     ticker: str
     beta: float
     loadings: dict[str, float] = field(default_factory=dict)
     sector: str | None = None
+    variance: float = 1.0
 
 
 @dataclass
@@ -253,7 +256,7 @@ def complexity_frontier(
     return [
         _size_capped(
             ranked, n_cap, residual_beta, residual_factors, long_aum,
-            beta_tol, factor_limit, max_position_weight, sector_limit,
+            beta_tol, factor_limit, max_position_weight, sector_limit, hard=False,
         )
         for n_cap in distinct
     ]
@@ -325,6 +328,10 @@ def _solve_qp(
     feasible solution."""
     betas = np.array([c.beta for c in cands])
     loads = np.array([[c.loadings.get(f, 0.0) for f in HEDGE_FACTORS] for c in cands])
+    variances = np.array([max(getattr(c, "variance", 1.0) or 1.0, 1e-12) for c in cands])
+    # Normalize to mean 1 so the penalty's strength is SCALE-INVARIANT — it depends only on the
+    # relative riskiness of names, not whether variances are ~1e-4 (real) or 1.0 (test default).
+    rel_var = variances / variances.mean()
 
     x = cp.Variable(len(cands), nonneg=True)  # short weight as fraction of long AUM
     # Shorting subtracts exposure: net = residual - sum(x_i * exposure_i).
@@ -332,28 +339,29 @@ def _solve_qp(
     resid_fac = np.array([residual_factors.get(f, 0.0) for f in HEDGE_FACTORS])
     net_factors = resid_fac - loads.T @ x
 
-    # Tracking error to the residual + an L1 gross-short penalty for a sparse, minimal basket.
-    objective = cp.Minimize(
-        cp.square(net_beta) + cp.sum_squares(net_factors) + GROSS_PENALTY * cp.sum(x)
-    )
+    # Tracking error to the residual + a variance (diversification) penalty: minimizing the
+    # basket's own (relative) variance Σ rel_varᵢ·wᵢ² spreads weight across many moderate names
+    # instead of a few high-beta/high-vol ones. Small enough not to override neutralization.
+    diversification = RISK_AVERSION * cp.sum(cp.multiply(rel_var, cp.square(x)))
+    objective = cp.Minimize(cp.square(net_beta) + cp.sum_squares(net_factors) + diversification)
     constraints = [x <= max_position_weight]
+    if sector_limit is not None:
+        # Sector concentration cap (applied in BOTH hard and soft/diversified runs): each
+        # sector's share of total short notional <= sector_limit. Linear (hence convex):
+        # share_s = sum(x in s) / sum(x), so sum(x in s) <= sector_limit * sum(x). The optimizer
+        # spreads the short book across sectors rather than breaching the cap.
+        by_sector: dict[str, list[int]] = {}
+        for i, c in enumerate(cands):
+            if c.sector is None:
+                continue  # can't cap a name whose sector we don't know — leave it free
+            by_sector.setdefault(c.sector, []).append(i)
+        total_short = cp.sum(x)
+        for idxs in by_sector.values():
+            constraints.append(cp.sum(x[idxs]) <= sector_limit * total_short)
     if hard:
         constraints.append(cp.abs(net_beta) <= beta_tol)
         for j in range(len(HEDGE_FACTORS)):
             constraints.append(cp.abs(net_factors[j]) <= factor_limit)
-        if sector_limit is not None:
-            # Sector concentration is a HARD constraint: each sector's share of total short
-            # notional <= sector_limit. Linear (hence convex): share_s = sum(x in s) / sum(x),
-            # so sum(x in s) <= sector_limit * sum(x). The optimizer never proposes a hedge
-            # that breaches the limit (it spreads the short book across sectors instead).
-            by_sector: dict[str, list[int]] = {}
-            for i, c in enumerate(cands):
-                if c.sector is None:
-                    continue  # can't cap a name whose sector we don't know — leave it free
-                by_sector.setdefault(c.sector, []).append(i)
-            total_short = cp.sum(x)
-            for idxs in by_sector.values():
-                constraints.append(cp.sum(x[idxs]) <= sector_limit * total_short)
 
     problem = cp.Problem(objective, constraints)
     problem.solve(solver=cp.CLARABEL)
@@ -378,11 +386,10 @@ def _rank_candidates(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
         max_position_weight, hard=False,
     )
-    contribution = np.array([
-        abs(w) * np.sqrt(c.beta**2 + sum(c.loadings.get(f, 0.0) ** 2 for f in HEDGE_FACTORS))
-        for w, c in zip(full_weights, cands)
-    ])
-    order = np.argsort(-contribution)
+    # Rank by the diversified soft-solve allocation itself: the variance-aware objective already
+    # weights each name by usefulness AND low risk, so the largest weights are the names a
+    # diversified hedge actually wants (no extra high-beta tilt from an exposure-norm factor).
+    order = np.argsort(-np.abs(full_weights))
     return [cands[i] for i in order]
 
 
@@ -396,17 +403,23 @@ def _size_capped(
     factor_limit: float,
     max_position_weight: float,
     sector_limit: float = 0.30,
+    hard: bool = True,
 ) -> HedgeProposal:
-    """Re-optimize sizing over the top ``n_cap`` ranked names (soft QP)."""
+    """Size a diversified basket over the top ``n_cap`` ranked names. With ``hard`` (the default
+    for an approvable proposal) |net beta| <= beta_tol, the factor limits, and the sector cap
+    are HARD constraints — the run fails closed (InfeasibleHedge) if the capped set can't meet
+    them, never emitting a basket that breaches |β| <= 0.05 (CLAUDE.md §3). The frontier passes
+    ``hard=False`` to expose under-hedged points as an exploratory trade-off."""
     subset = ranked[: min(n_cap, len(ranked))]
     weights, status = _solve_qp(
         residual_beta, residual_factors, subset, beta_tol, factor_limit,
-        max_position_weight, hard=False,
+        max_position_weight, hard=hard, sector_limit=sector_limit,
     )
-    # The soft QP is always feasible; a non-optimal status means a genuine solver
-    # failure, which we surface rather than returning a silent zero hedge.
     if status not in ("optimal", "optimal_inaccurate"):
-        raise InfeasibleHedge(f"capped hedge solve failed (solver status: {status})")
+        raise InfeasibleHedge(
+            f"no diversified hedge of <= {n_cap} names can meet |net beta| <= {beta_tol}, the "
+            f"factor limits, and sector cap {sector_limit:.0%} (solver status: {status})"
+        )
     return _build_proposal(
         subset, weights, residual_beta, residual_factors, long_aum, status,
         beta_tol=beta_tol, sector_limit=sector_limit, n_cap=n_cap,

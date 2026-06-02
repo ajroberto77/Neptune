@@ -39,11 +39,11 @@ export function Hedge({
           </h3>
           <div className="flex items-end gap-3">
             <label className="text-xs text-ocean-muted">
-              <span className="mb-1 block">Max hedges</span>
+              <span className="mb-1 block">Target shorts</span>
               <input
                 type="number"
                 min={1}
-                placeholder="auto"
+                placeholder="35"
                 value={maxNames}
                 onChange={(e) => setMaxNames(e.target.value)}
                 className="np-input w-24"

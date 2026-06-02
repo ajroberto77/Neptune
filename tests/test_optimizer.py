@@ -95,16 +95,26 @@ def test_factor_limit_is_respected():
     assert abs(proposal.factor_after["SMB"]) <= 0.20 + 1e-6
 
 
-def test_hedge_is_sparse_not_a_dense_universe_basket():
-    """A small residual over a wide universe must produce a PARSIMONIOUS basket — a handful of
-    names that reproduce the exposure — not a tiny short in every name (the L1 gross penalty)."""
-    universe = _wide_universe(n=200, seed=3)
-    proposal = optimize_hedge(
-        residual_beta=0.12, residual_factors={"SMB": 0.0, "HML": 0.0, "MOM": 0.0},
-        universe=universe, long_aum=1_000_000.0, beta_tol=BETA_TOL, max_position_weight=0.15,
+def test_hedge_is_diversified_not_a_few_extreme_names():
+    """A hedge must be a DIVERSIFIED basket — many moderate names, spread weight — not a few
+    high-beta lottery names (the diversification/variance penalty). High-beta names carry high
+    variance, so the optimizer prefers moderate-beta names and caps any single weight."""
+    rng = np.random.default_rng(3)
+    universe = []
+    for i in range(200):
+        beta = float(np.clip(rng.normal(1.0, 0.6), 0.2, 4.0))
+        var = (0.01 + 0.02 * max(beta - 1, 0)) ** 2  # high beta → high variance
+        universe.append(Candidate(f"U{i}", beta=beta, variance=var))
+
+    proposal = optimize_hedge_capped(
+        residual_beta=0.30, residual_factors={}, universe=universe, long_aum=2_500_000.0,
+        n_cap=35, beta_tol=BETA_TOL, max_position_weight=0.15,
     )
-    assert abs(proposal.net_beta_after) <= BETA_TOL + 1e-6  # still neutral
-    assert proposal.n_selected <= 5  # not 200 — the whole point
+    assert proposal.beta_within_tol                       # neutral
+    assert proposal.n_selected >= 20                      # diversified, not a handful
+    betas = [s.beta for s in proposal.positions]
+    assert max(betas) < 2.5                               # avoids the beta-4 lottery names
+    assert max(s.weight for s in proposal.positions) < 0.10  # weight is spread, not concentrated
 
 
 def test_infeasible_hedge_fails_closed():

@@ -129,9 +129,13 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
     candidates: list[Candidate] = []
     for t in tickers:
         beta, _ = vasicek_shrinkage(raws[t].beta_raw, raws[t].var_ols, prior_var)
-        loadings = factor_loadings(market_data.ticker_returns(t), factors).loadings
+        rets = market_data.ticker_returns(t)
+        loadings = factor_loadings(rets, factors).loadings
         sector = market_data.spec_for(t).sector
-        candidates.append(Candidate(ticker=t, beta=beta, loadings=loadings, sector=sector))
+        variance = float(np.var(rets)) if rets.size else 1.0
+        candidates.append(
+            Candidate(ticker=t, beta=beta, loadings=loadings, sector=sector, variance=variance)
+        )
     return candidates
 
 
@@ -162,8 +166,11 @@ def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate
     candidates: list[Candidate] = []
     for t, raw in raws.items():
         beta, _ = vasicek_shrinkage(raw.beta_raw, raw.var_ols, prior_var)
-        loadings = factor_loadings(market_data.ticker_returns(t), factors).loadings
+        rets = market_data.ticker_returns(t)
+        loadings = factor_loadings(rets, factors).loadings
+        variance = float(np.var(rets)) if rets.size else 1.0  # risk proxy for diversification
         candidates.append(
-            Candidate(ticker=t, beta=beta, loadings=loadings, sector=market_data.sector(t))
+            Candidate(ticker=t, beta=beta, loadings=loadings,
+                      sector=market_data.sector(t), variance=variance)
         )
     return candidates

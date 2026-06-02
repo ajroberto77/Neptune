@@ -693,14 +693,12 @@ def propose_hedge(
                 sector_limit=sector_limit,
                 excluded_tickers=long_tickers,
             )
-            # Default: the natural sparse basket (L1 gross penalty). With an explicit max_names
-            # the user trades exactness for a hard name-count cap (capped runs are soft, so the
-            # proposal's net_beta_after reports whether neutrality was still achieved).
-            proposal = (
-                optimize_hedge_capped(n_cap=max_names, **common)
-                if max_names is not None
-                else optimize_hedge(**common)
-            )
+            # Aim for a DIVERSIFIED basket of ~target names (the variance penalty spreads weight
+            # across many moderate names; the cap sets the count). Defaults to
+            # settings.target_hedge_names; an explicit max_names overrides it. Capped runs are
+            # soft, so net_beta_after reports whether neutrality was achieved.
+            target = max_names if max_names is not None else settings.target_hedge_names
+            proposal = optimize_hedge_capped(n_cap=target, **common)
     except (InfeasibleHedge, ValueError) as exc:
         # Cannot hedge to neutral with this universe — a domain state, not a 500. Append the
         # live universe diagnostics so the message is self-explanatory (why is it empty?).

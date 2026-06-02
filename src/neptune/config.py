@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # existing demo names (so a real benchmark can price the whole book — see market_data_for).
     seed_demo_positions: bool = False  # production starts clean; tests force it on (conftest)
     max_position_weight: float = 0.15  # position-size ceiling as fraction of long AUM
+    # Default hedge basket size: aim for a diversified basket of ~this many short names
+    # (overridable per propose). A diversified hedge is many moderate names, not a few extremes.
+    target_hedge_names: int = 35
     factor_limit: float = 0.20         # per-factor exposure limit (Size/Value/Momentum)
     # Sector concentration: flag any GICS sector exceeding this fraction of total short
     # notional. Default 0.30 (tighter than the roadmap's 0.40); PM-adjustable in the GUI.
