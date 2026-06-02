@@ -196,6 +196,39 @@ class DbMarketData:
     def ticker_returns(self, ticker: str) -> np.ndarray:
         return _simple_returns(self._adj_aligned(ticker))
 
+    def aligned_returns(self, ticker: str) -> np.ndarray:
+        """Returns over the FULL benchmark return-date axis (``len(return_dates())``), NaN before
+        the name's first real bar; interior missing sessions forward-fill the price (zero return).
+        Unlike ``ticker_returns`` (a contiguous tail), this keeps every name on the SAME axis so
+        the factor builder can stack names into one ``(N, T)`` matrix."""
+        adj_by_day = {ts: adj for ts, adj, _close in self._series(ticker)}
+        last: float | None = None
+        adj: list[float] = []
+        for d in self._dates:
+            if d in adj_by_day:
+                last = adj_by_day[d]
+            adj.append(last if last is not None else np.nan)
+        arr = np.array(adj, dtype=float)
+        with np.errstate(invalid="ignore"):
+            return arr[1:] / arr[:-1] - 1.0  # NaN propagates before the first bar
+
+    def aligned_dollar_volume(self, ticker: str) -> np.ndarray:
+        """Daily dollar volume (close × volume) on the return-date axis — ``[i]`` is the volume on
+        ``return_dates()[i]`` (the day the return is realized). NaN where volume isn't stored.
+        (Unlike ``aligned_returns``, interior gaps are NOT forward-filled — a missing-volume day is
+        NaN and simply drops out of the trailing Amihud mean, rather than being imputed.)"""
+        iid = self.session.scalar(
+            select(Security.instrument_id).where(Security.ticker == ticker)
+        )
+        dv_by_day: dict[date, float] = {}
+        if iid is not None:
+            for ts, close, vol in self.session.execute(
+                select(Price.ts, Price.close, Price.volume).where(Price.instrument_id == iid)
+            ).all():
+                if close is not None and vol is not None:
+                    dv_by_day[ts] = float(close) * float(vol)
+        return np.array([dv_by_day.get(d, np.nan) for d in self._dates[1:]], dtype=float)
+
     def current_price(self, ticker: str) -> float:
         """Latest raw close (the mark)."""
         series = self._series(ticker)

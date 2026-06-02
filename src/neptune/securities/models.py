@@ -216,6 +216,23 @@ class FactorReturn(SecuritiesBase):
     source: Mapped[str] = mapped_column(String, nullable=False, default="ken_french")
 
 
+class FactorDefinition(SecuritiesBase):
+    """Registry of every factor whose return series lives in ``factor_returns`` — one row per
+    factor name. Ken French columns (SMB/HML/…) are ``kind='external'``; the price-only factors
+    Neptune builds itself (IVOL/BAB/AMIHUD/SECTOR_*) are ``kind='price'`` with the construction
+    recorded in ``method`` so a reader knows it's, e.g., equal-weighted (not value-weighted)
+    until the fundamentals feed lands. Pure metadata — the daily numbers stay in FactorReturn."""
+
+    __tablename__ = "factor_definitions"
+
+    factor: Mapped[str] = mapped_column(String, primary_key=True)
+    family: Mapped[str] = mapped_column(String, nullable=False)   # FF5MOM | NEPTUNE | SECTOR
+    kind: Mapped[str] = mapped_column(String, nullable=False)     # external | price
+    source: Mapped[str] = mapped_column(String, nullable=False)   # matches FactorReturn.source
+    method: Mapped[str] = mapped_column(String, nullable=False, default="")  # construction note
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
 class Beta(SecuritiesBase):
     """The MATERIALIZED daily beta series — computed once per ingest in a single sweep, not on
     the fly. One row per (security, date, benchmark): the point-in-time 252-day OLS → Vasicek
