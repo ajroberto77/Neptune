@@ -29,6 +29,14 @@ from neptune.quant.optimizer import Candidate, compute_residual
 
 DEFAULT_PRIOR_VAR = 0.10  # fallback when the book is too small for a cross-section
 
+# Minimum REAL return observations before a beta is considered trustworthy. raw_beta only
+# needs 3 to solve the regression, but a slope fit on a handful of days is noise — and after
+# the leading-backfill fix a late-ingested name legitimately has a short real window. Below
+# this floor the Risk Interface reports the name as ``insufficient_data`` (beta held at the
+# 1.0 prior) and the optimizer won't pick it as a hedge, rather than quoting a flaky beta.
+# ~3 trading months; the math floor (n>=3) stays in the engine, this is the reporting policy.
+MIN_BETA_OBS = 60
+
 
 @dataclass
 class PositionMetrics:
@@ -55,14 +63,18 @@ def compute_metrics(
     raws, insufficient = {}, set()
     for p in portfolio.positions:
         try:
-            raws[p.ticker] = raw_beta(market_data.ticker_returns(p.ticker), market)
+            r = raw_beta(market_data.ticker_returns(p.ticker), market)
         except (ValueError, TickerNotFound):
-            # Too little history (ValueError) OR no stored prices at all (TickerNotFound).
-            # Either way: sentinel prior-1.0 beta, fully shrunk — never crash the whole book.
+            r = None  # too little history (ValueError) OR no stored prices (TickerNotFound)
+        if r is None or r.n_obs < MIN_BETA_OBS:
+            # No usable history, or fewer than MIN_BETA_OBS real days: sentinel prior-1.0 beta,
+            # fully shrunk, flagged insufficient_data — never crash or quote a flaky slope.
             raws[p.ticker] = RawBetaResult(
                 beta_raw=1.0, var_ols=float("inf"), coefficients=np.array([]), n_obs=0
             )
             insufficient.add(p.ticker)
+        else:
+            raws[p.ticker] = r
 
     # Only well-estimated names inform the cross-sectional prior.
     raw_betas = [r.beta_raw for t, r in raws.items() if t not in insufficient]
@@ -153,9 +165,12 @@ def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate
     raws = {}
     for t in tickers:
         try:
-            raws[t] = raw_beta(market_data.ticker_returns(t), market)
+            r = raw_beta(market_data.ticker_returns(t), market)
         except (ValueError, TickerNotFound):
-            continue  # insufficient history / no prices — not a usable hedge candidate
+            continue  # no history / no prices — not a usable hedge candidate
+        if r.n_obs < MIN_BETA_OBS:
+            continue  # too few real days for a trustworthy beta — don't short on a flaky slope
+        raws[t] = r
     if not raws:
         return []
     prior_var = (

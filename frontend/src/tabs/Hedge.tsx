@@ -50,11 +50,18 @@ export function Hedge({
   }
 
   const totalNotional = (proposal?.proposed_shorts ?? []).reduce((a, s) => a + s.notional, 0);
+  // Beta-adjusted notional is SIGNED: these are shorts, so a short of a positive-beta name
+  // REMOVES market exposure → negative. betaNotional below is the unsigned Σ notional·beta
+  // used only for the short-notional-weighted average beta (which stays positive ~0.63).
   const totalBetaAdj = (proposal?.proposed_shorts ?? []).reduce(
+    (a, s) => a - s.notional * s.beta, // short sign: −1 × notional × beta
+    0,
+  );
+  const totalBetaNotional = (proposal?.proposed_shorts ?? []).reduce(
     (a, s) => a + s.notional * s.beta,
     0,
   );
-  const wtdAvgBeta = totalNotional ? totalBetaAdj / totalNotional : 0;
+  const wtdAvgBeta = totalNotional ? totalBetaNotional / totalNotional : 0;
 
   return (
     <div className="space-y-6">
@@ -157,7 +164,7 @@ export function Hedge({
                     </td>
                     <td className="py-2 text-right font-mono">{money(s.notional)}</td>
                     <td className="py-2 text-right font-mono">{s.beta.toFixed(2)}</td>
-                    <td className="py-2 text-right font-mono">{money(s.notional * s.beta)}</td>
+                    <td className="py-2 text-right font-mono">{signedMoney(-s.notional * s.beta)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -175,7 +182,10 @@ export function Hedge({
               </tfoot>
             </table>
             <p className="mt-3 text-xs text-ocean-muted">
-              Weighted-average beta = beta-adjusted short notional ÷ short notional. Approving
+              Beta-adjusted notional is signed for a short: a positive-beta name removes market
+              exposure (shows negative); a negative-beta name adds it (shows positive). The total
+              should roughly offset the long book's beta-adjusted notional, driving net β to ~0.
+              Weighted-average beta is the short-notional-weighted average of name betas. Approving
               books these as systematic shorts (recorded for the human workflow, never routed).
             </p>
           </div>

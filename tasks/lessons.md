@@ -108,3 +108,43 @@ the established reason. For the universe specifically, the real gates are silent
 drops the WHOLE book to the synthetic 60-name source; (2) `available_tickers` needs the
 `Security`∩`Price` join (projection synced + matching instrument_ids) with >=30 bars. A
 populated price table alone is not sufficient.
+
+---
+
+## Don't fabricate observations to satisfy an array-shape contract — it biases the estimate
+
+**Context:** WEN's beta read ~0.00 and several energy names (XOM, CVX, OKE) read negative.
+Real betas, obviously not. Root cause was in `DbMarketData._adj_aligned`: every per-ticker
+series was forced onto the full benchmark date index, and the leading region *before a name's
+first real bar* was **back-filled with that first price**. A constant price is a zero return,
+so a name with a shorter/gappier history than SPY got hundreds of fabricated zero-return days
+prepended. Regressing those against a moving market drags β toward 0 — and worse, the
+fabricated zeros shrink `var_ols`, so Vasicek reads the wrong number as *precise* and doesn't
+pull it back to 1.0. Confidently wrong. The optimizer then "diversified" into those artificial
+low/negative-beta names, so shorting them actually *added* market exposure (net long).
+
+**Fix:** a name is regressed only over its **own real window** — start the series at its first
+real bar, drop the leading gap (interior gaps still forward-fill). It stays a contiguous tail
+of the benchmark index, so `align()` tail-matches it to the market and they remain date-aligned;
+the name is just regressed on fewer, real observations (and a genuinely thin name then has a
+large `var_ols`, so Vasicek correctly shrinks it toward 1.0 instead of pinning it at 0).
+
+**Pattern:** Forward/back-fill is a *display/alignment* convenience, never an input to an
+estimator. Padding to a fixed length with synthetic values silently injects zero-variance,
+zero-covariance rows that pull slopes toward zero and falsely tighten standard errors. When a
+regression needs aligned arrays, align by intersecting *real* observations — don't manufacture
+rows to make the shapes match.
+
+---
+
+## Sign of a hedge's beta-adjusted notional must reflect the position direction
+
+**Context:** The Hedge tab showed every proposed short's beta-adjusted notional as
+`notional × beta` (positive), so the basket total read +$14.9M — implying the "hedge" added
+market exposure, contradicting the net-β-after of ~0 the backend computed. A short of a
+positive-beta name *removes* market exposure: its beta-adjusted notional is **negative**
+(`−notional × beta`), matching the Portfolio tab's `sign(p)·notional·β` convention.
+
+**Pattern:** Any per-name exposure number on a short book must carry the short sign, or the
+totals contradict the (correctly signed) net-beta figure and look nonsensical. Mirror the
+existing signed convention rather than re-deriving an unsigned one per view.

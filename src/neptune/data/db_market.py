@@ -9,10 +9,12 @@ Design:
 * **Returns** use ``adj_close`` (split/dividend-adjusted total return); **marks**
   (``current_price`` / ``prev_close``) use raw ``close`` — lots were traded at actual
   prices, so they're valued against actual prices, not adjusted ones.
-* **Alignment.** The benchmark's trading dates are the canonical index. Every series —
-  market and per-ticker — is computed over that one index (a ticker missing a session is
-  forward-filled, so its return that day is 0), guaranteeing the equal-length, date-aligned
-  arrays the regression contract requires.
+* **Alignment.** The benchmark's trading dates are the canonical index. A per-ticker series
+  starts at that name's first real bar (the leading region before it has data is dropped, NOT
+  back-filled — fabricating zero-return days there would collapse the name's beta) and runs to
+  the latest session, forward-filling interior gaps. The result is a contiguous tail of the
+  benchmark index, so ``align`` (returns.py) tail-matches it to the market and they stay
+  date-aligned for the regression — the name is simply regressed over its own real window.
 * **Factors.** ``factor_returns`` currently returns only ``{"MKT": market}`` — real SMB/
   HML/MOM await the Ken French ingestion (roadmap: "Ken French factor loading"). So this
   source drives real *betas* today; factor decomposition stays on the synthetic source
@@ -117,19 +119,28 @@ class DbMarketData:
         return series
 
     def _adj_aligned(self, ticker: str) -> np.ndarray:
-        """A ticker's adj_close aligned to the canonical (benchmark) date index, with
-        forward-fill for missing sessions and back-fill of any leading gap."""
+        """A ticker's adj_close over the canonical (benchmark) date index, starting at the
+        name's FIRST real bar — interior missing sessions are forward-filled, but the leading
+        region before the name has any data is DROPPED, not back-filled.
+
+        Back-filling a leading gap with the first price would manufacture a long prefix of
+        zero-return days (the price is held constant), and regressing those fabricated zeros
+        against a moving market collapses the beta toward 0 *and* shrinks its estimation
+        variance, so Vasicek treats the wrong number as precise. A name with a short or gappy
+        history (e.g. one ingested later than the benchmark) must be regressed over its own
+        real window only. The series is still a contiguous tail of the benchmark index, so it
+        stays date-aligned with the market once ``align`` tail-matches them (returns.py)."""
         adj_by_day = {ts: adj for ts, adj, _close in self._series(ticker)}
-        out: list[float | None] = []
+        out: list[float] = []
         last: float | None = None
         for d in self._dates:
             if d in adj_by_day:
                 last = adj_by_day[d]
-            out.append(last)
-        first = next((x for x in out if x is not None), None)
-        if first is None:
+            if last is not None:  # skip the leading region before the name's first real bar
+                out.append(last)
+        if not out:
             raise TickerNotFound(f"ticker {ticker!r} has no prices in the window")
-        return np.array([x if x is not None else first for x in out], dtype=float)
+        return np.array(out, dtype=float)
 
     def _adj_on(self, ticker: str, d: date) -> float:
         for ts, adj, _close in self._series(ticker):
