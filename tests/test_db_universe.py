@@ -78,3 +78,36 @@ def test_ensure_columns_adds_missing_column_idempotently(securities_session):
     # Idempotent: running the ensure step again is a no-op (column already present).
     _ensure_columns(engine, "securities", {"sector": "VARCHAR"})
     _ensure_columns(engine, "securities", {"sector": "VARCHAR"})  # twice — must not raise
+
+
+def test_beta_uses_completed_closes_not_todays_live_bar(securities_session):
+    """A beta as-of today is computed from CLOSES strictly before today, so an intraday price
+    refresh (which rewrites today's bar) never moves it — only marks do."""
+    from sqlalchemy import select as _select
+    n = 12
+    start = date.today() - timedelta(days=n - 1)  # bars on the last n days; last == today
+    for iid, tkr, base in [(1, "SPY", 100.0), (2, "AAA", 50.0)]:
+        securities_session.add(
+            Security(instrument_id=iid, ticker=tkr, security_type="Common Stock")
+        )
+        for i in range(n):
+            px = base + i
+            securities_session.add(Price(instrument_id=iid, ts=start + timedelta(days=i),
+                                         close=px, adj_close=px, source="yfinance"))
+    securities_session.commit()
+
+    md = DbMarketData(securities_session, benchmark="SPY")
+    # Returns exclude today's bar: n bars → n-1 completed → n-2 returns.
+    assert len(md.market_returns()) == n - 2
+    assert md.current_price("SPY") == 100.0 + (n - 1)  # marks DO use today's bar
+
+    # Rewrite TODAY's SPY bar (an intraday refresh) → returns unchanged, mark moves.
+    today_bar = securities_session.scalar(
+        _select(Price).where(Price.instrument_id == 1, Price.ts == start + timedelta(days=n - 1))
+    )
+    today_bar.close = 999.0
+    today_bar.adj_close = 999.0
+    securities_session.commit()
+    md2 = DbMarketData(securities_session, benchmark="SPY")
+    np.testing.assert_array_equal(md.market_returns(), md2.market_returns())  # beta stable
+    assert md2.current_price("SPY") == 999.0  # but the mark reflects the live price

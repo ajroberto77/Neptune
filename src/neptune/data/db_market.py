@@ -73,7 +73,17 @@ class DbMarketData:
                 f"benchmark {benchmark!r} needs >=2 prices to form a return series; "
                 f"found {len(bench)} (ingest prices first)"
             )
-        self._dates = [ts for ts, _adj, _close in bench]
+        # Betas/factor regressions use COMPLETED daily closes only: exclude any bar dated today
+        # (the live, still-forming session). A beta as-of day T is computed from closes strictly
+        # before T, so an intraday price refresh (which rewrites today's bar) never moves a beta
+        # — it's stable within the day and only steps when a new close lands. Marks
+        # (current_price / prev_close) still read the latest RAW bar, so day P&L reflects the
+        # live price. Falls back to all bars if excluding today would leave too little history.
+        today = date.today()
+        dates = [ts for ts, _adj, _close in bench if ts < today]
+        if len(dates) < 2:
+            dates = [ts for ts, _adj, _close in bench]
+        self._dates = dates
         if lookback is not None:
             self._dates = self._dates[-(lookback + 1):]
         self._market = _simple_returns(
