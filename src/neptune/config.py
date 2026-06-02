@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # Sector concentration: flag any GICS sector exceeding this fraction of total short
     # notional. Default 0.30 (tighter than the roadmap's 0.40); PM-adjustable in the GUI.
     sector_limit: float = 0.30
+    # Negative-beta-short fence (short-book research, Option A): cap the aggregate net market
+    # beta the shorts may ADD by shorting negative-beta names — Σ max(0, −βᵢ·xᵢ) ≤ this. Lets
+    # the optimizer use a little negative-beta shorting to match a factor tilt, but stops the
+    # hedge from smuggling in net market beta. In beta units (fraction of long AUM); < beta_tol.
+    beta_add_budget: float = 0.02
 
     @property
     def portfolio_url(self) -> str:

@@ -135,12 +135,14 @@ def optimize_hedge(
     max_position_weight: float = 0.15,
     sector_limit: float = 0.30,
     excluded_tickers: set[str] | None = None,
+    beta_add_budget: float | None = None,
 ) -> HedgeProposal:
     """Pass 2 (recommended run). Solve the QP and return a hedge proposal.
 
     Market-beta neutrality |net beta| <= beta_tol, the factor limits, AND the per-sector
     concentration cap (``sector_limit``) are all HARD constraints; the run fails closed
-    (InfeasibleHedge) if they cannot be jointly met with this universe.
+    (InfeasibleHedge) if they cannot be jointly met with this universe. ``beta_add_budget``
+    fences how much net market beta negative-beta shorts may add (see ``_solve_qp``).
     """
     excluded = excluded_tickers or set()
     cands = [c for c in universe if c.ticker not in excluded]
@@ -154,6 +156,7 @@ def optimize_hedge(
     weights, status = _solve_qp(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
         max_position_weight, hard=True, sector_limit=sector_limit,
+        beta_add_budget=beta_add_budget,
     )
     if status not in ("optimal", "optimal_inaccurate"):
         raise InfeasibleHedge(
@@ -177,6 +180,7 @@ def optimize_hedge_capped(
     max_position_weight: float = 0.15,
     sector_limit: float = 0.30,
     excluded_tickers: set[str] | None = None,
+    beta_add_budget: float | None = None,
 ) -> HedgeProposal:
     """Capped run: select at most ``n_cap`` names, then size them.
 
@@ -200,11 +204,13 @@ def optimize_hedge_capped(
         )
 
     ranked = _rank_candidates(
-        residual_beta, residual_factors, cands, beta_tol, factor_limit, max_position_weight
+        residual_beta, residual_factors, cands, beta_tol, factor_limit, max_position_weight,
+        beta_add_budget=beta_add_budget,
     )
     return _size_capped(
         ranked, n_cap, residual_beta, residual_factors, long_aum,
         beta_tol, factor_limit, max_position_weight, sector_limit,
+        beta_add_budget=beta_add_budget,
     )
 
 
@@ -219,6 +225,7 @@ def complexity_frontier(
     max_position_weight: float = 0.15,
     sector_limit: float = 0.30,
     excluded_tickers: set[str] | None = None,
+    beta_add_budget: float | None = None,
 ) -> list[HedgeProposal]:
     """Run a series of capped optimizations to expose the complexity-quality trade-off.
 
@@ -242,14 +249,15 @@ def complexity_frontier(
         )
 
     ranked = _rank_candidates(
-        residual_beta, residual_factors, usable, beta_tol, factor_limit, max_position_weight
+        residual_beta, residual_factors, usable, beta_tol, factor_limit, max_position_weight,
+        beta_add_budget=beta_add_budget,
     )
     if caps is not None:
         requested: tuple[int, ...] = caps
     else:
         k = _min_neutralizing_cap(
             ranked, residual_beta, residual_factors, beta_tol, factor_limit,
-            max_position_weight,
+            max_position_weight, beta_add_budget=beta_add_budget,
         )
         requested = _adaptive_caps(k)
     distinct = sorted({min(c, len(usable)) for c in requested if c >= 1})
@@ -257,6 +265,7 @@ def complexity_frontier(
         _size_capped(
             ranked, n_cap, residual_beta, residual_factors, long_aum,
             beta_tol, factor_limit, max_position_weight, sector_limit, hard=False,
+            beta_add_budget=beta_add_budget,
         )
         for n_cap in distinct
     ]
@@ -281,6 +290,7 @@ def _min_neutralizing_cap(
     beta_tol: float,
     factor_limit: float,
     max_position_weight: float,
+    beta_add_budget: float | None = None,
 ) -> int:
     """Smallest number of top-ranked names whose soft-sized hedge gets |net beta| <= tol.
 
@@ -293,7 +303,7 @@ def _min_neutralizing_cap(
         subset = ranked[:k]
         weights, _ = _solve_qp(
             residual_beta, residual_factors, subset, beta_tol, factor_limit,
-            max_position_weight, hard=False,
+            max_position_weight, hard=False, beta_add_budget=beta_add_budget,
         )
         betas = np.array([c.beta for c in subset])
         return abs(residual_beta - betas @ weights) <= beta_tol
@@ -321,11 +331,12 @@ def _solve_qp(
     max_position_weight: float,
     hard: bool,
     sector_limit: float | None = None,
+    beta_add_budget: float | None = None,
 ) -> tuple[np.ndarray, str]:
     """Minimize tracking error to the residual. With ``hard``, the beta/factor limits
     (and, when given, the per-sector concentration cap) are constraints; otherwise only the
     per-name size ceiling is enforced (the limits live in the objective), guaranteeing a
-    feasible solution."""
+    feasible solution. ``beta_add_budget`` (when set) fences negative-beta shorts (see below)."""
     betas = np.array([c.beta for c in cands])
     loads = np.array([[c.loadings.get(f, 0.0) for f in HEDGE_FACTORS] for c in cands])
     variances = np.array([max(getattr(c, "variance", 1.0) or 1.0, 1e-12) for c in cands])
@@ -345,6 +356,15 @@ def _solve_qp(
     diversification = RISK_AVERSION * cp.sum(cp.multiply(rel_var, cp.square(x)))
     objective = cp.Minimize(cp.square(net_beta) + cp.sum_squares(net_factors) + diversification)
     constraints = [x <= max_position_weight]
+    if beta_add_budget is not None:
+        # Fence on negative-beta shorts (Option A from the short-book research). A short of a
+        # name with beta βᵢ contributes −βᵢ·xᵢ to NET beta; for βᵢ < 0 that is POSITIVE — the
+        # short *adds* market exposure instead of hedging. Cap the aggregate beta the shorts may
+        # add: Σ max(0, −βᵢ·xᵢ) ≤ budget. This still permits a small negative-beta short to
+        # neutralize a value/energy factor tilt, but stops the basket from smuggling in net
+        # market beta. cp.pos(·) is convex, so this is a valid convex constraint and applies in
+        # both the hard proposal and the soft frontier (x=0 trivially satisfies it).
+        constraints.append(cp.sum(cp.pos(cp.multiply(-betas, x))) <= beta_add_budget)
     if sector_limit is not None:
         # Sector concentration cap (applied in BOTH hard and soft/diversified runs): each
         # sector's share of total short notional <= sector_limit. Linear (hence convex):
@@ -376,6 +396,7 @@ def _rank_candidates(
     beta_tol: float,
     factor_limit: float,
     max_position_weight: float,
+    beta_add_budget: float | None = None,
 ) -> list[Candidate]:
     """Uncapped soft solve, then rank names by total hedging contribution, best-first.
 
@@ -384,7 +405,7 @@ def _rank_candidates(
     for factor-neutralizing is not pruned in favor of a pure-beta name."""
     full_weights, _ = _solve_qp(
         residual_beta, residual_factors, cands, beta_tol, factor_limit,
-        max_position_weight, hard=False,
+        max_position_weight, hard=False, beta_add_budget=beta_add_budget,
     )
     # Rank by the diversified soft-solve allocation itself: the variance-aware objective already
     # weights each name by usefulness AND low risk, so the largest weights are the names a
@@ -404,6 +425,7 @@ def _size_capped(
     max_position_weight: float,
     sector_limit: float = 0.30,
     hard: bool = True,
+    beta_add_budget: float | None = None,
 ) -> HedgeProposal:
     """Size a diversified basket over the top ``n_cap`` ranked names. With ``hard`` (the default
     for an approvable proposal) |net beta| <= beta_tol, the factor limits, and the sector cap
@@ -414,6 +436,7 @@ def _size_capped(
     weights, status = _solve_qp(
         residual_beta, residual_factors, subset, beta_tol, factor_limit,
         max_position_weight, hard=hard, sector_limit=sector_limit,
+        beta_add_budget=beta_add_budget,
     )
     if status not in ("optimal", "optimal_inaccurate"):
         raise InfeasibleHedge(

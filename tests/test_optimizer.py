@@ -117,6 +117,33 @@ def test_hedge_is_diversified_not_a_few_extreme_names():
     assert max(s.weight for s in proposal.positions) < 0.10  # weight is spread, not concentrated
 
 
+def test_beta_add_budget_fences_negative_beta_shorts():
+    """Option A fence: shorting a negative-beta name to match a factor tilt ADDS market beta
+    (−βᵢ·xᵢ > 0 when βᵢ < 0). Unfenced, the optimizer leans on such a name to kill the SMB tilt;
+    the budget caps the aggregate beta the shorts may add — Σ max(0, −βᵢ·xᵢ) ≤ budget — while net
+    beta stays neutral. The factor limit is left loose so the fence (not infeasibility) is tested."""
+    universe = [
+        Candidate("POS", beta=1.0, loadings={"SMB": 0.0}),   # pure beta hedge (removes beta)
+        Candidate("NEGF", beta=-1.0, loadings={"SMB": 1.0}),  # neg-beta, strong SMB tilt
+    ]
+    common = dict(
+        residual_beta=0.30, residual_factors={"SMB": 0.30, "HML": 0.0, "MOM": 0.0},
+        universe=universe, long_aum=1_000_000.0, beta_tol=BETA_TOL,
+        factor_limit=0.50, max_position_weight=1.0,  # loose factor limit → fence is the binding test
+    )
+
+    def beta_added(prop):  # net market beta the shorts inject (only negative-beta names contribute)
+        return sum(max(0.0, -p.beta * p.weight) for p in prop.positions)
+
+    free = optimize_hedge(**common)
+    fenced = optimize_hedge(**common, beta_add_budget=0.02)
+
+    assert beta_added(free) > 0.05                  # unfenced: shorts add real market beta
+    assert beta_added(fenced) <= 0.02 + 1e-6        # fenced: capped to the budget
+    assert beta_added(fenced) < beta_added(free)    # the fence actually binds
+    assert abs(fenced.net_beta_after) <= BETA_TOL + 1e-6  # still beta-neutral
+
+
 def test_infeasible_hedge_fails_closed():
     # A huge residual beta that a low-beta, size-capped universe cannot neutralize.
     universe = [Candidate("S1", beta=0.5), Candidate("S2", beta=0.4)]

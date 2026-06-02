@@ -869,6 +869,7 @@ def propose_hedge(
                 max_position_weight=settings.max_position_weight,
                 sector_limit=sector_limit,
                 excluded_tickers=long_tickers,
+                beta_add_budget=settings.beta_add_budget,  # fence negative-beta shorts (Option A)
             )
             # Aim for a DIVERSIFIED basket of ~target names (the variance penalty spreads weight
             # across many moderate names; the cap sets the count). Defaults to
@@ -968,6 +969,7 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
             factor_limit=settings.factor_limit,
             max_position_weight=settings.max_position_weight,
             excluded_tickers=long_tickers,
+            beta_add_budget=settings.beta_add_budget,
         )
     return {
         "portfolio_id": portfolio_id,
