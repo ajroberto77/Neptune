@@ -81,7 +81,6 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, [portfolioId]);
 
-  const [approving, setApproving] = useState(false);
   // An approved-but-not-yet-booked hedge, handed to the Trade tab for review + booking.
   const [pendingHedge, setPendingHedge] = useState<PendingHedge | null>(null);
 
@@ -105,25 +104,6 @@ export default function App() {
 
   function handleRejectHedge() {
     setProposal(null);
-  }
-
-  // Book the pending hedge as SYSTEMATIC shorts (I-03), recorded, never routed (I-01).
-  async function handleBookHedge() {
-    if (!pendingHedge) return;
-    setApproving(true);
-    setError(null);
-    try {
-      await approveHedge(
-        pendingHedge.portfolioId,
-        pendingHedge.shorts.map((s) => ({ ticker: s.ticker, shares: s.shares, price: s.price })),
-      );
-      setPendingHedge(null);
-      await refreshBook();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setApproving(false);
-    }
   }
 
   async function handlePropose(sectorLimit?: number, maxNames?: number) {
@@ -169,12 +149,17 @@ export default function App() {
     setPositions(p);
   }
 
-  // Submit one ticket into a specific book. Throws on failure so the Trade tab can flag the
-  // individual ticket; the batch driver refreshes the book once at the end.
-  async function submitTrade(targetId: string, t: TransactionInput) {
+  // Submit one ticket into a specific book. A systematic row (from an approved hedge) books as a
+  // systematic short (I-03); a normal row books a manual Buy/Sell. Throws on failure so the Trade
+  // tab can flag the row; the batch driver refreshes the book once at the end.
+  async function submitTrade(targetId: string, t: TransactionInput, systematic?: boolean) {
     setTrading(true);
     try {
-      await recordTransaction(targetId, t);
+      if (systematic) {
+        await approveHedge(targetId, [{ ticker: t.ticker, shares: t.quantity, price: t.price }]);
+      } else {
+        await recordTransaction(targetId, t);
+      }
     } finally {
       setTrading(false);
     }
@@ -272,7 +257,7 @@ export default function App() {
                 proposing={proposing}
                 onApprove={handleApproveHedge}
                 onReject={handleRejectHedge}
-                approving={approving}
+                approving={false}
                 frontier={frontier}
                 onFrontier={handleFrontier}
                 frontierLoading={frontierLoading}
@@ -317,9 +302,7 @@ export default function App() {
                 onAfterBatch={refreshBook}
                 busy={trading}
                 pendingHedge={pendingHedge}
-                onBookHedge={handleBookHedge}
-                onDiscardHedge={() => setPendingHedge(null)}
-                bookingHedge={approving}
+                onConsumeHedge={() => setPendingHedge(null)}
               />
             )}
             {tab === "Stress" && (

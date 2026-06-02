@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { PendingHedge, TradeAction, TransactionInput } from "../types";
-import { money, price } from "../format";
+import { money } from "../format";
 
 const ACTIONS: { value: TradeAction; label: string }[] = [
   { value: "BUY", label: "Buy" },
@@ -18,6 +18,7 @@ interface Row {
   price: number;
   fees: number;
   trade_date: string;
+  systematic?: boolean; // a row inserted from an approved hedge — books as a systematic short
   error?: string;
 }
 
@@ -39,21 +40,16 @@ export function Trade({
   onAfterBatch,
   busy,
   pendingHedge = null,
-  onBookHedge = () => {},
-  onDiscardHedge = () => {},
-  bookingHedge = false,
+  onConsumeHedge = () => {},
 }: {
   portfolios: { id: string; name: string }[];
   defaultPortfolioId: string;
-  onSubmit: (portfolioId: string, t: TransactionInput) => Promise<void>;
+  onSubmit: (portfolioId: string, t: TransactionInput, systematic?: boolean) => Promise<void>;
   onAfterBatch: () => Promise<void>;
   busy: boolean;
   pendingHedge?: PendingHedge | null;
-  onBookHedge?: () => void;
-  onDiscardHedge?: () => void;
-  bookingHedge?: boolean;
+  onConsumeHedge?: () => void;
 }) {
-  const hedgeBook = portfolios.find((p) => p.id === pendingHedge?.portfolioId);
   const realDefault = useMemo(
     () => (portfolios.some((p) => p.id === defaultPortfolioId) ? defaultPortfolioId : ""),
     [portfolios, defaultPortfolioId],
@@ -76,6 +72,28 @@ export function Trade({
   const [rows, setRows] = useState<Row[]>([blankRow()]);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  // An approved hedge inserts its shorts as systematic rows at the TOP of this same grid.
+  useEffect(() => {
+    if (!pendingHedge) return;
+    const hedgeRows: Row[] = pendingHedge.shorts.map((s) => ({
+      key: newKey(),
+      portfolioId: pendingHedge.portfolioId,
+      ticker: s.ticker,
+      action: "SELL",
+      quantity: s.shares,
+      price: s.price,
+      fees: 0,
+      trade_date: today(),
+      systematic: true,
+    }));
+    setRows((rs) => {
+      const kept = rs.filter((r) => r.ticker.trim() || r.quantity || r.price);
+      return [...hedgeRows, ...kept];
+    });
+    onConsumeHedge();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingHedge]);
 
   function update(key: string, patch: Partial<Row>) {
     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch, error: undefined } : r)));
@@ -117,7 +135,7 @@ export function Trade({
           price: r.price,
           fee_per_share: r.fees,
           trade_date: r.trade_date,
-        });
+        }, r.systematic);
         ok += 1;
       } catch (e) {
         remaining.push({ ...r, error: String(e) });
@@ -143,71 +161,18 @@ export function Trade({
     );
   }
 
-  return (
-    <div className="space-y-6">
-      {pendingHedge && (
-        <div className="rounded-lg border border-status-ok/40 bg-ocean-panel p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-display text-sm uppercase tracking-wide text-status-ok">
-              Systematic Hedge — approved, pending booking
-              <span className="ml-2 text-ocean-muted/60">
-                ({pendingHedge.shorts.length} shorts → {hedgeBook?.name ?? pendingHedge.portfolioId})
-              </span>
-            </h3>
-            <div className="flex gap-2">
-              <button
-                onClick={onBookHedge}
-                disabled={bookingHedge}
-                className="rounded bg-status-ok/80 px-3 py-1.5 text-sm font-medium text-white hover:bg-status-ok disabled:opacity-50"
-              >
-                {bookingHedge ? "Booking…" : "Book systematic hedge"}
-              </button>
-              <button
-                onClick={onDiscardHedge}
-                disabled={bookingHedge}
-                className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
-              >
-                Discard
-              </button>
-            </div>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase text-ocean-muted">
-                <th className="pb-2 font-medium">Ticker</th>
-                <th className="pb-2 font-medium">Sector</th>
-                <th className="pb-2 text-right font-medium">Shares</th>
-                <th className="pb-2 text-right font-medium">Price</th>
-                <th className="pb-2 text-right font-medium">Short Notional</th>
-                <th className="pb-2 text-right font-medium">Beta</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pendingHedge.shorts.map((s) => (
-                <tr key={s.ticker} className="border-t border-ocean-border/60">
-                  <td className="py-2 font-mono">{s.ticker}</td>
-                  <td className="py-2 text-ocean-muted">{s.sector ?? "—"}</td>
-                  <td className="py-2 text-right font-mono">
-                    {s.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </td>
-                  <td className="py-2 text-right font-mono">{price(s.price)}</td>
-                  <td className="py-2 text-right font-mono">{money(s.notional)}</td>
-                  <td className="py-2 text-right font-mono">{s.beta.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-3 text-xs text-ocean-muted">
-            Booking records these as systematic shorts (kept distinct from manual/discretionary
-            trades — I-03) and never routes an order (I-01).
-          </p>
-        </div>
-      )}
+  const systematicCount = rows.filter((r) => r.systematic).length;
 
+  return (
     <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
           Trades <span className="text-ocean-muted/60">({rows.length})</span>
+          {systematicCount > 0 && (
+            <span className="ml-2 text-xs text-status-ok">
+              · {systematicCount} systematic hedge {systematicCount === 1 ? "row" : "rows"}
+            </span>
+          )}
         </h3>
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-xs text-ocean-muted">
@@ -251,14 +216,24 @@ export function Trade({
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key} className={`border-t border-ocean-border/60 ${r.error ? "bg-status-breach/10" : ""}`}>
+            <tr
+              key={r.key}
+              className={`border-t border-ocean-border/60 ${r.error ? "bg-status-breach/10" : r.systematic ? "bg-status-ok/5" : ""}`}
+            >
               <td className="py-2 pr-2">
-                <input
-                  className="np-input w-24 font-mono"
-                  aria-label="Ticker"
-                  value={r.ticker}
-                  onChange={(e) => update(r.key, { ticker: e.target.value })}
-                />
+                <div className="flex items-center gap-1">
+                  <input
+                    className="np-input w-24 font-mono"
+                    aria-label="Ticker"
+                    value={r.ticker}
+                    onChange={(e) => update(r.key, { ticker: e.target.value })}
+                  />
+                  {r.systematic && (
+                    <span className="rounded bg-status-ok/20 px-1 py-0.5 text-[9px] uppercase text-status-ok">
+                      sys
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="py-2 pr-2">
                 <select
@@ -361,10 +336,9 @@ export function Trade({
         {msg && <span className="text-sm text-ocean-muted">{msg}</span>}
       </div>
       <p className="mt-3 text-xs text-ocean-muted/70">
-        Buy/Sell nets against the current holding. Closing positions is on the Portfolio tab;
-        systematic-short hedges are booked from the Hedge tab.
+        Buy/Sell nets against the current holding. Rows from an approved hedge book as systematic
+        shorts (kept distinct from discretionary — I-03); Neptune never routes orders (I-01).
       </p>
-    </div>
     </div>
   );
 }
