@@ -77,6 +77,17 @@ def test_mandate_rollups_and_long_only_guards(client):
     assert client.post("/portfolios/LO-1/hedge/propose").status_code == 422
 
 
+def test_consolidated_uses_firm_beta_tolerance(client):
+    # The Consolidated roll-up is a firm-level view → tighter ±0.030 limit; a single book → 0.05.
+    cons = client.get("/portfolios/__consolidated__/risk").json()
+    assert cons["firm_view"] is True
+    assert cons["beta_tol"] == 0.030
+    assert "factor_panel" in cons
+    book = client.get(f"/portfolios/{PID}/risk").json()
+    assert book["firm_view"] is False
+    assert book["beta_tol"] == 0.05
+
+
 def test_list_and_create_portfolios(client):
     # The seeded golden book is listed.
     ids = {p["id"] for p in client.get("/portfolios").json()}

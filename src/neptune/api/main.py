@@ -62,6 +62,7 @@ from neptune.securities.ingest import ingest_ticker
 from neptune.securities.factor_ingest import ingest_factors
 from neptune.securities.factor_providers import KenFrenchProvider
 from neptune.securities.models import Price, Security
+from neptune.securities.models import FactorReturn
 from neptune.securities.providers import YFinanceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
@@ -82,7 +83,9 @@ def _shortable_universe(md):
     names (with pipeline betas + stored sectors) when on ``DbMarketData``, else the synthetic
     fallback universe. Both are built from the same source so betas are mutually consistent."""
     if isinstance(md, DbMarketData):
-        return analytics.db_universe(md)
+        return analytics.db_universe(
+            md, min_adv_usd=settings.min_adv_usd, adv_window=settings.adv_window
+        )
     return analytics.live_universe(md, UNIVERSE_TICKERS)
 
 
@@ -760,6 +763,8 @@ def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
 
 @app.get("/portfolios/{portfolio_id}/risk")
 def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
+    from sqlalchemy import func
+
     service = PositionService(session)
     portfolio = _resolve_portfolio(service, portfolio_id)
     # The beta-balance check is "adjusted for long-only": a long-only book is intentionally
@@ -777,8 +782,28 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     else:
         beta_portfolio = portfolio
 
+    # Firm-level roll-ups (Consolidated / Long-Short) are held to the tighter firm target
+    # (CLAUDE.md §3); a single book uses the per-book |β| ≤ 0.05.
+    is_firm_view = portfolio_id in (CONSOLIDATED_ID, LONGSHORT_GROUP_ID)
+    tol = settings.firm_beta_tol if is_firm_view else settings.beta_tol
+
+    panel = {"loaded": False, "last_date": None, "stale": True}
     with market_data_for(session, beta_portfolio) as md:
         metrics = analytics.compute_metrics(beta_portfolio, md)
+        # Stale-panel guard: if the style-factor panel isn't loaded (or lags the prices), the
+        # hedge is effectively BETA-ONLY — surface it rather than silently matching nothing.
+        factors_present = md.factor_returns()
+        panel["loaded"] = all(f in factors_present for f in STYLE_FACTORS)
+        sess = getattr(md, "session", None)
+        if not panel["loaded"]:
+            panel["stale"] = True
+        elif sess is None:
+            panel["stale"] = False  # synthetic/fallback: factors present, can't be stale
+        else:
+            last = sess.scalar(select(func.max(FactorReturn.ts)))
+            rdates = md.return_dates() if hasattr(md, "return_dates") else []
+            panel["last_date"] = last.isoformat() if last else None
+            panel["stale"] = bool(last is None or (rdates and (rdates[-1] - last).days > 7))
     net_beta, net_factors = analytics.net_metrics(beta_portfolio, metrics)
     # Market is shown by the net-beta gauge; the factor table covers the style factors.
     style_factors = {f: net_factors[f] for f in STYLE_FACTORS}
@@ -786,23 +811,28 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
         net_beta=net_beta,
         factor_exposures=style_factors,
         long_aum=beta_portfolio.long_aum,
-        beta_tol=settings.beta_tol,
+        beta_tol=tol,
         factor_limit=settings.factor_limit,
     )
+    headline = (
+        "Long-only mandate — net long beta is expected (no neutrality constraint)."
+        if long_only_view else summary.headline()
+    )
+    if not long_only_view and panel["stale"]:
+        headline = "⚠ Factor panel not loaded/stale — hedge is BETA-ONLY (style not matched). " + headline
     return {
         "portfolio_id": portfolio_id,
         "mandate": portfolio.mandate.value,
         # Long-only views are NOT held to neutrality — the UI shows their beta as informational.
         "beta_neutral_required": not long_only_view,
+        "firm_view": is_firm_view,
+        "factor_panel": panel,
         "net_beta": summary.net_beta,
         "beta_tol": summary.beta_tol,
         "beta_status": "INFO" if long_only_view else summary.beta_status,
         "beta_neutral": summary.beta_neutral,
         "long_aum": summary.long_aum,
-        "headline": (
-            "Long-only mandate — net long beta is expected (no neutrality constraint)."
-            if long_only_view else summary.headline()
-        ),
+        "headline": headline,
         "factors": [
             {"factor": f.factor, "exposure": f.exposure, "limit": f.limit, "status": f.status}
             for f in summary.factors

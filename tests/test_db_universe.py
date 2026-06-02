@@ -174,6 +174,33 @@ def test_rebuild_betas_stores_full_window_only_and_is_idempotent(securities_sess
     assert total == written
 
 
+def test_db_universe_liquidity_screen_drops_illiquid_names(securities_session):
+    """Option D: a name whose trailing average dollar volume is below the floor is dropped; names
+    with no stored volume are kept (unknown ≠ illiquid)."""
+    from neptune.securities.models import Price
+    from sqlalchemy import select as _select
+
+    synth = SyntheticMarketData()
+    _seed(securities_session, "SPY", 1, synth.market_returns())
+    _seed(securities_session, "LIQ", 2, synth.ticker_returns("AAA"), sector="Technology")
+    _seed(securities_session, "ILLIQ", 3, synth.ticker_returns("BBB"), sector="Energy")
+    securities_session.commit()
+    # Give LIQ heavy volume, ILLIQ tiny volume; SPY/none left null (unknown).
+    for iid, vol in [(2, 5_000_000.0), (3, 100.0)]:
+        for p in securities_session.execute(
+            _select(Price).where(Price.instrument_id == iid)
+        ).scalars():
+            p.volume = vol
+    securities_session.commit()
+
+    md = DbMarketData(securities_session, benchmark="SPY")
+    # No floor → both present.
+    assert {c.ticker for c in analytics.db_universe(md)} == {"LIQ", "ILLIQ"}
+    # Floor at $1M ADV → ILLIQ (≈ close×100) dropped, LIQ kept.
+    screened = {c.ticker for c in analytics.db_universe(md, min_adv_usd=1_000_000.0)}
+    assert "LIQ" in screened and "ILLIQ" not in screened
+
+
 def test_rebuild_loadings_materializes_only_with_a_factor_panel(securities_session):
     """Style loadings materialize only once the factor return panel is ingested; without it the
     sweep is a no-op (the hedge stays beta-only). With a panel, full-window loadings are stored."""

@@ -163,19 +163,30 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
     return candidates
 
 
-def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate]:
+def db_universe(
+    market_data, tickers: list[str] | None = None,
+    min_adv_usd: float = 0.0, adv_window: int = 63,
+) -> list[Candidate]:
     """The REAL shortable universe: build candidates from backfilled names (a ``DbMarketData``
     source) with their pipeline betas, factor loadings, and stored sectors. Unlike the
     synthetic ``live_universe``, names with too little price history to fit the OLS
     regression are skipped (they can't be sized), and the sector comes from the securities DB.
-    """
+
+    ``min_adv_usd`` > 0 applies the liquidity screen (Option D): a name whose trailing average
+    daily dollar volume is below the floor is dropped (can't reliably short it). Names whose
+    volume isn't stored are kept (unknown ≠ illiquid)."""
     if tickers is None:
         tickers = market_data.available_tickers()
     market = market_data.market_returns()
     factors = market_data.factor_returns()
+    adv_of = getattr(market_data, "average_dollar_volume", None)
 
     raws = {}
     for t in tickers:
+        if min_adv_usd > 0 and adv_of is not None:
+            adv = adv_of(t, adv_window)
+            if adv is not None and adv < min_adv_usd:
+                continue  # too illiquid to short — liquidity screen
         try:
             r = raw_beta(market_data.ticker_returns(t), market)
         except (ValueError, TickerNotFound):

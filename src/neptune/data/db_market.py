@@ -244,3 +244,25 @@ class DbMarketData:
         return self.session.scalar(
             select(Security.sector).where(Security.ticker == ticker)
         )
+
+    def average_dollar_volume(self, ticker: str, window: int = 63) -> float | None:
+        """Trailing average daily DOLLAR volume (close × volume) over the last ``window`` bars —
+        the liquidity proxy for the short-universe screen. None when volume isn't stored (so the
+        caller treats it as unknown rather than illiquid)."""
+        series = self._series(ticker)
+        if not series:
+            return None
+        iid = self.session.scalar(
+            select(Security.instrument_id).where(Security.ticker == ticker)
+        )
+        if iid is None:
+            return None
+        rows = self.session.execute(
+            select(Price.close, Price.volume)
+            .where(Price.instrument_id == iid, Price.volume.isnot(None))
+            .order_by(Price.ts.desc()).limit(window)
+        ).all()
+        if not rows:
+            return None
+        dollar = [float(c) * float(v) for c, v in rows if c is not None and v is not None]
+        return float(np.mean(dollar)) if dollar else None

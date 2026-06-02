@@ -70,6 +70,12 @@ class Settings(BaseSettings):
         """The fence level in beta units = fraction × the (per-book) binding limit."""
         return self.beta_add_fraction * self.beta_tol
 
+    # Liquidity screen (short-book research, Option D): drop shortable names whose trailing
+    # average daily DOLLAR volume is below this floor — you can't reliably short an illiquid
+    # name. 0 = off. Borrow availability / hard-to-borrow needs an external feed (roadmap).
+    min_adv_usd: float = 0.0
+    adv_window: int = 63  # ~3 months of trading days for the ADV average
+
     @property
     def portfolio_url(self) -> str:
         """Resolved URL for Neptune's portfolio database (falls back to ``database_url``)."""

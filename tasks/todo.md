@@ -244,3 +244,25 @@ first vertical slice · 🔵 LATER = deferred.
 - [ ] **Phase 2: Cash vs Swap instrument + swap financing.** Add an `instrument` field
       (needs a schema migration — no Alembic yet) and model swap funding/borrow accrual in the
       P&L engine. Deferred from Phase 1 to avoid breaking existing DBs.
+
+## Factor program (PM, 2026-06) — see the factor-research brief
+
+- [x] 🟢 Materialized daily **betas** (`betas` table, vectorized rolling OLS, one-pass sweep
+      on ingest) and **style loadings** (`factor_loadings` table, `model` tag) — read by the
+      hedge backtest + propose path instead of computing on the fly.
+- [ ] 🔵 **Build price-only differentiating factors** (after C & D): Sector, IVOL/low-vol, BAB,
+      Amihud illiquidity. Compute daily return series → `factor_returns` (+ a `factor_definition`
+      row) → flows into materialized loadings under an expanded `model` → optimizer neutralizes.
+- [ ] 🔵 **Fundamentals feed (Mercury; ingest interim).** REQUIRED for:
+      * **value-weighting** the sector factor (needs market cap = price × **shares outstanding**;
+        until then the sector factor is **equal-weighted** — a documented proxy);
+      * self-building **HML / RMW / CMA** (book equity, operating profitability, asset growth) —
+        until then we INGEST these from Ken French;
+      * **QMJ** (quality) factor.
+      Interim: pull shares-outstanding / basic fundamentals (yfinance) to enable VW sector +
+      characteristic scores; replace with the Mercury feed when available. Point-in-time
+      correctness matters (avoid look-ahead) — Mercury > yfinance for that.
+- [ ] 🔵 Ingest the Ken French FF5+MOM panel operationally + a **stale-panel guard** (Risk
+      Interface) so the hedge never silently degrades to beta-only.
+- [ ] 🔵 Loading-window decision: decouple the style-loading window from the 252-day market beta
+      (research flagged 60 daily obs as thin for 6 slopes); consider shrinkage on the loadings.
