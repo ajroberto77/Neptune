@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from neptune.data.db_market import TickerNotFound
 from neptune.data.source import MarketData
 from neptune.domain.models import BookType, Portfolio, Position
 from neptune.pnl import Lot, PnL, position_pnl
@@ -22,6 +23,13 @@ def position_pnl_for(position: Position, market: MarketData, as_of: date | None 
     if not position.lots:
         realised = position.realised_pnl
         return PnL(day=0.0, total=realised, unrealised=0.0, realised=realised)
+    try:
+        current_price = market.current_price(position.ticker)
+        prev_close = market.prev_close(position.ticker)
+    except TickerNotFound:
+        # Not priced yet (graceful): no mark, so only locked-in realised P&L is known.
+        realised = position.realised_pnl
+        return PnL(day=0.0, total=realised, unrealised=0.0, realised=realised)
     lots = [
         Lot(l.quantity, l.entry_price, l.entry_date, l.fee_per_share) for l in position.lots
     ]
@@ -33,8 +41,8 @@ def position_pnl_for(position: Position, market: MarketData, as_of: date | None 
         as_of = mark(position.ticker) if mark is not None else date.today()
     return position_pnl(
         lots=lots,
-        current_price=market.current_price(position.ticker),
-        prev_close=market.prev_close(position.ticker),
+        current_price=current_price,
+        prev_close=prev_close,
         direction=position.direction,
         realised=position.realised_pnl,
         as_of=as_of,

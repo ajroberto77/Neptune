@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # Seed the golden DEMO positions (AAA/BBB/CCC/DDD) on startup. True for first-run/tests.
     # Set NEPTUNE_SEED_DEMO_POSITIONS=false for a real book: stops seeding AND removes any
     # existing demo names (so a real benchmark can price the whole book — see market_data_for).
-    seed_demo_positions: bool = True
+    seed_demo_positions: bool = False  # production starts clean; tests force it on (conftest)
     max_position_weight: float = 0.15  # position-size ceiling as fraction of long AUM
     factor_limit: float = 0.20         # per-factor exposure limit (Size/Value/Momentum)
     # Sector concentration: flag any GICS sector exceeding this fraction of total short

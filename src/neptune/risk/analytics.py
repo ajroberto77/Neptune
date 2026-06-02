@@ -56,7 +56,9 @@ def compute_metrics(
     for p in portfolio.positions:
         try:
             raws[p.ticker] = raw_beta_ewma_dimson(market_data.ticker_returns(p.ticker), market)
-        except ValueError:
+        except (ValueError, TickerNotFound):
+            # Too little history (ValueError) OR no stored prices at all (TickerNotFound).
+            # Either way: sentinel prior-1.0 beta, fully shrunk — never crash the whole book.
             raws[p.ticker] = RawBetaResult(
                 beta_raw=1.0, var_ols=float("inf"), coefficients=np.array([]), n_obs=0
             )
@@ -78,7 +80,11 @@ def compute_metrics(
         else:
             beta, w = vasicek_shrinkage(raw.beta_raw, raw.var_ols, prior_var)
             method = "pipeline"
-        loadings = factor_loadings(market_data.ticker_returns(p.ticker), factors).loadings
+        # Unpriced/insufficient names have no return series to regress → empty loadings.
+        loadings = (
+            {} if p.ticker in insufficient
+            else factor_loadings(market_data.ticker_returns(p.ticker), factors).loadings
+        )
         metrics[p.ticker] = PositionMetrics(
             ticker=p.ticker, beta=beta, beta_raw=raw.beta_raw,
             beta_method=method, weight=w, loadings=loadings,

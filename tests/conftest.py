@@ -8,6 +8,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 import pytest  # noqa: E402
 
+from neptune.config import settings  # noqa: E402
 from neptune.db.base import (  # noqa: E402
     SecuritiesSession,
     SessionLocal,
@@ -16,6 +17,16 @@ from neptune.db.base import (  # noqa: E402
     init_securities_db,
     securities_engine,
 )
+
+
+@pytest.fixture(autouse=True)
+def _seed_demo_for_tests():
+    """Production no longer seeds the fake demo book by default; the test suite exercises it
+    (the golden AAA/BBB/CCC/DDD positions), so force it on for every test."""
+    prev = settings.seed_demo_positions
+    settings.seed_demo_positions = True
+    yield
+    settings.seed_demo_positions = prev
 
 
 @pytest.fixture()

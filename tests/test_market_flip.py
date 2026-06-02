@@ -46,8 +46,11 @@ def test_uses_db_market_data_when_all_present(session, securities_session):
         assert isinstance(md, DbMarketData)  # real prices drive the engine
 
 
-def test_falls_back_to_synthetic_when_a_ticker_lacks_prices(session, securities_session):
-    # Benchmark present, but the portfolio name has no stored prices → whole book synthetic.
+def test_stays_on_real_data_when_a_name_lacks_prices(session, securities_session):
+    # Benchmark present, but one name has no stored prices. The book STAYS on the real source
+    # (no synthetic contamination of the whole book); the unpriced name is handled gracefully.
+    from neptune.risk import analytics
+
     _seed_prices(securities_session, "SPY", 1, SyntheticMarketData().market_returns())
     svc = PositionService(session)
     svc.create_portfolio("X", "X")
@@ -55,7 +58,10 @@ def test_falls_back_to_synthetic_when_a_ticker_lacks_prices(session, securities_
     portfolio = svc.get_portfolio("X")
 
     with market_data_for(session, portfolio) as md:
-        assert md is MARKET_DATA  # synthetic fallback
+        assert md is not MARKET_DATA          # real DbMarketData, NOT synthetic
+        assert isinstance(md, DbMarketData)
+        metrics = analytics.compute_metrics(portfolio, md)
+        assert metrics["ZZZ"].beta_method == "insufficient_data"  # graceful, no crash
 
 
 def test_falls_back_when_benchmark_absent(session, securities_session):

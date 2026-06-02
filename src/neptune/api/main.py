@@ -82,21 +82,18 @@ def _shortable_universe(md):
 
 @contextmanager
 def market_data_for(session: Session, portfolio):
-    """Yield the market-data source for a portfolio: real ``DbMarketData`` (backfilled
-    prices + factors) when the benchmark AND every position's ticker have stored prices,
-    else the synthetic fallback. All-or-nothing per book — a real benchmark can't price a
-    synthetic name — so the seeded demo (and tests, which have no stored prices) stay on the
-    synthetic source unchanged. The securities session is held open for the caller because
-    ``DbMarketData`` reads lazily."""
+    """Yield the market-data source for a portfolio. As long as the BENCHMARK is priced, the
+    real ``DbMarketData`` source is used — individual names that aren't priced yet are handled
+    gracefully downstream (sentinel beta, no mark), NOT by swapping the whole book to fake data.
+    Synthetic data is the fallback ONLY when there is no real benchmark at all (a fresh DB or
+    the offline test harness). The securities session is held open because reads are lazy."""
     sec_cm = securities_session(session)
     sec = sec_cm.__enter__()
     try:
-        md = DbMarketData(sec, benchmark=settings.benchmark)
-        for p in portfolio.positions:  # require every ticker to have real prices
-            md.ticker_returns(p.ticker)
+        md = DbMarketData(sec, benchmark=settings.benchmark)  # raises iff benchmark unpriced
     except TickerNotFound:
         sec_cm.__exit__(None, None, None)
-        yield MARKET_DATA  # synthetic fallback (benchmark or a name lacks prices)
+        yield MARKET_DATA  # no real benchmark → synthetic (fresh DB / tests only)
         return
     try:
         yield md
@@ -427,6 +424,14 @@ def _ticker_unpriced(md: DbMarketData, ticker: str) -> bool:
         return True
 
 
+def _safe_price(md, ticker: str) -> float | None:
+    """The current mark, or None for a not-yet-priced name (no synthetic substitution)."""
+    try:
+        return round(md.current_price(ticker), 2)
+    except TickerNotFound:
+        return None
+
+
 class PortfolioIn(BaseModel):
     """Create a portfolio (book). id is a short slug; the rest are optional ownership links."""
 
@@ -547,7 +552,7 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
                 "book": p.book.value,
                 "notional": p.notional,
                 "quantity": p.quantity,
-                "price": round(md.current_price(p.ticker), 2),
+                "price": _safe_price(md, p.ticker),
                 "beta": round(metrics[p.ticker].beta, 4),
                 "beta_method": metrics[p.ticker].beta_method,
                 "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
