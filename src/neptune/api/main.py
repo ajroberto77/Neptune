@@ -64,6 +64,11 @@ from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sy
 MARKET_DATA = SyntheticMarketData()
 UNIVERSE_TICKERS = default_universe_tickers(60)
 
+# Default price/factor backfill window: ~3 years. The beta pipeline needs 252 trailing days,
+# so 3 years leaves ~1.5–2 years of dates with a full lookback — the history a walk-forward
+# backtest replays over. (A specific start/end in the request still overrides this.)
+DEFAULT_BACKFILL_DAYS = 365 * 3 + 30
+
 
 def _shortable_universe(md):
     """The hedge candidate universe matching the market-data source: the REAL backfilled
@@ -899,7 +904,7 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
     tickers (or the whole projection). Requires network + the optional yfinance package, so
     it returns 503 when the feed is unavailable rather than failing opaquely."""
     end = body.end or date.today()
-    start = body.start or (end - timedelta(days=400))  # ~252 trading days of cushion
+    start = body.start or (end - timedelta(days=DEFAULT_BACKFILL_DAYS))  # ~3 years
     provider = YFinanceProvider()
     results = []
     with securities_session(session) as sec_session:
@@ -961,7 +966,7 @@ def ingest_factor_panel(body: FactorIngestIn, session: Session = Depends(get_ses
     securities DB. Fetched from the Ken French Data Library's CSV zips over HTTPS, so it
     returns 503 when the feed is unreachable rather than failing opaquely."""
     end = body.end or date.today()
-    start = body.start or (end - timedelta(days=400))
+    start = body.start or (end - timedelta(days=DEFAULT_BACKFILL_DAYS))
     provider = KenFrenchProvider()
     with securities_session(session) as sec_session:
         try:
