@@ -67,6 +67,19 @@ export interface ProposedShort {
   sector?: string | null;
 }
 
+/** An approved-but-not-yet-booked hedge basket, handed to the Trade tab for review + booking. */
+export interface PendingHedge {
+  portfolioId: string;
+  shorts: {
+    ticker: string;
+    shares: number;
+    price: number;
+    sector: string | null;
+    beta: number;
+    notional: number;
+  }[];
+}
+
 export interface SectorConcentration {
   sector: string;
   notional: number;

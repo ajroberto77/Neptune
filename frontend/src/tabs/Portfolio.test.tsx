@@ -51,7 +51,7 @@ describe("Portfolio", () => {
     expect(screen.getByText("$204.13")).toBeInTheDocument();
   });
 
-  it("shows beta-adjusted notional and a Net Position that nets long vs short", () => {
+  it("shows a Net Position on top, totals, and weighted-avg beta", () => {
     render(
       <Portfolio
         positions={[
@@ -62,10 +62,12 @@ describe("Portfolio", () => {
     );
     // Long beta-adj = +1,000,000; short beta-adj = -1,000,000; net beta-adj ~ $0.
     expect(screen.getByText("Net Position")).toBeInTheDocument();
-    expect(screen.getByText("Net Beta-Adj Notional")).toBeInTheDocument();
+    expect(screen.getByText("Net")).toBeInTheDocument(); // the net row label
     expect(screen.getAllByText("+$0").length).toBeGreaterThanOrEqual(1); // net beta-adj nets out
     expect(screen.getByText("Total Long")).toBeInTheDocument();
     expect(screen.getByText("Total Short")).toBeInTheDocument();
+    // Weighted-average beta in the totals (1.00 for a single beta-1 name).
+    expect(screen.getAllByText("1.00").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows an empty message for a section with no positions", () => {

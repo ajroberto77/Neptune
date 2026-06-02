@@ -6,6 +6,9 @@ import { money, signedMoney } from "../format";
 
 interface Props {
   proposal: HedgeProposal | null;
+  portfolios: { id: string; name: string }[];
+  hedgePortfolioId: string;
+  onHedgePortfolio: (id: string) => void;
   onPropose: (sectorLimit?: number, maxNames?: number) => void;
   proposing: boolean;
   onApprove: () => void;
@@ -24,6 +27,9 @@ const shares = (n: number) => n.toLocaleString(undefined, { maximumFractionDigit
  *  (I-01). The sector-concentration breakdown shows below once a basket is proposed. */
 export function Hedge({
   proposal,
+  portfolios,
+  hedgePortfolioId,
+  onHedgePortfolio,
   onPropose,
   proposing,
   onApprove,
@@ -58,6 +64,20 @@ export function Hedge({
             Systematic Hedge Proposal
           </h3>
           <div className="flex items-end gap-3">
+            <label className="text-xs text-ocean-muted">
+              <span className="mb-1 block">Portfolio</span>
+              <select
+                className="np-input py-1"
+                value={hedgePortfolioId}
+                onChange={(e) => onHedgePortfolio(e.target.value)}
+              >
+                {portfolios.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="text-xs text-ocean-muted">
               <span className="mb-1 block">Sector limit %</span>
               <input

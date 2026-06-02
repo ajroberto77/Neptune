@@ -30,6 +30,9 @@ const frontier: Frontier = {
 };
 
 const base = {
+  portfolios: [{ id: "P-A", name: "Book A" }],
+  hedgePortfolioId: "P-A",
+  onHedgePortfolio: () => {},
   onPropose: () => {},
   proposing: false,
   onApprove: () => {},

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { TradeAction, TransactionInput } from "../types";
+import type { PendingHedge, TradeAction, TransactionInput } from "../types";
 import { money } from "../format";
 
 const ACTIONS: { value: TradeAction; label: string }[] = [
@@ -38,13 +38,22 @@ export function Trade({
   onSubmit,
   onAfterBatch,
   busy,
+  pendingHedge = null,
+  onBookHedge = () => {},
+  onDiscardHedge = () => {},
+  bookingHedge = false,
 }: {
   portfolios: { id: string; name: string }[];
   defaultPortfolioId: string;
   onSubmit: (portfolioId: string, t: TransactionInput) => Promise<void>;
   onAfterBatch: () => Promise<void>;
   busy: boolean;
+  pendingHedge?: PendingHedge | null;
+  onBookHedge?: () => void;
+  onDiscardHedge?: () => void;
+  bookingHedge?: boolean;
 }) {
+  const hedgeBook = portfolios.find((p) => p.id === pendingHedge?.portfolioId);
   const realDefault = useMemo(
     () => (portfolios.some((p) => p.id === defaultPortfolioId) ? defaultPortfolioId : ""),
     [portfolios, defaultPortfolioId],
@@ -135,6 +144,66 @@ export function Trade({
   }
 
   return (
+    <div className="space-y-6">
+      {pendingHedge && (
+        <div className="rounded-lg border border-status-ok/40 bg-ocean-panel p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-display text-sm uppercase tracking-wide text-status-ok">
+              Systematic Hedge — approved, pending booking
+              <span className="ml-2 text-ocean-muted/60">
+                ({pendingHedge.shorts.length} shorts → {hedgeBook?.name ?? pendingHedge.portfolioId})
+              </span>
+            </h3>
+            <div className="flex gap-2">
+              <button
+                onClick={onBookHedge}
+                disabled={bookingHedge}
+                className="rounded bg-status-ok/80 px-3 py-1.5 text-sm font-medium text-white hover:bg-status-ok disabled:opacity-50"
+              >
+                {bookingHedge ? "Booking…" : "Book systematic hedge"}
+              </button>
+              <button
+                onClick={onDiscardHedge}
+                disabled={bookingHedge}
+                className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase text-ocean-muted">
+                <th className="pb-2 font-medium">Ticker</th>
+                <th className="pb-2 font-medium">Sector</th>
+                <th className="pb-2 text-right font-medium">Shares</th>
+                <th className="pb-2 text-right font-medium">Price</th>
+                <th className="pb-2 text-right font-medium">Short Notional</th>
+                <th className="pb-2 text-right font-medium">Beta</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendingHedge.shorts.map((s) => (
+                <tr key={s.ticker} className="border-t border-ocean-border/60">
+                  <td className="py-2 font-mono">{s.ticker}</td>
+                  <td className="py-2 text-ocean-muted">{s.sector ?? "—"}</td>
+                  <td className="py-2 text-right font-mono">
+                    {s.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </td>
+                  <td className="py-2 text-right font-mono">{money(s.price)}</td>
+                  <td className="py-2 text-right font-mono">{money(s.notional)}</td>
+                  <td className="py-2 text-right font-mono">{s.beta.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-3 text-xs text-ocean-muted">
+            Booking records these as systematic shorts (kept distinct from manual/discretionary
+            trades — I-03) and never routes an order (I-01).
+          </p>
+        </div>
+      )}
+
     <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
@@ -295,6 +364,7 @@ export function Trade({
         Buy/Sell nets against the current holding. Closing positions is on the Portfolio tab;
         systematic-short hedges are booked from the Hedge tab.
       </p>
+    </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   Frontier,
   HedgeProposal,
+  PendingHedge,
   PositionRow,
   RiskSummary,
   StressReport,
@@ -38,6 +39,8 @@ export default function App() {
   // The selected portfolio. Defaults to the Consolidated roll-up across every book.
   const [portfolioId, setPortfolioId] = useState<string>(CONSOLIDATED_ID);
   const [portfolios, setPortfolios] = useState<{ id: string; name: string }[]>([]);
+  // The Hedge tab always targets a REAL book (you can't hedge the Consolidated roll-up).
+  const [hedgePortfolioId, setHedgePortfolioId] = useState<string>("");
   const [summary, setSummary] = useState<RiskSummary | null>(null);
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [proposal, setProposal] = useState<HedgeProposal | null>(null);
@@ -57,7 +60,11 @@ export default function App() {
   // Load the portfolio list (for the switcher) + the server refresh interval, once.
   useEffect(() => {
     fetchPortfolios()
-      .then(setPortfolios) // keep the Consolidated default; the user picks a book explicitly
+      .then((ps) => {
+        setPortfolios(ps); // keep the Consolidated default; the user picks a book explicitly
+        // The hedge book defaults to a real portfolio (Consolidated can't be hedged/booked).
+        if (ps.length) setHedgePortfolioId((cur) => cur || ps[0].id);
+      })
       .catch((e) => setError(String(e)));
     getPriceRefresh()
       .then(({ minutes }) => setRefreshMins(minutes))
@@ -75,24 +82,43 @@ export default function App() {
   }, [portfolioId]);
 
   const [approving, setApproving] = useState(false);
+  // An approved-but-not-yet-booked hedge, handed to the Trade tab for review + booking.
+  const [pendingHedge, setPendingHedge] = useState<PendingHedge | null>(null);
 
-  // Approve the WHOLE basket → book the names as systematic shorts (I-03), then go to Trade.
-  async function handleApproveHedge() {
+  // Approve the WHOLE basket → hand it to the Trade tab (it shows there for review/booking).
+  function handleApproveHedge() {
     if (!proposal) return;
-    if (portfolioId === CONSOLIDATED_ID) {
-      setError("Select a specific portfolio (not Consolidated) to book the hedge into.");
-      return;
-    }
+    const shorts = proposal.proposed_shorts
+      .filter((s) => s.shares && s.price)
+      .map((s) => ({
+        ticker: s.ticker,
+        shares: s.shares as number,
+        price: s.price as number,
+        sector: s.sector ?? null,
+        beta: s.beta,
+        notional: s.notional,
+      }));
+    setPendingHedge({ portfolioId: hedgePortfolioId, shorts });
+    setProposal(null);
+    setTab("Trade");
+  }
+
+  function handleRejectHedge() {
+    setProposal(null);
+  }
+
+  // Book the pending hedge as SYSTEMATIC shorts (I-03), recorded, never routed (I-01).
+  async function handleBookHedge() {
+    if (!pendingHedge) return;
     setApproving(true);
     setError(null);
     try {
-      const shorts = proposal.proposed_shorts
-        .filter((s) => s.shares && s.price)
-        .map((s) => ({ ticker: s.ticker, shares: s.shares as number, price: s.price as number }));
-      await approveHedge(portfolioId, shorts);
-      setProposal(null);
+      await approveHedge(
+        pendingHedge.portfolioId,
+        pendingHedge.shorts.map((s) => ({ ticker: s.ticker, shares: s.shares, price: s.price })),
+      );
+      setPendingHedge(null);
       await refreshBook();
-      setTab("Trade");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -100,15 +126,11 @@ export default function App() {
     }
   }
 
-  function handleRejectHedge() {
-    setProposal(null);
-  }
-
   async function handlePropose(sectorLimit?: number, maxNames?: number) {
     setProposing(true);
     setError(null);
     try {
-      setProposal(await proposeHedge(portfolioId, sectorLimit, maxNames));
+      setProposal(await proposeHedge(hedgePortfolioId, sectorLimit, maxNames));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -120,7 +142,7 @@ export default function App() {
     setFrontierLoading(true);
     setError(null);
     try {
-      setFrontier(await fetchFrontier(portfolioId));
+      setFrontier(await fetchFrontier(hedgePortfolioId));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -239,6 +261,13 @@ export default function App() {
             {tab === "Hedge" && (
               <Hedge
                 proposal={proposal}
+                portfolios={portfolios}
+                hedgePortfolioId={hedgePortfolioId}
+                onHedgePortfolio={(id) => {
+                  setHedgePortfolioId(id);
+                  setProposal(null);
+                  setFrontier(null);
+                }}
                 onPropose={handlePropose}
                 proposing={proposing}
                 onApprove={handleApproveHedge}
@@ -287,6 +316,10 @@ export default function App() {
                 onSubmit={submitTrade}
                 onAfterBatch={refreshBook}
                 busy={trading}
+                pendingHedge={pendingHedge}
+                onBookHedge={handleBookHedge}
+                onDiscardHedge={() => setPendingHedge(null)}
+                bookingHedge={approving}
               />
             )}
             {tab === "Stress" && (
