@@ -320,11 +320,7 @@ def beta_diagnostics(body: BetaDiagIn, session: Session = Depends(get_session)):
     (zero-return days inside the window), and raw vs shrunk beta — so a surprising beta can be
     traced to data (short/gappy history, span shorter than SPY) vs a genuine low/high fit.
     Read-only; no solver, no writes."""
-    from neptune.quant.beta import (
-        cross_sectional_prior_var as _xprior,
-        raw_beta as _raw,
-        vasicek_shrinkage as _shrink,
-    )
+    from neptune.quant.beta import raw_beta as _raw, vasicek_shrinkage as _shrink
     from neptune.risk.analytics import DEFAULT_PRIOR_VAR, MIN_BETA_OBS
 
     tickers = [t.strip().upper() for t in body.tickers if t.strip()]
@@ -344,15 +340,15 @@ def beta_diagnostics(body: BetaDiagIn, session: Session = Depends(get_session)):
             "obs_used": int(min(market.shape[0], 252)),
         }
 
-        # Raw betas first (to form the same cross-sectional Vasicek prior the universe uses).
         raws: dict[str, object] = {}
         for t in tickers:
             try:
                 raws[t] = _raw(md.ticker_returns(t), market)
             except (ValueError, TickerNotFound):
                 raws[t] = None
-        good = [r.beta_raw for r in raws.values() if r is not None and r.n_obs >= MIN_BETA_OBS]
-        prior_var = _xprior(good) if len(good) >= 2 else DEFAULT_PRIOR_VAR
+        # The SAME fixed market-level prior the book and universe shrink against (stable, so the
+        # diagnostic's shrunk β equals what the Portfolio tab shows for the name).
+        prior_var = DEFAULT_PRIOR_VAR
 
         rows = []
         for t in tickers:
@@ -837,14 +833,21 @@ def approve_hedge(portfolio_id: str, body: HedgeApproveIn,
                   session: Session = Depends(get_session)):
     service = PositionService(session)
     _require_portfolio(service, portfolio_id)  # real book only (rejects Consolidated)
+    # A hedge proposal is a FULL replacement for the systematic book (residual_metrics excludes
+    # systematic shorts, so the optimizer re-sizes the whole hedge against the long book). Clear
+    # the existing systematic shorts first, so approving REPLACES the hedge rather than stacking a
+    # second one on top — otherwise repeated propose→approve cycles double the short exposure.
+    replaced = service.clear_systematic_shorts(portfolio_id)
+    # Dedupe by ticker (last wins) so an accidental duplicate row can't aggregate into 2× a name.
+    by_ticker = {s.ticker: s for s in body.shorts}
     booked = 0
-    for s in body.shorts:
+    for s in by_ticker.values():
         service.record_trade(
             portfolio_id, s.ticker, Side.SHORT, ShortType.SYSTEMATIC,
             s.shares, s.price, date.today(),
         )
         booked += 1
-    return {"booked": booked, "portfolio_id": portfolio_id}
+    return {"booked": booked, "replaced": replaced, "portfolio_id": portfolio_id}
 
 
 @app.post("/portfolios/{portfolio_id}/hedge/frontier")

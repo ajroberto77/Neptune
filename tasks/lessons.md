@@ -148,3 +148,35 @@ positive-beta name *removes* market exposure: its beta-adjusted notional is **ne
 **Pattern:** Any per-name exposure number on a short book must carry the short sign, or the
 totals contradict the (correctly signed) net-beta figure and look nonsensical. Mirror the
 existing signed convention rather than re-deriving an unsigned one per view.
+
+---
+
+## Beta shrinkage prior must be book-independent; hedge approval must replace, not stack
+
+**Context (full audit triggered by "it doubled the position / the long beta-adj changed after I
+traded"):** Two independent bugs compounded into a wildly over-hedged, self-inconsistent book.
+
+**Bug 1 — book-dependent Vasicek prior (unstable betas).** `compute_metrics` estimated the
+Vasicek prior from the *current book's own* cross-section of raw betas. With 3 longs the prior
+was tiny → heavy shrinkage toward 1.0 → inflated long betas (PZZA 0.80); after booking 35 shorts
+the 38-name prior was large → little shrinkage → the SAME longs re-priced (PZZA 0.61). So a name's
+beta moved the instant you traded, and the optimizer (which sized the hedge against the inflated
+propose-time residual) no longer matched the book after booking. Fix: shrink against a FIXED,
+market-level prior constant (`DEFAULT_PRIOR_VAR`), used by the book AND the universe candidates so
+they share one frame. A name's beta is now a pure function of its own returns.
+
+**Bug 2 — approval stacked hedges (the "doubling").** `residual_metrics` excludes systematic
+shorts, so every Propose sizes a FULL replacement hedge against the long book — but `approve_hedge`
+booked additively via `record_trade`, and the frontend booked one row at a time. Two propose→approve
+cycles → two full hedges → ~2× short notional ($29.5M sized → $58.9M booked). Fix: approval is now
+atomic and REPLACING — `clear_systematic_shorts` wipes the old systematic book, then the basket is
+booked once (deduped by ticker); the frontend sends the whole basket in a single call. Discretionary
+shorts are never touched (I-03/I-04).
+
+**Patterns:**
+- A per-name estimate must never depend on the composition of the set it's displayed in. If
+  shrinkage/normalization pulls from "the current book," the number silently changes when the book
+  changes. Anchor priors to a stable, exogenous reference (the market/universe), not the live book.
+- When an optimizer output is computed as a full REPLACEMENT (residual excludes the thing being
+  re-proposed), the apply step must replace too. Mixing "propose as replacement" with "apply as
+  increment" double-counts on every cycle. Make apply idempotent (clear-then-book, deduped).

@@ -20,14 +20,20 @@ from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio, ShortType
 from neptune.quant.beta import (
     RawBetaResult,
-    cross_sectional_prior_var,
     raw_beta,
     vasicek_shrinkage,
 )
 from neptune.quant.factors import factor_loadings
 from neptune.quant.optimizer import Candidate, compute_residual
 
-DEFAULT_PRIOR_VAR = 0.10  # fallback when the book is too small for a cross-section
+# The Vasicek shrinkage prior variance — a FIXED, market-level constant (cross-sectional beta
+# dispersion across equities, σ≈0.5 ⇒ var≈0.25). It is deliberately NOT estimated from the
+# current book: a book-derived prior makes every name's beta depend on what else you hold (a
+# 3-name book over-shrinks toward 1.0; a 38-name book barely shrinks), so the same long silently
+# re-prices the instant you trade — and the hedge, sized against the book at propose time, no
+# longer matches the book after booking. A fixed prior keeps betas stable and book/candidates in
+# one frame, so a correct hedge actually drives Net beta to ~0 and STAYS there.
+DEFAULT_PRIOR_VAR = 0.25
 
 # Minimum REAL return observations before a beta is considered trustworthy. raw_beta only
 # needs 3 to solve the regression, but a slope fit on a handful of days is noise — and after
@@ -52,8 +58,16 @@ def compute_metrics(
     portfolio: Portfolio,
     market_data: MarketData,
     default_prior_var: float = DEFAULT_PRIOR_VAR,
+    prior_var: float | None = None,
 ) -> dict[str, PositionMetrics]:
-    """Two-pass live metrics: raw betas first (to set the Vasicek prior), then shrink."""
+    """Two-pass live metrics: raw betas first (to set the Vasicek prior), then shrink.
+
+    ``prior_var`` is the Vasicek prior to shrink against. **Pass the STABLE universe-level prior
+    (``shortable_prior_var``) here** so a name's beta depends only on its own returns, never on
+    what else is in the book. If left None, the prior is estimated from the book's OWN cross-
+    section — which makes betas drift as positions are added/removed (a 3-name book over-shrinks
+    toward 1.0; a 38-name book barely shrinks), so the same long re-prices the instant you trade.
+    That book-dependent path is kept only for the synthetic/test sources that have no universe."""
     market = market_data.market_returns()
     factors = market_data.factor_returns()
 
@@ -76,11 +90,11 @@ def compute_metrics(
         else:
             raws[p.ticker] = r
 
-    # Only well-estimated names inform the cross-sectional prior.
-    raw_betas = [r.beta_raw for t, r in raws.items() if t not in insufficient]
-    prior_var = (
-        cross_sectional_prior_var(raw_betas) if len(raw_betas) >= 2 else default_prior_var
-    )
+    # The Vasicek prior: the FIXED market-level constant (default_prior_var) unless a caller
+    # passes one explicitly. Never the book's own cross-section — that would make a name's beta
+    # depend on book composition and re-price every long the moment you trade.
+    if prior_var is None:
+        prior_var = default_prior_var
 
     metrics: dict[str, PositionMetrics] = {}
     for p in portfolio.positions:
@@ -133,11 +147,7 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
     market = market_data.market_returns()
     factors = market_data.factor_returns()
     raws = {t: raw_beta(market_data.ticker_returns(t), market) for t in tickers}
-    prior_var = (
-        cross_sectional_prior_var([r.beta_raw for r in raws.values()])
-        if len(raws) >= 2
-        else DEFAULT_PRIOR_VAR
-    )
+    prior_var = DEFAULT_PRIOR_VAR  # fixed market-level prior — same frame as the book (compute_metrics)
     candidates: list[Candidate] = []
     for t in tickers:
         beta, _ = vasicek_shrinkage(raws[t].beta_raw, raws[t].var_ols, prior_var)
@@ -173,11 +183,7 @@ def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate
         raws[t] = r
     if not raws:
         return []
-    prior_var = (
-        cross_sectional_prior_var([r.beta_raw for r in raws.values()])
-        if len(raws) >= 2
-        else DEFAULT_PRIOR_VAR
-    )
+    prior_var = DEFAULT_PRIOR_VAR  # fixed market-level prior — same frame as the book (compute_metrics)
     candidates: list[Candidate] = []
     for t, raw in raws.items():
         beta, _ = vasicek_shrinkage(raw.beta_raw, raw.var_ols, prior_var)

@@ -64,6 +64,25 @@ def test_pipeline_recovers_true_beta_for_non_forward_positions():
     assert metrics["HDG4"].loadings["SMB"] < 0
 
 
+def test_position_beta_is_stable_under_book_composition():
+    """A name's beta must depend only on its own returns, never on what else is in the book.
+    Adding 35 other positions (longs and systematic shorts) must NOT move HDG3's beta — the
+    Vasicek prior is a fixed market-level constant, not the book's own cross-section."""
+    md = SyntheticMarketData()
+    solo = Portfolio(id="P", name="solo", positions=[Position("HDG3", Side.LONG, 1_000_000)])
+    others = [Position(t, Side.LONG, 1_000_000) for t in ["HDG1", "HDG2", "HDG4"]]
+    others += [
+        Position(t, Side.SHORT, 500_000, short_type=ShortType.SYSTEMATIC)
+        for t in ["AAA", "BBB", "CCC", "DDD"]
+    ]
+    crowded = Portfolio(id="P", name="crowded",
+                        positions=[Position("HDG3", Side.LONG, 1_000_000), *others])
+
+    b_solo = analytics.compute_metrics(solo, md)["HDG3"].beta
+    b_crowded = analytics.compute_metrics(crowded, md)["HDG3"].beta
+    assert b_solo == pytest.approx(b_crowded, abs=1e-12)  # identical — book-independent
+
+
 def test_forward_override_wins_but_loadings_still_computed():
     md = SyntheticMarketData()
     portfolio = Portfolio(

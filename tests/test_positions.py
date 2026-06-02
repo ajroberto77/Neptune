@@ -20,6 +20,36 @@ def test_create_and_list_positions(session):
     assert service.get_portfolio("P1").long_aum == 1_000_000
 
 
+def test_clear_systematic_shorts_replaces_not_stacks(session):
+    """Approving a hedge must REPLACE the systematic short book, not add to it. Booking the same
+    basket twice via clear→record yields ONE position per name (not doubled), and discretionary
+    shorts are never touched."""
+    from datetime import date
+
+    service = PositionService(session)
+    service.create_portfolio("PH", "Hedge Book")
+    service.add_position("PH", Position("LONGX", Side.LONG, 5_000_000))
+    service.add_position(
+        "PH", Position("DISCX", Side.SHORT, 500_000, short_type=ShortType.DISCRETIONARY)
+    )
+
+    def book_basket():
+        service.clear_systematic_shorts("PH")  # replace, not stack
+        service.record_trade("PH", "BSX", Side.SHORT, ShortType.SYSTEMATIC, 1000, 50.0, date.today())
+        service.record_trade("PH", "MSFT", Side.SHORT, ShortType.SYSTEMATIC, 200, 400.0, date.today())
+
+    book_basket()
+    book_basket()  # second propose→approve cycle must not double the systematic book
+
+    positions = {(p.ticker): p for p in service.list_positions("PH") if p.notional > 0}
+    sys = [p for p in positions.values() if p.short_type is ShortType.SYSTEMATIC]
+    assert {p.ticker for p in sys} == {"BSX", "MSFT"}  # exactly the basket, not 2× rows
+    bsx = positions["BSX"]
+    assert sum(l.quantity for l in bsx.lots) == 1000  # NOT 2000 — replaced, not aggregated
+    assert "DISCX" in positions  # discretionary short untouched (I-03/I-04)
+    assert positions["DISCX"].short_type is ShortType.DISCRETIONARY
+
+
 def test_fundamental_layer_round_trips(session):
     service = PositionService(session)
     service.create_portfolio("P2", "Thesis Book")

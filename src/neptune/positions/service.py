@@ -115,6 +115,22 @@ class PositionService:
             ),
         )
 
+    def clear_systematic_shorts(self, portfolio_id: str) -> int:
+        """Remove every SYSTEMATIC short in the book and return how many were removed.
+
+        The systematic short book is the optimizer's output, and a hedge proposal is computed
+        as a FULL replacement (``residual_metrics`` excludes systematic shorts, so each propose
+        re-sizes the whole hedge against the long book). Approving must therefore REPLACE the
+        existing systematic book, not stack a second hedge on top of it — otherwise repeated
+        propose→approve cycles double the short exposure. Discretionary shorts are never touched
+        (I-03/I-04); only the system-owned systematic names are cleared."""
+        removed = 0
+        for p in self.repo.list_positions(portfolio_id):
+            if p.side is Side.SHORT and p.short_type is ShortType.SYSTEMATIC and p.id is not None:
+                if self.repo.delete_position(p.id):
+                    removed += 1
+        return removed
+
     def book_trade(
         self,
         portfolio_id: str,

@@ -37,6 +37,7 @@ export function Trade({
   portfolios,
   defaultPortfolioId,
   onSubmit,
+  onSubmitHedge,
   onAfterBatch,
   busy,
   pendingHedge = null,
@@ -45,6 +46,10 @@ export function Trade({
   portfolios: { id: string; name: string }[];
   defaultPortfolioId: string;
   onSubmit: (portfolioId: string, t: TransactionInput, systematic?: boolean) => Promise<void>;
+  onSubmitHedge?: (
+    portfolioId: string,
+    shorts: { ticker: string; shares: number; price: number }[],
+  ) => Promise<void>;
   onAfterBatch: () => Promise<void>;
   busy: boolean;
   pendingHedge?: PendingHedge | null;
@@ -115,17 +120,47 @@ export function Trade({
   }
 
   // Submit every row; successes clear, invalid/failed rows stay flagged with the reason.
+  // Systematic hedge rows are booked as ONE atomic basket per target portfolio (a single
+  // replace-and-book call), so re-approving never stacks a second hedge. Manual rows book
+  // individually.
   async function submitAll() {
     setSubmitting(true);
     setMsg(null);
     const remaining: Row[] = [];
     let ok = 0;
+
+    const valid: Row[] = [];
     for (const r of rows) {
       const bad = validate(r);
-      if (bad) {
-        remaining.push({ ...r, error: bad });
-        continue;
+      if (bad) remaining.push({ ...r, error: bad });
+      else valid.push(r);
+    }
+
+    // Systematic rows → grouped by target portfolio → one atomic hedge-basket call each.
+    const sysGroups = new Map<string, Row[]>();
+    for (const r of valid.filter((r) => r.systematic)) {
+      const target = allocateAll || r.portfolioId;
+      (sysGroups.get(target) ?? sysGroups.set(target, []).get(target)!).push(r);
+    }
+    for (const [target, rs] of sysGroups) {
+      try {
+        if (!onSubmitHedge) throw new Error("hedge booking unavailable");
+        await onSubmitHedge(
+          target,
+          rs.map((r) => ({
+            ticker: r.ticker.trim().toUpperCase(),
+            shares: r.quantity,
+            price: r.price,
+          })),
+        );
+        ok += rs.length;
+      } catch (e) {
+        for (const r of rs) remaining.push({ ...r, error: String(e) });
       }
+    }
+
+    // Manual rows → individual Buy/Sell.
+    for (const r of valid.filter((r) => !r.systematic)) {
       const target = allocateAll || r.portfolioId;
       try {
         await onSubmit(target, {
@@ -135,12 +170,13 @@ export function Trade({
           price: r.price,
           fee_per_share: r.fees,
           trade_date: r.trade_date,
-        }, r.systematic);
+        }, false);
         ok += 1;
       } catch (e) {
         remaining.push({ ...r, error: String(e) });
       }
     }
+
     setRows(remaining.length ? remaining : [blankRow()]);
     await onAfterBatch();
     setSubmitting(false);

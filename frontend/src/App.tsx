@@ -156,10 +156,25 @@ export default function App() {
     setTrading(true);
     try {
       if (systematic) {
+        // A single systematic row still goes through the atomic replace-and-book endpoint.
         await approveHedge(targetId, [{ ticker: t.ticker, shares: t.quantity, price: t.price }]);
       } else {
         await recordTransaction(targetId, t);
       }
+    } finally {
+      setTrading(false);
+    }
+  }
+
+  // Book a whole approved hedge basket atomically: ONE call that REPLACES the systematic short
+  // book (clears the old hedge, books the new basket), so re-approving never stacks/doubles it.
+  async function submitHedgeBatch(
+    targetId: string,
+    shorts: { ticker: string; shares: number; price: number }[],
+  ) {
+    setTrading(true);
+    try {
+      await approveHedge(targetId, shorts);
     } finally {
       setTrading(false);
     }
@@ -299,6 +314,7 @@ export default function App() {
                 portfolios={portfolios}
                 defaultPortfolioId={portfolioId}
                 onSubmit={submitTrade}
+                onSubmitHedge={submitHedgeBatch}
                 onAfterBatch={refreshBook}
                 busy={trading}
                 pendingHedge={pendingHedge}
