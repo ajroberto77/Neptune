@@ -22,7 +22,7 @@ function pos(over: Partial<PositionRow>): PositionRow {
 }
 
 describe("Portfolio", () => {
-  it("groups into Longs/Shorts and tags shorts systematic vs discretionary (I-03)", () => {
+  it("groups shorts into Systematic and Discretionary subgroups with subtotals (I-03)", () => {
     const positions = [
       pos({ ticker: "AAA", side: "LONG" }),
       pos({ ticker: "SYS1", side: "SHORT", short_type: "SYSTEMATIC" }),
@@ -33,9 +33,14 @@ describe("Portfolio", () => {
     expect(screen.getByText("Shorts")).toBeInTheDocument();
     expect(screen.getByText("SYS1")).toBeInTheDocument();
     expect(screen.getByText("DSC1")).toBeInTheDocument();
-    // The short-type tag distinguishes the two shorts (never conflated).
-    expect(screen.getByText("systematic")).toBeInTheDocument();
-    expect(screen.getByText("discretionary")).toBeInTheDocument();
+    // The two books are split into labelled subgroups (never conflated) — no per-row tags.
+    expect(screen.getByText(/Systematic Shorts/)).toBeInTheDocument();
+    expect(screen.getByText(/Discretionary Shorts/)).toBeInTheDocument();
+    // With both books present, each gets a subtotal alongside the grand Total Short.
+    expect(screen.getByText("Total Systematic")).toBeInTheDocument();
+    expect(screen.getByText("Total Discretionary")).toBeInTheDocument();
+    expect(screen.getByText("Total Short")).toBeInTheDocument();
+    expect(screen.queryByText("systematic")).not.toBeInTheDocument(); // old tag gone
   });
 
   it("renders signed P&L for a position", () => {

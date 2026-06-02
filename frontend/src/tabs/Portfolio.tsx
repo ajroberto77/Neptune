@@ -72,15 +72,23 @@ function TotalsRow({
   betaAdj: ba,
   t,
   beta,
+  subtle = false,
 }: {
   label: string;
   notional: number;
   betaAdj: number;
   t: Totals;
   beta: number;
+  subtle?: boolean; // a subgroup subtotal (lighter) vs a section/grand total (bold rule)
 }) {
   return (
-    <tr className="border-t-2 border-ocean-border font-medium">
+    <tr
+      className={
+        subtle
+          ? "border-t border-ocean-border/60 font-medium text-ocean-muted"
+          : "border-t-2 border-ocean-border font-medium"
+      }
+    >
       <td className="py-2 text-xs uppercase text-ocean-muted">{label}</td>
       <td></td>
       <td></td>
@@ -95,10 +103,55 @@ function TotalsRow({
   );
 }
 
-/** Portfolio view: a Net Position summary on top, then Longs and Shorts — all three sharing one
- *  column layout so they read top-to-bottom. Each row and total shows beta-adjusted notional;
- *  the Net beta-adj is ~0 when the book is hedged to zero net beta. Systematic vs discretionary
- *  shorts stay tagged and distinct (I-03). */
+// A non-standard beta source flagged inline; a normal pipeline beta shows nothing (no clutter).
+function betaFlag(p: PositionRow) {
+  if (p.beta_method === "forward_override")
+    return <span className="ml-2 text-[10px] uppercase text-ocean-muted/60">ovr</span>;
+  if (p.beta_method === "insufficient_data")
+    return <span className="ml-2 text-[10px] uppercase text-status-watch">thin</span>;
+  return null;
+}
+
+/** One position row, shared by Longs and both Shorts subgroups so every table lines up. */
+function PositionTr({ p }: { p: PositionRow }) {
+  return (
+    <tr className="border-t border-ocean-border/60">
+      <td className="truncate py-2 font-mono">
+        {p.ticker}
+        {betaFlag(p)}
+      </td>
+      <td className="py-2 text-right font-mono">{p.price == null ? "—" : price(p.price)}</td>
+      <td className="py-2 text-right font-mono">
+        {p.quantity ? p.quantity.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"}
+      </td>
+      <td className="py-2 text-right font-mono">{money(p.notional)}</td>
+      <td className="py-2 text-right font-mono">{signedMoney(betaAdj(p))}</td>
+      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.day)}`}>{signedMoney(p.pnl.day)}</td>
+      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.unrealized)}`}>{signedMoney(p.pnl.unrealized)}</td>
+      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.realized)}`}>{signedMoney(p.pnl.realized)}</td>
+      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.total)}`}>{signedMoney(p.pnl.total)}</td>
+      <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>
+    </tr>
+  );
+}
+
+/** A subgroup header row (e.g. "Systematic Shorts") spanning the shared columns. */
+function SubHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <tr>
+      <td colSpan={10} className="pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-ocean-muted">
+        {label} <span className="text-ocean-muted/60">({count})</span>
+      </td>
+    </tr>
+  );
+}
+
+const wtdBetaOf = (t: Totals) => (t.notional ? t.betaNotional / t.notional : NaN);
+
+/** Portfolio view: a Net Position summary on top, then Longs and Shorts — all sharing one column
+ *  layout so they read top-to-bottom. The Shorts table is split into Systematic and (if any)
+ *  Discretionary subgroups, each with its own subtotal, then the grand Total Short — so the two
+ *  books stay distinct (I-03) without per-row tags. Net beta-adj is ~0 when hedged to zero beta. */
 export function Portfolio({
   positions,
   refreshMins,
@@ -119,10 +172,14 @@ export function Portfolio({
   const net = sumTotals([...longs, ...shorts]);
   const netBeta = net.signedNotional ? net.betaAdj / net.signedNotional : NaN;
 
-  const sections = [
-    { title: "Longs", total: "Total Long", rows: longs },
-    { title: "Shorts", total: "Total Short", rows: shorts },
-  ];
+  // Shorts split into the systematic hedge book and the discretionary book (I-03), each subtotalled.
+  const sysShorts = shorts.filter((p) => p.short_type === "SYSTEMATIC");
+  const discShorts = shorts.filter((p) => p.short_type !== "SYSTEMATIC");
+  const longTot = sumTotals(longs);
+  const shortTot = sumTotals(shorts);
+  const sysTot = sumTotals(sysShorts);
+  const discTot = sumTotals(discShorts);
+  const bothShortBooks = sysShorts.length > 0 && discShorts.length > 0;
 
   return (
     <div className="space-y-6">
@@ -162,68 +219,74 @@ export function Portfolio({
         </table>
       </div>
 
-      {sections.map(({ title, total, rows }) => {
-        const t = sumTotals(rows);
-        const wtdBeta = t.notional ? t.betaNotional / t.notional : NaN;
-        return (
-          <div key={title} className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-            <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-              {title} <span className="text-ocean-muted/60">({rows.length})</span>
-            </h3>
-            {rows.length === 0 ? (
-              <p className="text-sm text-ocean-muted">No positions.</p>
-            ) : (
-              <table className="w-full table-fixed text-sm">
-                <Cols />
-                <Head />
-                <tbody>
-                  {rows.map((p) => (
-                    <tr key={p.ticker} className="border-t border-ocean-border/60">
-                      <td className="truncate py-2 font-mono">
-                        {p.ticker}
-                        {p.side === "SHORT" && (
-                          <span
-                            className={`ml-2 rounded px-1.5 py-0.5 text-[10px] uppercase ${
-                              p.short_type === "SYSTEMATIC"
-                                ? "bg-ocean-accent/20 text-ocean-accent"
-                                : "bg-ocean-border/60 text-ocean-muted"
-                            }`}
-                          >
-                            {p.short_type === "SYSTEMATIC" ? "systematic" : "discretionary"}
-                          </span>
-                        )}
-                        <span className="ml-2 text-xs text-ocean-muted/60">
-                          {p.beta_method === "forward_override"
-                            ? "ovr"
-                            : p.beta_method === "insufficient_data"
-                              ? "thin"
-                              : "live"}
-                        </span>
-                      </td>
-                      <td className="py-2 text-right font-mono">
-                        {p.price == null ? "—" : price(p.price)}
-                      </td>
-                      <td className="py-2 text-right font-mono">
-                        {p.quantity ? p.quantity.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"}
-                      </td>
-                      <td className="py-2 text-right font-mono">{money(p.notional)}</td>
-                      <td className="py-2 text-right font-mono">{signedMoney(betaAdj(p))}</td>
-                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.day)}`}>{signedMoney(p.pnl.day)}</td>
-                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.unrealized)}`}>{signedMoney(p.pnl.unrealized)}</td>
-                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.realized)}`}>{signedMoney(p.pnl.realized)}</td>
-                      <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.total)}`}>{signedMoney(p.pnl.total)}</td>
-                      <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>
-                    </tr>
+      {/* Longs */}
+      <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+        <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
+          Longs <span className="text-ocean-muted/60">({longs.length})</span>
+        </h3>
+        {longs.length === 0 ? (
+          <p className="text-sm text-ocean-muted">No positions.</p>
+        ) : (
+          <table className="w-full table-fixed text-sm">
+            <Cols />
+            <Head />
+            <tbody>
+              {longs.map((p) => (
+                <PositionTr key={p.ticker} p={p} />
+              ))}
+            </tbody>
+            <tfoot>
+              <TotalsRow label="Total Long" notional={longTot.notional} betaAdj={longTot.betaAdj}
+                         t={longTot} beta={wtdBetaOf(longTot)} />
+            </tfoot>
+          </table>
+        )}
+      </div>
+
+      {/* Shorts — Systematic and (if any) Discretionary subgroups, then the grand Total Short */}
+      <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+        <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
+          Shorts <span className="text-ocean-muted/60">({shorts.length})</span>
+        </h3>
+        {shorts.length === 0 ? (
+          <p className="text-sm text-ocean-muted">No positions.</p>
+        ) : (
+          <table className="w-full table-fixed text-sm">
+            <Cols />
+            <Head />
+            <tbody>
+              {sysShorts.length > 0 && (
+                <>
+                  <SubHeader label="Systematic Shorts" count={sysShorts.length} />
+                  {sysShorts.map((p) => (
+                    <PositionTr key={p.ticker} p={p} />
                   ))}
-                </tbody>
-                <tfoot>
-                  <TotalsRow label={total} notional={t.notional} betaAdj={t.betaAdj} t={t} beta={wtdBeta} />
-                </tfoot>
-              </table>
-            )}
-          </div>
-        );
-      })}
+                  {bothShortBooks && (
+                    <TotalsRow subtle label="Total Systematic" notional={sysTot.notional}
+                               betaAdj={sysTot.betaAdj} t={sysTot} beta={wtdBetaOf(sysTot)} />
+                  )}
+                </>
+              )}
+              {discShorts.length > 0 && (
+                <>
+                  <SubHeader label="Discretionary Shorts" count={discShorts.length} />
+                  {discShorts.map((p) => (
+                    <PositionTr key={p.ticker} p={p} />
+                  ))}
+                  {bothShortBooks && (
+                    <TotalsRow subtle label="Total Discretionary" notional={discTot.notional}
+                               betaAdj={discTot.betaAdj} t={discTot} beta={wtdBetaOf(discTot)} />
+                  )}
+                </>
+              )}
+            </tbody>
+            <tfoot>
+              <TotalsRow label="Total Short" notional={shortTot.notional} betaAdj={shortTot.betaAdj}
+                         t={shortTot} beta={wtdBetaOf(shortTot)} />
+            </tfoot>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
