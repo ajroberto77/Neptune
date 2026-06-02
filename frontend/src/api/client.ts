@@ -1,4 +1,5 @@
 import type {
+  FactorMonitor,
   Frontier,
   HedgeProposal,
   PositionRow,
@@ -21,6 +22,10 @@ export function fetchRisk(portfolioId: string): Promise<RiskSummary> {
 
 export function fetchPositions(portfolioId: string): Promise<PositionRow[]> {
   return getJSON<PositionRow[]>(`/portfolios/${portfolioId}/positions`);
+}
+
+export function fetchFactorMonitor(portfolioId: string): Promise<FactorMonitor> {
+  return getJSON<FactorMonitor>(`/portfolios/${portfolioId}/factor-monitor`);
 }
 
 export function proposeHedge(

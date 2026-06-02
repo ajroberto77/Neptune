@@ -26,6 +26,10 @@ import numpy as np
 
 from neptune.quant.returns import align
 
+# The single-series price-only factors Neptune builds (sector factors are dynamic SECTOR_* names).
+# Monitored, not neutralized (PM decision) — kept out of the optimizer's factor set.
+NEPTUNE_FACTORS = ("IVOL", "BAB", "AMIHUD")
+
 
 def _leg_indices(scores_tm1: np.ndarray, frac: float) -> tuple[np.ndarray, np.ndarray]:
     """Among names with a finite score at ``t-1``, the index sets of the bottom and top

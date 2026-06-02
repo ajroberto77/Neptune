@@ -254,10 +254,15 @@ first vertical slice · 🔵 LATER = deferred.
       Amihud, and per-sector SECTOR_* daily return series (`quant/factor_build.py`, pure; lagged
       baskets, BAB beta-floor) persisted to `factor_returns` (source `neptune`) + a
       `factor_definitions` registry row (`risk/factor_build.py`). Quant-reviewed.
-- [ ] 🔵 **Stage 2 (wiring).** Flow the `neptune` family into the materialized loadings sweep
-      under an expanded `model` + optimizer neutralization (touches the widely-imported `FACTORS`
-      set), then surface in the API/UI. Decide: neutralize-by-default vs opt-in; how SECTOR_*
-      relates to the existing per-sector concentration cap (factor vs constraint).
+- [x] 🟢 **Stage 2 (monitor) — PM decision: REPORT-ONLY, not neutralized.** IVOL/BAB/AMIHUD are
+      monitored (net notional-weighted exposure) and per-sector net weight reported; the optimizer
+      is UNTOUCHED and the sector concentration cap remains the sector control. `monitor_report`
+      (`risk/factor_build.py`) + `GET /portfolios/{id}/factor-monitor` + a Factor Monitor panel on
+      the Risk tab. Neptune factors are deliberately kept OUT of `factor_returns()`/`FACTORS` so
+      they never enter the optimizer's loadings regression. Factors rebuilt on price ingest.
+- [ ] 🔵 If the PM later wants neutralization: promote selected monitor factors into the optimizer
+      (expanded `model` tag + hard factor limit). Deferred by decision; the construction + report
+      are already in place.
 - [ ] 🔵 **Fundamentals feed (Mercury; ingest interim).** REQUIRED for:
       * **value-weighting** the sector factor (needs market cap = price × **shares outstanding**;
         until then the sector factor is **equal-weighted** — a documented proxy);

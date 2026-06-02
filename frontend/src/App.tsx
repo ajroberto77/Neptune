@@ -267,7 +267,7 @@ export default function App() {
           <p className="text-ocean-muted">Loading…</p>
         ) : (
           <>
-            {tab === "Risk" && <RiskDashboard summary={summary} />}
+            {tab === "Risk" && <RiskDashboard summary={summary} portfolioId={portfolioId} />}
             {tab === "Hedge" && (
               <Hedge
                 proposal={proposal}

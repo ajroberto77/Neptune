@@ -268,6 +268,15 @@ export interface HedgeCalibration {
   grid: CalibrationRow[];
 }
 
+export interface FactorMonitor {
+  portfolio_id: string;
+  available: boolean;
+  long_aum: number;
+  // Report-only net exposures (the optimizer does NOT neutralize these).
+  factors: Record<string, number>;   // IVOL / BAB / AMIHUD -> net loading
+  sectors: Record<string, number>;   // sector -> net signed-notional weight
+}
+
 export interface BetaDiagnostics {
   benchmark: { ticker: string; bars: number; first_bar: string; last_bar: string; obs_used: number };
   min_obs: number;

@@ -15,8 +15,10 @@ import numpy as np
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from neptune.data.db_market import DbMarketData
+from neptune.data.db_market import DbMarketData, TickerNotFound
+from neptune.domain.models import Portfolio
 from neptune.quant.factor_build import (
+    NEPTUNE_FACTORS,
     long_short_returns,
     rolling_amihud,
     rolling_idio_vol,
@@ -144,3 +146,62 @@ def build_neptune_factors(
             )
     session.commit()
     return written
+
+
+def _exposure_loadings(
+    asset_full: np.ndarray, mkt: np.ndarray, singles: dict[str, np.ndarray], window: int
+) -> dict[str, float] | None:
+    """Date-aligned OLS of one name's returns on [1, MKT, *singles] over the trailing ``window``
+    dates where every series is finite; MKT is a control, so the returned loadings are the marginal
+    exposures to the monitoring factors. None if too few overlapping observations to identify."""
+    cols = [np.asarray(mkt, float), *[np.asarray(singles[f], float) for f in singles]]
+    stacked = np.vstack([np.asarray(asset_full, float), *cols])
+    idx = np.nonzero(np.all(np.isfinite(stacked), axis=0))[0]
+    if idx.size < max(20, len(singles) + 2):
+        return None
+    idx = idx[-window:]
+    X = np.column_stack([np.ones(idx.size), *[c[idx] for c in cols]])
+    coef, *_ = np.linalg.lstsq(X, asset_full[idx], rcond=None)
+    return dict(zip(singles.keys(), coef[2:].tolist()))  # drop intercept + MKT control
+
+
+def monitor_report(
+    portfolio: Portfolio, market_data, window: int = DEFAULT_WINDOW
+) -> dict:
+    """REPORT-ONLY net exposures (PM decision: monitored, never neutralized by the optimizer):
+    the book's notional-weighted loading on each Neptune factor (IVOL/BAB/AMIHUD) and its net
+    signed-notional weight per sector — both normalized by long AUM. ``available`` is False when
+    the factor panel isn't built or the source can't supply the series (synthetic/fallback)."""
+    long_aum = portfolio.long_aum
+    out: dict = {"available": False, "long_aum": long_aum, "factors": {}, "sectors": {}}
+    if long_aum <= 0:
+        return out
+
+    nep = (market_data.neptune_factor_returns()
+           if hasattr(market_data, "neptune_factor_returns") else {})
+    singles = {f: nep[f] for f in NEPTUNE_FACTORS if f in nep}
+    if singles and hasattr(market_data, "aligned_returns"):
+        mkt = market_data.market_returns()
+        exp = {f: 0.0 for f in singles}
+        for p in portfolio.positions:
+            try:
+                asset = market_data.aligned_returns(p.ticker)
+            except TickerNotFound:
+                continue
+            load = _exposure_loadings(asset, mkt, singles, window)
+            if load is None:
+                continue
+            for f in singles:
+                exp[f] += p.signed_notional * load[f]
+        out["factors"] = {f: exp[f] / long_aum for f in singles}
+        out["available"] = True
+
+    sec_notional: dict[str, float] = {}
+    for p in portfolio.positions:
+        sec = market_data.sector(p.ticker) if hasattr(market_data, "sector") else None
+        if sec:
+            sec_notional[sec] = sec_notional.get(sec, 0.0) + p.signed_notional
+    if sec_notional:
+        out["sectors"] = {s: v / long_aum for s, v in sorted(sec_notional.items())}
+        out["available"] = True
+    return out

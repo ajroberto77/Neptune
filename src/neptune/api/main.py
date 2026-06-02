@@ -840,6 +840,26 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     }
 
 
+@app.get("/portfolios/{portfolio_id}/factor-monitor")
+def factor_monitor(portfolio_id: str, session: Session = Depends(get_session)):
+    """REPORT-ONLY exposure to Neptune's price-only factors (IVOL/BAB/AMIHUD) and per-sector net
+    weight. The PM monitors these; the optimizer does not neutralize them (factors) and the sector
+    cap remains the sector control (sectors)."""
+    from neptune.risk.factor_build import monitor_report
+
+    service = PositionService(session)
+    portfolio = _resolve_portfolio(service, portfolio_id)
+    if portfolio_id == CONSOLIDATED_ID:
+        portfolio = Portfolio(
+            id=portfolio_id, name="Consolidated",
+            positions=[p for b in service.list_portfolios()
+                       if b.mandate is Mandate.LONG_SHORT for p in b.positions],
+        )
+    with market_data_for(session, portfolio) as md:
+        report = monitor_report(portfolio, md)
+    return {"portfolio_id": portfolio_id, **report}
+
+
 @app.get("/portfolios/{portfolio_id}/beta-history")
 def portfolio_beta_history(
     portfolio_id: str,
@@ -1361,6 +1381,11 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
                 beta_store.rebuild_loadings(
                     sec_session, benchmark=settings.benchmark, tickers=ingested
                 )
+                # Neptune's price-only factors are CROSS-SECTIONAL, so rebuild over the whole
+                # universe (not just the freshly ingested names); after betas so BAB has them.
+                from neptune.risk.factor_build import build_neptune_factors
+
+                build_neptune_factors(sec_session, benchmark=settings.benchmark)
         except Exception:  # noqa: BLE001 — never fail an ingest because a sweep hiccuped
             betas_written = 0
     return {

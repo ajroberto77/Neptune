@@ -169,6 +169,33 @@ class DbMarketData:
             factors.update(style)
         return factors
 
+    def neptune_factor_returns(self) -> dict[str, np.ndarray]:
+        """The price-only ``neptune``-sourced single factors (IVOL/BAB/AMIHUD) aligned to the
+        market return dates, NaN on dates with no stored value (these series only start once the
+        factor's baskets first form). Kept SEPARATE from ``factor_returns()`` on purpose: the
+        PM monitors these but the optimizer does NOT neutralize them, so they must never enter
+        the regression that produces the optimizer's loadings. Empty until built."""
+        from neptune.quant.factor_build import NEPTUNE_FACTORS
+
+        if len(self._dates) < 2:
+            return {}
+        target = self._dates[1:]
+        lo, hi = target[0], target[-1]
+        rows = self.session.execute(
+            select(FactorReturn.factor, FactorReturn.ts, FactorReturn.ret).where(
+                FactorReturn.factor.in_(NEPTUNE_FACTORS),
+                FactorReturn.source == "neptune",
+                FactorReturn.ts >= lo, FactorReturn.ts <= hi,
+            )
+        ).all()
+        by_factor: dict[str, dict[date, float]] = {}
+        for factor, ts, ret in rows:
+            by_factor.setdefault(factor, {})[ts] = ret
+        return {
+            f: np.array([by_factor[f].get(d, np.nan) for d in target], dtype=float)
+            for f in NEPTUNE_FACTORS if by_factor.get(f)
+        }
+
     def _style_factors(self) -> dict[str, np.ndarray] | None:
         """Load SMB/HML/MOM aligned to the market return dates, or None if the panel is
         not fully present in the window (then the caller keeps MKT-only)."""

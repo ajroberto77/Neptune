@@ -88,6 +88,16 @@ def test_consolidated_uses_firm_beta_tolerance(client):
     assert book["beta_tol"] == 0.05
 
 
+def test_factor_monitor_endpoint_shape(client):
+    # Report-only monitor: with the synthetic fallback (no built panel) it's gracefully
+    # unavailable, but the endpoint always returns the stable shape.
+    r = client.get(f"/portfolios/{PID}/factor-monitor")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["portfolio_id"] == PID
+    assert set(body) >= {"available", "factors", "sectors", "long_aum"}
+
+
 def test_list_and_create_portfolios(client):
     # The seeded golden book is listed.
     ids = {p["id"] for p in client.get("/portfolios").json()}
