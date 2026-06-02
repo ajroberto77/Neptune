@@ -22,9 +22,9 @@ from dataclasses import dataclass, field
 import cvxpy as cp
 import numpy as np
 
-from neptune.quant.factors import FACTORS
+from neptune.quant.factors import FACTORS, STYLE_FACTORS
 
-HEDGE_FACTORS = ("SMB", "HML", "MOM")  # market beta is constrained separately
+HEDGE_FACTORS = STYLE_FACTORS  # the style factors; market beta is constrained separately
 ZERO_WEIGHT_TOL = 1e-6
 # L1 penalty on gross short (sum of weights). Without it the tracking-error objective is
 # degenerate once beta/factors are neutralized — any allocation in the null space is equally

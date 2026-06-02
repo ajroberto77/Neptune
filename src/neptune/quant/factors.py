@@ -1,10 +1,14 @@
 """Factor decomposition.
 
 Per-security factor loadings via OLS regression of asset excess returns on the factor
-return series, then notional-weighted aggregation to a portfolio exposure. The slice
-uses the four statistical factors Market (MKT), Size (SMB), Value (HML), Momentum
-(MOM); the Sector factor in the roadmap is a concentration constraint, handled
-separately (deferred).
+return series, then notional-weighted aggregation to a portfolio exposure.
+
+The model is **Fama-French 5 + Momentum**: Market (MKT) plus the style factors Size (SMB),
+Value (HML), Profitability (RMW), Investment (CMA), and Momentum (MOM). MKT comes from the
+SPY benchmark; the style factors come from the Ken French panel. ``STYLE_FACTORS`` is the
+single source of truth — the optimizer, stress engine, db market data, and risk summary all
+import it, so adding a factor here flows everywhere. (The Sector factor in the roadmap is a
+concentration constraint, handled separately.)
 """
 from __future__ import annotations
 
@@ -14,7 +18,10 @@ import numpy as np
 
 from neptune.quant.returns import align
 
-FACTORS = ("MKT", "SMB", "HML", "MOM")
+MARKET_FACTOR = "MKT"
+# The style factors carried alongside the market (Fama-French 5 + Momentum).
+STYLE_FACTORS = ("SMB", "HML", "RMW", "CMA", "MOM")
+FACTORS = (MARKET_FACTOR, *STYLE_FACTORS)
 
 
 @dataclass

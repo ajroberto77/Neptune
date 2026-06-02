@@ -13,7 +13,7 @@ def test_market_data_is_deterministic_and_shaped():
     b = SyntheticMarketData(n=300, seed=1)
     assert a.market_returns().shape == (300,)
     assert (a.ticker_returns("AAA") == b.ticker_returns("AAA")).all()
-    assert set(a.factor_returns().keys()) == {"MKT", "SMB", "HML", "MOM"}
+    assert set(a.factor_returns().keys()) == {"MKT", "SMB", "HML", "RMW", "CMA", "MOM"}
 
 
 class _ThinMarketData:

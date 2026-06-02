@@ -134,13 +134,15 @@ def test_factor_returns_full_panel_aligned(securities_session):
     prov = _panel(ds, {
         "SMB": [0.0, 0.001, 0.002, 0.003],
         "HML": [0.0, -0.001, 0.0, 0.002],
+        "RMW": [0.0, 0.002, -0.001, 0.0],
+        "CMA": [0.0, -0.002, 0.001, 0.001],
         "MOM": [0.0, 0.004, -0.002, 0.001],
     })
     ingest_factors(securities_session, prov, ds[0], ds[-1])
 
     md = DbMarketData(securities_session, benchmark="SPY")
     factors = md.factor_returns()
-    assert set(factors) == set(FACTORS)  # MKT + SMB + HML + MOM
+    assert set(factors) == set(FACTORS)  # MKT + FF5 + Momentum
     # Each factor series is the same length as the market series (the regression contract).
     for name in FACTORS:
         assert len(factors[name]) == len(md.market_returns())
@@ -166,8 +168,10 @@ def test_engine_recovers_factor_loading_from_stored_panel(securities_session):
     rm = rng.normal(0.0, 0.01, n)
     smb = rng.normal(0.0, 0.01, n)
     hml = rng.normal(0.0, 0.01, n)
+    rmw = rng.normal(0.0, 0.01, n)
+    cma = rng.normal(0.0, 0.01, n)
     mom = rng.normal(0.0, 0.01, n)
-    stock = rm + 0.8 * smb  # loads 0.8 on SMB, 1.0 on market, 0 on HML/MOM
+    stock = rm + 0.8 * smb  # loads 0.8 on SMB, 1.0 on market, 0 on the rest
 
     def _compound(returns):
         p = [100.0]
@@ -177,8 +181,11 @@ def test_engine_recovers_factor_loading_from_stored_panel(securities_session):
 
     _seed_prices(securities_session, "SPY", 1, ds, _compound(rm))
     _seed_prices(securities_session, "AAA", 2, ds, _compound(stock))
-    # Factor panel dated on ds[1:] (the move-to days).
-    prov = _panel(ds[1:], {"SMB": list(smb), "HML": list(hml), "MOM": list(mom)})
+    # Factor panel dated on ds[1:] (the move-to days) — the full FF5 + Momentum set.
+    prov = _panel(ds[1:], {
+        "SMB": list(smb), "HML": list(hml), "RMW": list(rmw), "CMA": list(cma),
+        "MOM": list(mom),
+    })
     ingest_factors(securities_session, prov, ds[1], ds[-1])
 
     md = DbMarketData(securities_session, benchmark="SPY")

@@ -20,9 +20,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-# The style factors carried alongside the market in a scenario / covariance.
-STYLE_FACTORS = ("SMB", "HML", "MOM")
-RISK_FACTORS = ("MKT", *STYLE_FACTORS)
+# The style factors carried alongside the market in a scenario / covariance — re-exported
+# from the canonical factor module so the whole engine shares one factor set.
+from neptune.quant.factors import FACTORS as RISK_FACTORS, STYLE_FACTORS
 
 
 @dataclass(frozen=True)

@@ -65,8 +65,8 @@ def test_seeded_risk_summary_shows_net_beta(client):
     body = r.json()
     assert body["net_beta"] == pytest.approx(0.94, abs=1e-6)
     assert body["beta_neutral"] is False
-    # Market is the beta gauge; the factor table shows the style factors.
-    assert {f["factor"] for f in body["factors"]} == {"SMB", "HML", "MOM"}
+    # Market is the beta gauge; the factor table shows the style factors (FF5 + Momentum).
+    assert {f["factor"] for f in body["factors"]} == {"SMB", "HML", "RMW", "CMA", "MOM"}
     # Factor exposures are now real (computed from the regression), not zero placeholders.
     assert any(abs(f["exposure"]) > 1e-6 for f in body["factors"])
 

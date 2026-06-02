@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from neptune.quant.factors import FACTORS
+from neptune.quant.factors import FACTORS, STYLE_FACTORS
 
 MARKET_VOL = 0.01
 # Low idiosyncratic noise so the EWMA(lambda=0.94) estimator — which has a small
@@ -85,7 +85,7 @@ class SyntheticMarketData:
         # Market (MKT) and the orthogonal style factors, all independent.
         self._market = rng.normal(0.0, MARKET_VOL, n)
         self._factors: dict[str, np.ndarray] = {"MKT": self._market}
-        for f in ("SMB", "HML", "MOM"):
+        for f in STYLE_FACTORS:
             self._factors[f] = rng.normal(0.0, 0.008, n)
 
     def market_returns(self) -> np.ndarray:
@@ -100,7 +100,7 @@ class SyntheticMarketData:
         # Unknown tickers: deterministic, near-market, lightly loaded.
         rng = np.random.default_rng(_seed_for(ticker))
         beta = float(np.clip(rng.normal(1.0, 0.25), 0.4, 1.8))
-        loadings = {f: round(float(rng.normal(0.0, 0.06)), 4) for f in ("SMB", "HML", "MOM")}
+        loadings = {f: round(float(rng.normal(0.0, 0.06)), 4) for f in STYLE_FACTORS}
         sector = SECTORS[_seed_for(ticker) % len(SECTORS)]
         return TickerSpec(beta, loadings, sector)
 

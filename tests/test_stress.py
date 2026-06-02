@@ -93,7 +93,7 @@ def test_var_single_factor_matches_closed_form():
     # One position, market-only, diagonal covariance with daily vol 2%.
     book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
     daily_var = 0.02 ** 2
-    cov = np.diag([daily_var, 0.0, 0.0, 0.0])
+    cov = np.diag([daily_var] + [0.0] * (len(RISK_FACTORS) - 1))
     res = parametric_var(book, cov, confidence=0.95, horizon_days=1)
     # sigma = |1,000,000| * 0.02 = 20,000 ; VaR = 1.645 * 20,000.
     assert res.volatility == pytest.approx(20_000, rel=1e-9)
@@ -107,7 +107,7 @@ def test_var_single_factor_matches_closed_form():
 
 def test_var_scales_with_sqrt_horizon():
     book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
-    cov = np.diag([0.02 ** 2, 0.0, 0.0, 0.0])
+    cov = np.diag([0.02 ** 2] + [0.0] * (len(RISK_FACTORS) - 1))
     one = parametric_var(book, cov, horizon_days=1)
     ten = parametric_var(book, cov, horizon_days=10)
     assert ten.var == pytest.approx(one.var * math.sqrt(10), rel=1e-9)
@@ -116,16 +116,16 @@ def test_var_scales_with_sqrt_horizon():
 def test_hedged_book_has_lower_var_than_long_alone():
     long_only = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
     hedged = long_only + [StressExposure("S", SYS, -900_000, beta=1.0)]
-    cov = np.diag([0.02 ** 2, 0.0, 0.0, 0.0])
+    cov = np.diag([0.02 ** 2] + [0.0] * (len(RISK_FACTORS) - 1))
     assert parametric_var(hedged, cov).var < parametric_var(long_only, cov).var
 
 
 def test_var_rejects_bad_confidence_and_shape():
     book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
     with pytest.raises(ValueError):
-        parametric_var(book, np.eye(4), confidence=1.5)
+        parametric_var(book, np.eye(len(RISK_FACTORS)), confidence=1.5)
     with pytest.raises(ValueError):
-        parametric_var(book, np.eye(3))  # wrong size for 4 factors
+        parametric_var(book, np.eye(3))  # wrong size for the factor set
 
 
 def test_norm_ppf_known_quantiles():
@@ -165,7 +165,7 @@ def test_historical_var_short_hedge_lowers_risk():
 
 def test_monte_carlo_var_is_deterministic_and_close_to_parametric():
     book = [StressExposure("L", LONG, 1_000_000, beta=1.0)]
-    cov = np.diag([0.02 ** 2, 0.0, 0.0, 0.0])
+    cov = np.diag([0.02 ** 2] + [0.0] * (len(RISK_FACTORS) - 1))
     a = monte_carlo_var(book, cov, confidence=0.95, n_draws=100_000, seed=42)
     b = monte_carlo_var(book, cov, confidence=0.95, n_draws=100_000, seed=42)
     assert a.var == b.var  # deterministic given seed

@@ -28,6 +28,8 @@ KEN_FRENCH_TO_CANONICAL = {
     "Mkt-RF": "MKT_RF",
     "SMB": "SMB",
     "HML": "HML",
+    "RMW": "RMW",  # profitability (Fama-French 5)
+    "CMA": "CMA",  # investment (Fama-French 5)
     "RF": "RF",
     "Mom": "MOM",
     "Mom   ": "MOM",  # the momentum file's column often carries trailing whitespace
@@ -67,9 +69,10 @@ class KenFrenchProvider:
     source = "ken_french"
 
     BASE_URL = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp"
-    # The two daily CSV zips: the 3 research factors (+ Mkt-RF/RF) and the momentum factor.
+    # The two daily CSV zips: the FIVE research factors (Mkt-RF, SMB, HML, RMW, CMA, + RF) and
+    # the momentum factor. Together they give the Fama-French 5 + Momentum model.
     FACTOR_ZIPS = (
-        "F-F_Research_Data_Factors_daily_CSV.zip",
+        "F-F_Research_Data_5_Factors_2x3_daily_CSV.zip",
         "F-F_Momentum_Factor_daily_CSV.zip",
     )
 

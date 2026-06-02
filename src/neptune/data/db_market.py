@@ -29,9 +29,9 @@ from sqlalchemy.orm import Session
 from neptune.securities.models import FactorReturn, Price, Security
 
 # The style factors Neptune sources from Ken French (MKT comes from the SPY benchmark).
-# All three must be present for the panel to be considered loaded — half a factor model
-# is worse than none, so otherwise we fall back to MKT-only.
-_STYLE_FACTORS = ("SMB", "HML", "MOM")
+# ALL must be present for the panel to be considered loaded — a partial factor model is worse
+# than none, so otherwise we fall back to MKT-only.
+from neptune.quant.factors import STYLE_FACTORS as _STYLE_FACTORS  # FF5 + Momentum
 
 
 class TickerNotFound(LookupError):

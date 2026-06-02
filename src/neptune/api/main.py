@@ -38,6 +38,7 @@ from neptune.db.runtime import securities_session
 from neptune.domain.models import BookType, LotEntry, Portfolio, Position, Side, ShortType, TradeAction
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
+from neptune.quant.factors import STYLE_FACTORS
 from neptune.quant.optimizer import (
     InfeasibleHedge,
     complexity_frontier,
@@ -334,7 +335,7 @@ def _universe_diag(sec: Session, portfolio) -> dict:
     out["benchmark_bars"] = benchmark_bars
     unpriced = sorted({p.ticker for p in portfolio.positions if _ticker_unpriced(md, p.ticker)})
     out["unpriced_positions"] = unpriced
-    out["factor_panel"] = "MKT+SMB+HML+MOM" if md._style_factors() else "MKT-only"
+    out["factor_panel"] = ("MKT+" + "+".join(STYLE_FACTORS)) if md._style_factors() else "MKT-only"
 
     # The TRUE shortable universe: names whose beta regression actually fits against the
     # benchmark — not merely names with >=30 of their own bars. The gap between these two is
@@ -601,7 +602,7 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
         metrics = analytics.compute_metrics(portfolio, md)
     net_beta, net_factors = analytics.net_metrics(portfolio, metrics)
     # Market is shown by the net-beta gauge; the factor table covers the style factors.
-    style_factors = {f: net_factors[f] for f in ("SMB", "HML", "MOM")}
+    style_factors = {f: net_factors[f] for f in STYLE_FACTORS}
     summary = summarize(
         net_beta=net_beta,
         factor_exposures=style_factors,
