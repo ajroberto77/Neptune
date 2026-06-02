@@ -111,11 +111,11 @@ export default function App() {
     setProposal(null);
   }
 
-  async function handlePropose(sectorLimit?: number, maxNames?: number) {
+  async function handlePropose(sectorLimit?: number, maxNames?: number, betaAddBudget?: number) {
     setProposing(true);
     setError(null);
     try {
-      setProposal(await proposeHedge(hedgePortfolioId, sectorLimit, maxNames));
+      setProposal(await proposeHedge(hedgePortfolioId, sectorLimit, maxNames, betaAddBudget));
     } catch (e) {
       setError(String(e));
     } finally {

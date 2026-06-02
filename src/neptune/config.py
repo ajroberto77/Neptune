@@ -55,11 +55,20 @@ class Settings(BaseSettings):
     # Sector concentration: flag any GICS sector exceeding this fraction of total short
     # notional. Default 0.30 (tighter than the roadmap's 0.40); PM-adjustable in the GUI.
     sector_limit: float = 0.30
-    # Negative-beta-short fence (short-book research, Option A): cap the aggregate net market
-    # beta the shorts may ADD by shorting negative-beta names — Σ max(0, −βᵢ·xᵢ) ≤ this. Lets
-    # the optimizer use a little negative-beta shorting to match a factor tilt, but stops the
-    # hedge from smuggling in net market beta. In beta units (fraction of long AUM); < beta_tol.
-    beta_add_budget: float = 0.02
+    # Firm-level net-beta target (CLAUDE.md §3) — tighter than the per-book |β| ≤ 0.05; the
+    # binding limit the hedge is ultimately governed by.
+    firm_beta_tol: float = 0.030
+    # Negative-beta-short fence (short-book research, Option A): cap the aggregate net market beta
+    # the shorts may ADD by shorting negative-beta names — Σ max(0, −βᵢ·xᵢ) ≤ budget. Expressed as
+    # a FRACTION of the binding beta limit (a nested sub-limit set well inside its parent, per the
+    # research) rather than a free-standing number, so it tracks whatever limit is operative. ~1/3
+    # of beta_tol ≈ 0.017 today; confirm empirically via the calibration backtest.
+    beta_add_fraction: float = 0.33
+
+    @property
+    def beta_add_budget(self) -> float:
+        """The fence level in beta units = fraction × the (per-book) binding limit."""
+        return self.beta_add_fraction * self.beta_tol
 
     @property
     def portfolio_url(self) -> str:

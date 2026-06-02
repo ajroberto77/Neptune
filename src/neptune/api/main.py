@@ -943,10 +943,17 @@ def propose_hedge(
         default=None, ge=1,
         description="Hard cap on the number of hedge names. None = the natural sparse basket.",
     ),
+    beta_add_budget: float | None = Query(
+        default=None, ge=0.0, le=1.0,
+        description="Max net market beta the shorts may ADD (negative-beta-short fence). "
+                    "Default = beta_add_fraction × beta_tol.",
+    ),
     session: Session = Depends(get_session),
 ):
     service = PositionService(session)
     portfolio = _resolve_portfolio(service, portfolio_id)
+    if beta_add_budget is None:
+        beta_add_budget = settings.beta_add_budget
     if portfolio.mandate is Mandate.LONG_ONLY:
         raise HTTPException(
             status_code=422,
@@ -968,7 +975,7 @@ def propose_hedge(
                 max_position_weight=settings.max_position_weight,
                 sector_limit=sector_limit,
                 excluded_tickers=long_tickers,
-                beta_add_budget=settings.beta_add_budget,  # fence negative-beta shorts (Option A)
+                beta_add_budget=beta_add_budget,  # fence negative-beta shorts (Option A; per-run)
             )
             # Aim for a DIVERSIFIED basket of ~target names (the variance penalty spreads weight
             # across many moderate names; the cap sets the count). Defaults to

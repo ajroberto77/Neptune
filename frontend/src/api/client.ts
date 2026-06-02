@@ -27,10 +27,12 @@ export function proposeHedge(
   portfolioId: string,
   sectorLimit?: number,
   maxNames?: number,
+  betaAddBudget?: number,
 ): Promise<HedgeProposal> {
   const params = new URLSearchParams();
   if (sectorLimit !== undefined) params.set("sector_limit", String(sectorLimit));
   if (maxNames !== undefined) params.set("max_names", String(maxNames));
+  if (betaAddBudget !== undefined) params.set("beta_add_budget", String(betaAddBudget));
   const q = params.toString() ? `?${params}` : "";
   return getJSON<HedgeProposal>(`/portfolios/${portfolioId}/hedge/propose${q}`, {
     method: "POST",

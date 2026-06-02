@@ -9,7 +9,7 @@ interface Props {
   portfolios: { id: string; name: string }[];
   hedgePortfolioId: string;
   onHedgePortfolio: (id: string) => void;
-  onPropose: (sectorLimit?: number, maxNames?: number) => void;
+  onPropose: (sectorLimit?: number, maxNames?: number, betaAddBudget?: number) => void;
   proposing: boolean;
   onApprove: () => void;
   onReject: () => void;
@@ -41,11 +41,14 @@ export function Hedge({
 }: Props) {
   const [sectorLimitPct, setSectorLimitPct] = useState(30);
   const [targetShorts, setTargetShorts] = useState<string>("");
+  // The negative-beta-short fence (Option A). Blank = server default (≈ ⅓ × beta_tol).
+  const [betaAddBudget, setBetaAddBudget] = useState<string>("");
 
   function propose() {
     onPropose(
       Math.min(100, Math.max(1, sectorLimitPct)) / 100,
       targetShorts ? Number(targetShorts) : undefined,
+      betaAddBudget !== "" ? Math.max(0, Number(betaAddBudget)) : undefined,
     );
   }
 
@@ -106,6 +109,22 @@ export function Hedge({
                 value={targetShorts}
                 onChange={(e) => setTargetShorts(e.target.value)}
                 className="np-input w-24"
+              />
+            </label>
+            <label
+              className="text-xs text-ocean-muted"
+              title="Max net market beta the shorts may ADD (negative-beta-short fence). Blank = default ≈ ⅓ × beta tolerance."
+            >
+              <span className="mb-1 block">Max β added</span>
+              <input
+                type="number"
+                min={0}
+                step={0.005}
+                placeholder="auto"
+                value={betaAddBudget}
+                aria-label="beta-add-budget-input"
+                onChange={(e) => setBetaAddBudget(e.target.value)}
+                className="np-input w-20"
               />
             </label>
             <button

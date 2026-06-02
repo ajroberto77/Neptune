@@ -78,6 +78,6 @@ describe("Hedge", () => {
     // The sector limit lives in the proposal header now; Propose carries it.
     fireEvent.change(screen.getByLabelText("sector-limit-input"), { target: { value: "20" } });
     fireEvent.click(screen.getByText("Propose hedge"));
-    expect(onPropose).toHaveBeenCalledWith(0.2, undefined);
+    expect(onPropose).toHaveBeenCalledWith(0.2, undefined, undefined);
   });
 });
