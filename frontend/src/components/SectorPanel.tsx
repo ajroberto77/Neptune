@@ -1,58 +1,16 @@
-import { useState } from "react";
 import type { HedgeProposal } from "../types";
 import { money } from "../format";
 
-/** Sector concentration of the proposed short book, with a PM-adjustable limit.
- * This is a soft warning — over-concentrated sectors are flagged, never blocked. */
-export function SectorPanel({
-  proposal,
-  onApplyLimit,
-  defaultLimit = 0.3,
-}: {
-  proposal: HedgeProposal | null;
-  onApplyLimit: (limit: number) => void;
-  defaultLimit?: number;
-}) {
-  // Limit is stored as a percentage for the input; sent to the API as a fraction.
-  const [limitPct, setLimitPct] = useState(
-    Math.round((proposal?.sector_limit ?? defaultLimit) * 100),
-  );
-
+/** Sector concentration BREAKDOWN of the proposed short book (read-only). The adjustable limit
+ * lives in the proposal header; this just shows each sector's share against that cap. */
+export function SectorPanel({ proposal }: { proposal: HedgeProposal }) {
   return (
     <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-      <div className="flex items-center justify-between">
-        <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Sector Concentration
-        </h3>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-ocean-muted">Limit</label>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={limitPct}
-            onChange={(e) => setLimitPct(Number(e.target.value))}
-            aria-label="sector-limit-input"
-            className="w-16 rounded border border-ocean-border bg-ocean-bg px-2 py-1 text-right font-mono text-sm"
-          />
-          <span className="text-xs text-ocean-muted">%</span>
-          <button
-            onClick={() => onApplyLimit(Math.min(100, Math.max(1, limitPct)) / 100)}
-            className="rounded border border-ocean-accent px-3 py-1 text-sm font-medium text-ocean-accent hover:bg-ocean-accent/10"
-          >
-            Apply
-          </button>
-        </div>
-      </div>
+      <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
+        Sector Concentration
+      </h3>
 
-      {!proposal && (
-        <p className="mt-3 text-xs text-ocean-muted">
-          Set the per-sector concentration cap; it's enforced on every proposed hedge. Run
-          Propose to see the basket's sector breakdown.
-        </p>
-      )}
-
-      {proposal && proposal.sector_breaches.length > 0 && (
+      {proposal.sector_breaches.length > 0 && (
         <p className="mt-3 text-xs text-status-breach">
           {proposal.sector_breaches.length} sector
           {proposal.sector_breaches.length > 1 ? "s" : ""} over the{" "}
@@ -62,7 +20,6 @@ export function SectorPanel({
         </p>
       )}
 
-      {proposal && (
       <table className="mt-4 w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-ocean-muted">
@@ -101,7 +58,6 @@ export function SectorPanel({
           ))}
         </tbody>
       </table>
-      )}
     </div>
   );
 }

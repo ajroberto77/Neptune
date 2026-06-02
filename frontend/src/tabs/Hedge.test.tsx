@@ -32,7 +32,6 @@ const frontier: Frontier = {
 const base = {
   onPropose: () => {},
   proposing: false,
-  onApplySectorLimit: () => {},
   onApprove: () => {},
   onReject: () => {},
   approving: false,
@@ -53,7 +52,6 @@ describe("Hedge", () => {
     const onApprove = vi.fn();
     render(<Hedge {...base} proposal={proposal} onApprove={onApprove} />);
     expect(screen.getByText("HDG1")).toBeInTheDocument();
-    expect(screen.getByText("PENDING_APPROVAL")).toBeInTheDocument();
     expect(screen.getByText("1,200")).toBeInTheDocument(); // shares to short
     // ONE basket-level approve (not per name); clicking it fires onApprove.
     fireEvent.click(screen.getByText("Approve basket"));
@@ -69,13 +67,14 @@ describe("Hedge", () => {
     expect(screen.getByText(/≤ 20/)).toBeInTheDocument();
   });
 
-  it("shows the sector concentration panel and applies a new limit", () => {
-    const onApplySectorLimit = vi.fn();
-    render(<Hedge {...base} proposal={proposal} onApplySectorLimit={onApplySectorLimit} />);
-    expect(screen.getByText("Sector Concentration")).toBeInTheDocument();
+  it("shows the sector breakdown and feeds the header limit into Propose", () => {
+    const onPropose = vi.fn();
+    render(<Hedge {...base} proposal={proposal} onPropose={onPropose} />);
+    expect(screen.getByText("Sector Concentration")).toBeInTheDocument(); // breakdown below
     expect(screen.getAllByText("BREACH").length).toBeGreaterThanOrEqual(2);
+    // The sector limit lives in the proposal header now; Propose carries it.
     fireEvent.change(screen.getByLabelText("sector-limit-input"), { target: { value: "20" } });
-    fireEvent.click(screen.getByText("Apply"));
-    expect(onApplySectorLimit).toHaveBeenCalledWith(0.2);
+    fireEvent.click(screen.getByText("Propose hedge"));
+    expect(onPropose).toHaveBeenCalledWith(0.2, undefined);
   });
 });

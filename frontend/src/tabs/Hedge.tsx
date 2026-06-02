@@ -8,7 +8,6 @@ interface Props {
   proposal: HedgeProposal | null;
   onPropose: (sectorLimit?: number, maxNames?: number) => void;
   proposing: boolean;
-  onApplySectorLimit: (limit: number) => void;
   onApprove: () => void;
   onReject: () => void;
   approving: boolean;
@@ -19,15 +18,14 @@ interface Props {
 
 const shares = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 
-/** Hedge tab: set the sector cap (always visible, top), propose a diversified systematic short
- *  basket, review it, and approve/reject the WHOLE basket. Approve books the names as
- *  systematic shorts (never the discretionary path — I-03) and records the decision; Neptune
- *  never routes orders (I-01). */
+/** Hedge tab: set the sector cap and target basket size in the proposal header, propose a
+ *  diversified systematic short basket, then approve/reject the WHOLE basket. Approve books the
+ *  names as systematic shorts (never the discretionary path — I-03), recorded, never routed
+ *  (I-01). The sector-concentration breakdown shows below once a basket is proposed. */
 export function Hedge({
   proposal,
   onPropose,
   proposing,
-  onApplySectorLimit,
   onApprove,
   onReject,
   approving,
@@ -35,9 +33,16 @@ export function Hedge({
   onFrontier,
   frontierLoading,
 }: Props) {
-  const [maxNames, setMaxNames] = useState<string>("");
+  const [sectorLimitPct, setSectorLimitPct] = useState(30);
+  const [targetShorts, setTargetShorts] = useState<string>("");
 
-  // Totals for the proposal footer.
+  function propose() {
+    onPropose(
+      Math.min(100, Math.max(1, sectorLimitPct)) / 100,
+      targetShorts ? Number(targetShorts) : undefined,
+    );
+  }
+
   const totalNotional = (proposal?.proposed_shorts ?? []).reduce((a, s) => a + s.notional, 0);
   const totalBetaAdj = (proposal?.proposed_shorts ?? []).reduce(
     (a, s) => a + s.notional * s.beta,
@@ -47,28 +52,37 @@ export function Hedge({
 
   return (
     <div className="space-y-6">
-      {/* Sector concentration cap — always visible, enforced on every proposed hedge. */}
-      <SectorPanel proposal={proposal} onApplyLimit={onApplySectorLimit} />
-
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
             Systematic Hedge Proposal
           </h3>
           <div className="flex items-end gap-3">
+            <label className="text-xs text-ocean-muted">
+              <span className="mb-1 block">Sector limit %</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={sectorLimitPct}
+                aria-label="sector-limit-input"
+                onChange={(e) => setSectorLimitPct(Number(e.target.value))}
+                className="np-input w-20"
+              />
+            </label>
             <label className="text-xs text-ocean-muted">
               <span className="mb-1 block">Target shorts</span>
               <input
                 type="number"
                 min={1}
                 placeholder="35"
-                value={maxNames}
-                onChange={(e) => setMaxNames(e.target.value)}
+                value={targetShorts}
+                onChange={(e) => setTargetShorts(e.target.value)}
                 className="np-input w-24"
               />
             </label>
             <button
-              onClick={() => onPropose(undefined, maxNames ? Number(maxNames) : undefined)}
+              onClick={propose}
               disabled={proposing}
               className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80 disabled:opacity-50"
             >
@@ -83,11 +97,7 @@ export function Hedge({
               <div className="flex flex-wrap items-center gap-6 text-sm">
                 <Stat label="Net β before" value={proposal.net_beta_before.toFixed(4)} />
                 <Stat label="Net β after" value={proposal.net_beta_after.toFixed(4)} />
-                <span className="rounded border border-status-watch/40 bg-status-watch/15 px-2 py-0.5 font-mono text-xs text-status-watch">
-                  {proposal.status}
-                </span>
               </div>
-              {/* Approve / reject the WHOLE basket. */}
               <div className="flex gap-2">
                 <button
                   onClick={onApprove}
@@ -156,6 +166,8 @@ export function Hedge({
           </p>
         )}
       </div>
+
+      {proposal && <SectorPanel proposal={proposal} />}
 
       <FrontierPanel frontier={frontier} onRun={onFrontier} loading={frontierLoading} />
     </div>

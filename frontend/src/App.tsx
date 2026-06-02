@@ -79,6 +79,10 @@ export default function App() {
   // Approve the WHOLE basket → book the names as systematic shorts (I-03), then go to Trade.
   async function handleApproveHedge() {
     if (!proposal) return;
+    if (portfolioId === CONSOLIDATED_ID) {
+      setError("Select a specific portfolio (not Consolidated) to book the hedge into.");
+      return;
+    }
     setApproving(true);
     setError(null);
     try {
@@ -237,7 +241,6 @@ export default function App() {
                 proposal={proposal}
                 onPropose={handlePropose}
                 proposing={proposing}
-                onApplySectorLimit={(limit) => handlePropose(limit)}
                 onApprove={handleApproveHedge}
                 onReject={handleRejectHedge}
                 approving={approving}
