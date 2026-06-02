@@ -162,7 +162,8 @@ class LotORM(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     position_id: Mapped[int] = mapped_column(ForeignKey("positions.id"), nullable=False)
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
-    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)  # clean execution price
+    fee_per_share: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     position: Mapped[PositionORM] = relationship(back_populates="lots")

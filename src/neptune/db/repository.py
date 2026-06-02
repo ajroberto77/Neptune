@@ -31,7 +31,8 @@ def _to_domain_position(row: PositionORM) -> Position:
         pm_id=row.pm_id,
         analyst_id=row.analyst_id,
         lots=[
-            LotEntry(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date)
+            LotEntry(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date,
+                     fee_per_share=getattr(l, 'fee_per_share', 0.0) or 0.0)
             for l in row.lots
         ],
         thesis=row.thesis,
@@ -99,7 +100,8 @@ class PositionRepository:
             target=position.target,
         )
         row.lots = [
-            LotORM(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date)
+            LotORM(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date,
+                   fee_per_share=getattr(l, 'fee_per_share', 0.0) or 0.0)
             for l in position.lots
         ]
         self.session.add(row)
@@ -138,7 +140,8 @@ class PositionRepository:
         if row is None:
             raise ValueError(f"position {position_id} not found")
         row.lots.append(
-            LotORM(quantity=lot.quantity, entry_price=lot.entry_price, entry_date=lot.entry_date)
+            LotORM(quantity=lot.quantity, entry_price=lot.entry_price, entry_date=lot.entry_date,
+                   fee_per_share=getattr(lot, 'fee_per_share', 0.0) or 0.0)
         )
         row.notional = new_notional
         self.session.commit()
@@ -156,7 +159,8 @@ class PositionRepository:
         if row is None:
             raise ValueError(f"position {position_id} not found")
         row.lots = [
-            LotORM(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date)
+            LotORM(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date,
+                   fee_per_share=getattr(l, 'fee_per_share', 0.0) or 0.0)
             for l in lots
         ]
         row.realised_pnl = realised_pnl

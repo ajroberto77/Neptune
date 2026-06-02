@@ -22,7 +22,9 @@ def position_pnl_for(position: Position, market: MarketData, as_of: date | None 
     if not position.lots:
         realised = position.realised_pnl
         return PnL(day=0.0, total=realised, unrealised=0.0, realised=realised)
-    lots = [Lot(l.quantity, l.entry_price, l.entry_date) for l in position.lots]
+    lots = [
+        Lot(l.quantity, l.entry_price, l.entry_date, l.fee_per_share) for l in position.lots
+    ]
     return position_pnl(
         lots=lots,
         current_price=market.current_price(position.ticker),

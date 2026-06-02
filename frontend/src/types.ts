@@ -46,8 +46,8 @@ export interface TransactionInput {
   ticker: string;
   action: TradeAction; // direction; side & open/close/cover are derived by netting
   quantity: number;
-  price: number;
-  fees?: number; // total transaction fees, folded into cost basis
+  price: number; // execution (average) price per share
+  fee_per_share?: number; // transaction fee per share
   trade_date: string; // YYYY-MM-DD
   sector?: string | null;
 }

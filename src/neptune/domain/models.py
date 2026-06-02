@@ -50,11 +50,15 @@ class BookType(str, Enum):
 
 @dataclass
 class LotEntry:
-    """A position's open lot as carried on the domain object (mirrors pnl.Lot)."""
+    """A position's open lot as carried on the domain object (mirrors pnl.Lot).
+
+    ``entry_price`` is the clean execution price; ``fee_per_share`` is the per-share
+    transaction cost. Realized cost basis = execution + fee (long) / − fee (short)."""
 
     quantity: float
     entry_price: float
     entry_date: date
+    fee_per_share: float = 0.0
 
 
 @dataclass

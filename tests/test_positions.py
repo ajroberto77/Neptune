@@ -49,15 +49,19 @@ def test_delete_position(session):
     assert service.list_positions("P4") == []
 
 
-def test_fees_fold_into_cost_basis(session):
-    """Transaction fees raise a buy's effective per-share cost (so P&L is fee-inclusive)
-    without a separate fees column: 100 sh @ $50 + $200 fees -> entry price 50 + 2 = 52."""
+def test_fee_per_share_is_stored_and_in_cost_basis(session):
+    """Execution price and fee/share are stored SEPARATELY; the realized cost basis is their
+    sum. A long bought at $50 with $2/sh fee, marked at $50, loses the fee."""
     from datetime import date
     from neptune.domain.models import TradeAction
+    from neptune.pnl import Lot, unrealised_pnl
 
     service = PositionService(session)
     service.create_portfolio("PF", "Fee Book")
-    service.book_trade("PF", "AAA", TradeAction.BUY, 100, 50.0, date.today(), fees=200.0)
-    pos = service.list_positions("PF")[0]
-    lot = pos.lots[0]
-    assert lot.entry_price == pytest.approx(52.0)  # 50 + 200/100
+    service.book_trade("PF", "AAA", TradeAction.BUY, 100, 50.0, date.today(), fee_per_share=2.0)
+    lot = service.list_positions("PF")[0].lots[0]
+    assert lot.entry_price == pytest.approx(50.0)   # clean execution price stored
+    assert lot.fee_per_share == pytest.approx(2.0)  # fee stored separately
+    # Realized cost basis is 52 for a long: marking at the $50 execution price loses the fee.
+    pnl = unrealised_pnl([Lot(100, 50.0, date.today(), 2.0)], current_price=50.0, direction=1)
+    assert pnl == pytest.approx(-200.0)             # 100 * (50 - 52)

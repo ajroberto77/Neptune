@@ -81,6 +81,8 @@ def init_db(target_engine=engine) -> None:
     from neptune.db import models  # noqa: F401  (register portfolio mappers)
 
     PortfolioBase.metadata.create_all(bind=target_engine)
+    # Additive bridge until Alembic: a deployed portfolio DB picks up the lot fee column.
+    _ensure_columns(target_engine, "lots", {"fee_per_share": "FLOAT DEFAULT 0"})
 
 
 def init_securities_db(target_engine=securities_engine) -> None:

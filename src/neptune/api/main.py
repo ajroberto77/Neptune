@@ -470,8 +470,8 @@ class TransactionIn(BaseModel):
     ticker: str
     action: TradeAction
     quantity: float = Field(gt=0)
-    price: float = Field(gt=0)
-    fees: float = Field(default=0.0, ge=0)  # total transaction fees, folded into cost basis
+    price: float = Field(gt=0)  # execution (average) price per share
+    fee_per_share: float = Field(default=0.0, ge=0)  # transaction fee per share
     trade_date: date
     sector: str | None = None
     thesis: str | None = None
@@ -491,7 +491,7 @@ def record_transaction(
         position_id = service.book_trade(
             portfolio_id, body.ticker, body.action, body.quantity, body.price,
             body.trade_date, sector=body.sector, thesis=body.thesis, target=body.target,
-            fees=body.fees,
+            fee_per_share=body.fee_per_share,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

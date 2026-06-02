@@ -21,8 +21,9 @@ interface Row {
   error?: string;
 }
 
+// Fees are PER SHARE, so the all-in cost = quantity × (execution price + fee per share).
 const totalCost = (r: { quantity: number; price: number; fees: number }) =>
-  r.quantity * r.price + r.fees;
+  r.quantity * (r.price + r.fees);
 
 let _seq = 0;
 const newKey = () => `r${_seq++}`;
@@ -105,7 +106,7 @@ export function Trade({
           action: r.action,
           quantity: r.quantity,
           price: r.price,
-          fees: r.fees,
+          fee_per_share: r.fees,
           trade_date: r.trade_date,
         });
         ok += 1;
@@ -172,7 +173,7 @@ export function Trade({
             <th className="pb-2 font-medium">Action</th>
             <th className="pb-2 font-medium">Quantity</th>
             <th className="pb-2 font-medium">Avg Price</th>
-            <th className="pb-2 font-medium">Txn Fees</th>
+            <th className="pb-2 font-medium">Txn Fee/sh</th>
             <th className="pb-2 text-right font-medium">Total Cost</th>
             <th className="pb-2 font-medium">Trade Date</th>
             <th className="pb-2 font-medium">Portfolio</th>

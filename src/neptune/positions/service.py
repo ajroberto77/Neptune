@@ -75,6 +75,7 @@ class PositionService:
         forward_beta: float | None = None,
         thesis: str | None = None,
         target: str | None = None,
+        fee_per_share: float = 0.0,
     ) -> int:
         """Record an executed trade as a lot on the (ticker, side, short_type) position,
         aggregating into the open position for that name+book if one exists, else opening a
@@ -85,7 +86,8 @@ class PositionService:
         once approved: recording an execution is not auto-execution (no broker routing), and
         the book tag (``short_type``) keeps systematic and discretionary shorts distinct
         (I-03)."""
-        lot = LotEntry(quantity=quantity, entry_price=price, entry_date=trade_date)
+        lot = LotEntry(quantity=quantity, entry_price=price, entry_date=trade_date,
+                       fee_per_share=fee_per_share)
         existing = self.repo.list_positions(portfolio_id)
         probe = Position(
             ticker=ticker, side=side, notional=quantity * price, short_type=short_type
@@ -124,7 +126,7 @@ class PositionService:
         sector: str | None = None,
         thesis: str | None = None,
         target: str | None = None,
-        fees: float = 0.0,
+        fee_per_share: float = 0.0,
     ) -> int:
         """Book a manual Buy/Sell. Direction is DERIVED from the current holding (netting),
         so the desk never picks a side or a "book":
@@ -141,11 +143,6 @@ class PositionService:
         """
         if quantity <= 0:
             raise ValueError("quantity must be positive")
-        # Fold transaction fees into the effective per-share price so P&L is fee-inclusive
-        # without a separate fees column: a BUY costs more per share, a SELL nets less.
-        if fees:
-            adj = fees / quantity
-            price = price + adj if action is TradeAction.BUY else price - adj
         remaining = quantity
         if action is TradeAction.BUY:
             opposite = self.repo.find_position_id(
@@ -163,13 +160,17 @@ class PositionService:
             held = self.repo.get_position(opposite).quantity
             close = min(remaining, held)
             if close > 0:
-                self.reduce_position(opposite, close, price, as_of=trade_date)
+                # The fee on the shares that close the opposite position is a closing cost.
+                self.reduce_position(
+                    opposite, close, price, as_of=trade_date,
+                    exit_fee_per_share=fee_per_share,
+                )
                 remaining -= close
 
-        if remaining > 1e-9:  # remainder opens/adds the resulting side
+        if remaining > 1e-9:  # remainder opens/adds the resulting side; its fee is cost basis
             landed = self.record_trade(
                 portfolio_id, ticker, open_side, open_short, remaining, price, trade_date,
-                sector=sector, thesis=thesis, target=target,
+                sector=sector, thesis=thesis, target=target, fee_per_share=fee_per_share,
             )
         return landed
 
@@ -186,21 +187,27 @@ class PositionService:
         exit_price: float,
         as_of: date | None = None,
         specific_index: int | None = None,
+        exit_fee_per_share: float = 0.0,
     ) -> float:
         """Close ``quantity`` shares of a position by its cost-basis method, persisting
         the remaining lots and the new accumulated realised P&L. Returns the realised
-        P&L of this reduction."""
+        P&L of this reduction. ``exit_fee_per_share`` is the closing trade's own fee."""
         position = self.repo.get_position(position_id)
         if position is None:
             raise ValueError(f"position {position_id} not found")
-        lots = [Lot(l.quantity, l.entry_price, l.entry_date) for l in position.lots]
+        lots = [
+            Lot(l.quantity, l.entry_price, l.entry_date, l.fee_per_share)
+            for l in position.lots
+        ]
         method = position.cost_basis_method or CostBasisMethod.FIFO
         total_qty = sum(l.quantity for l in position.lots)
         remaining, realised = reduce_position(
-            lots, quantity, exit_price, position.direction, method, specific_index
+            lots, quantity, exit_price, position.direction, method, specific_index,
+            exit_fee_per_share=exit_fee_per_share,
         )
         new_lots = [
-            LotEntry(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date)
+            LotEntry(quantity=l.quantity, entry_price=l.entry_price, entry_date=l.entry_date,
+                     fee_per_share=l.fee_per_share)
             for l in remaining
         ]
         # Scale notional down by the fraction of quantity closed, so a full close → 0
