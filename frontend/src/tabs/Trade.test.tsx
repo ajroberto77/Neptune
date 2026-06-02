@@ -10,7 +10,7 @@ const PORTFOLIOS = [
 function fillRow(row: HTMLElement, fields: { ticker: string; qty: string; price: string }) {
   fireEvent.change(within(row).getByLabelText("Ticker"), { target: { value: fields.ticker } });
   fireEvent.change(within(row).getByLabelText("Quantity"), { target: { value: fields.qty } });
-  fireEvent.change(within(row).getByLabelText("Price"), { target: { value: fields.price } });
+  fireEvent.change(within(row).getByLabelText("Average Price"), { target: { value: fields.price } });
 }
 
 describe("Trade grid", () => {
@@ -33,7 +33,7 @@ describe("Trade grid", () => {
     fillRow(rows[0], { ticker: "msft", qty: "10", price: "100" });
     fillRow(rows[1], { ticker: "aapl", qty: "5", price: "200" });
     // Point the second row at Portfolio B.
-    fireEvent.change(within(rows[1]).getAllByRole("combobox")[0], { target: { value: "P-B" } });
+    fireEvent.change(within(rows[1]).getByLabelText("Portfolio"), { target: { value: "P-B" } });
 
     fireEvent.click(screen.getByText("Submit all"));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));

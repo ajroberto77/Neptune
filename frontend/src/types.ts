@@ -47,6 +47,7 @@ export interface TransactionInput {
   action: TradeAction; // direction; side & open/close/cover are derived by netting
   quantity: number;
   price: number;
+  fees?: number; // total transaction fees, folded into cost basis
   trade_date: string; // YYYY-MM-DD
   sector?: string | null;
 }

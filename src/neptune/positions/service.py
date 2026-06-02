@@ -124,6 +124,7 @@ class PositionService:
         sector: str | None = None,
         thesis: str | None = None,
         target: str | None = None,
+        fees: float = 0.0,
     ) -> int:
         """Book a manual Buy/Sell. Direction is DERIVED from the current holding (netting),
         so the desk never picks a side or a "book":
@@ -140,6 +141,11 @@ class PositionService:
         """
         if quantity <= 0:
             raise ValueError("quantity must be positive")
+        # Fold transaction fees into the effective per-share price so P&L is fee-inclusive
+        # without a separate fees column: a BUY costs more per share, a SELL nets less.
+        if fees:
+            adj = fees / quantity
+            price = price + adj if action is TradeAction.BUY else price - adj
         remaining = quantity
         if action is TradeAction.BUY:
             opposite = self.repo.find_position_id(

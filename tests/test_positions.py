@@ -47,3 +47,17 @@ def test_delete_position(session):
     pid = service.add_position("P4", Position("AAA", Side.LONG, 100, forward_beta=1.0))
     assert service.delete_position(pid) is True
     assert service.list_positions("P4") == []
+
+
+def test_fees_fold_into_cost_basis(session):
+    """Transaction fees raise a buy's effective per-share cost (so P&L is fee-inclusive)
+    without a separate fees column: 100 sh @ $50 + $200 fees -> entry price 50 + 2 = 52."""
+    from datetime import date
+    from neptune.domain.models import TradeAction
+
+    service = PositionService(session)
+    service.create_portfolio("PF", "Fee Book")
+    service.book_trade("PF", "AAA", TradeAction.BUY, 100, 50.0, date.today(), fees=200.0)
+    pos = service.list_positions("PF")[0]
+    lot = pos.lots[0]
+    assert lot.entry_price == pytest.approx(52.0)  # 50 + 200/100

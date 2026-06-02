@@ -471,6 +471,7 @@ class TransactionIn(BaseModel):
     action: TradeAction
     quantity: float = Field(gt=0)
     price: float = Field(gt=0)
+    fees: float = Field(default=0.0, ge=0)  # total transaction fees, folded into cost basis
     trade_date: date
     sector: str | None = None
     thesis: str | None = None
@@ -490,6 +491,7 @@ def record_transaction(
         position_id = service.book_trade(
             portfolio_id, body.ticker, body.action, body.quantity, body.price,
             body.trade_date, sector=body.sector, thesis=body.thesis, target=body.target,
+            fees=body.fees,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

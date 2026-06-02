@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { TradeAction, TransactionInput } from "../types";
+import { money } from "../format";
 
 const ACTIONS: { value: TradeAction; label: string }[] = [
   { value: "BUY", label: "Buy" },
@@ -15,9 +16,13 @@ interface Row {
   action: TradeAction;
   quantity: number;
   price: number;
+  fees: number;
   trade_date: string;
   error?: string;
 }
+
+const totalCost = (r: { quantity: number; price: number; fees: number }) =>
+  r.quantity * r.price + r.fees;
 
 let _seq = 0;
 const newKey = () => `r${_seq++}`;
@@ -54,6 +59,7 @@ export function Trade({
     action: "BUY",
     quantity: 0,
     price: 0,
+    fees: 0,
     trade_date: today(),
   });
 
@@ -99,6 +105,7 @@ export function Trade({
           action: r.action,
           quantity: r.quantity,
           price: r.price,
+          fees: r.fees,
           trade_date: r.trade_date,
         });
         ok += 1;
@@ -161,32 +168,20 @@ export function Trade({
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-ocean-muted">
-            <th className="pb-2 font-medium">Portfolio</th>
             <th className="pb-2 font-medium">Ticker</th>
             <th className="pb-2 font-medium">Action</th>
             <th className="pb-2 font-medium">Quantity</th>
-            <th className="pb-2 font-medium">Price</th>
-            <th className="pb-2 font-medium">Date</th>
+            <th className="pb-2 font-medium">Avg Price</th>
+            <th className="pb-2 font-medium">Txn Fees</th>
+            <th className="pb-2 text-right font-medium">Total Cost</th>
+            <th className="pb-2 font-medium">Trade Date</th>
+            <th className="pb-2 font-medium">Portfolio</th>
             <th className="pb-2 font-medium"></th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.key} className={`border-t border-ocean-border/60 ${r.error ? "bg-status-breach/10" : ""}`}>
-              <td className="py-2 pr-2">
-                <select
-                  className="np-input py-1"
-                  value={allocateAll || r.portfolioId}
-                  disabled={!!allocateAll}
-                  onChange={(e) => update(r.key, { portfolioId: e.target.value })}
-                >
-                  {portfolios.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </td>
               <td className="py-2 pr-2">
                 <input
                   className="np-input w-24 font-mono"
@@ -211,7 +206,7 @@ export function Trade({
               </td>
               <td className="py-2 pr-2">
                 <input
-                  className="np-input w-24"
+                  className="np-input w-20"
                   type="number"
                   aria-label="Quantity"
                   value={r.quantity || ""}
@@ -222,19 +217,46 @@ export function Trade({
                 <input
                   className="np-input w-24"
                   type="number"
-                  aria-label="Price"
+                  aria-label="Average Price"
                   value={r.price || ""}
                   onChange={(e) => update(r.key, { price: Number(e.target.value) })}
                 />
               </td>
               <td className="py-2 pr-2">
                 <input
+                  className="np-input w-20"
+                  type="number"
+                  aria-label="Transaction Fees"
+                  value={r.fees || ""}
+                  onChange={(e) => update(r.key, { fees: Number(e.target.value) })}
+                />
+              </td>
+              <td className="py-2 pr-2 text-right font-mono" aria-label="Total Cost">
+                {money(totalCost(r))}
+              </td>
+              <td className="py-2 pr-2">
+                <input
                   className="np-input"
                   type="date"
-                  aria-label="Date"
+                  aria-label="Trade Date"
                   value={r.trade_date}
                   onChange={(e) => update(r.key, { trade_date: e.target.value })}
                 />
+              </td>
+              <td className="py-2 pr-2">
+                <select
+                  className="np-input py-1"
+                  aria-label="Portfolio"
+                  value={allocateAll || r.portfolioId}
+                  disabled={!!allocateAll}
+                  onChange={(e) => update(r.key, { portfolioId: e.target.value })}
+                >
+                  {portfolios.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
               </td>
               <td className="py-2 text-right">
                 {r.error && (
