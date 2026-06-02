@@ -876,6 +876,9 @@ def hedge_backtest(
             md = DbMarketData(sec, benchmark=settings.benchmark)
         except TickerNotFound as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # The backtest reads stored daily betas; materialize once if the table is empty.
+        if beta_store.latest_stored_date(sec, settings.benchmark) is None:
+            beta_store.rebuild_betas(sec, benchmark=settings.benchmark)
         res = backtest_engine.hedge_backtest(
             md, portfolio, md.available_tickers(),
             rebalance_step=step, points=points,
@@ -915,6 +918,9 @@ def calibrate_hedge(
             md = DbMarketData(sec, benchmark=settings.benchmark)
         except TickerNotFound as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        # Each budget replays the backtest; stored betas make that cheap. Materialize if empty.
+        if beta_store.latest_stored_date(sec, settings.benchmark) is None:
+            beta_store.rebuild_betas(sec, benchmark=settings.benchmark)
         rows = backtest_engine.calibrate_beta_add_budget(
             md, portfolio, md.available_tickers(),
             rebalance_step=step, points=points,

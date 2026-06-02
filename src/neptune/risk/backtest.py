@@ -30,11 +30,13 @@ import numpy as np
 
 from neptune.data.db_market import TickerNotFound
 from neptune.domain.models import Portfolio, ShortType
-from neptune.quant.beta import DEFAULT_LOOKBACK, raw_beta, vasicek_shrinkage
+from neptune.quant.beta import DEFAULT_LOOKBACK
 from neptune.quant.factors import STYLE_FACTORS
-from neptune.quant.optimizer import Candidate, compute_residual, optimize_hedge_capped
-from neptune.quant.optimizer import InfeasibleHedge
-from neptune.risk.analytics import DEFAULT_PRIOR_VAR, MIN_BETA_OBS
+from neptune.quant.optimizer import (
+    Candidate, InfeasibleHedge, compute_residual, optimize_hedge_capped,
+)
+from neptune.risk import beta_store
+from neptune.risk.analytics import MIN_BETA_OBS
 
 
 @dataclass
@@ -59,31 +61,6 @@ class BacktestResult:
     n_rebalances: int = 0
 
 
-def _beta_loadings_asof(
-    rets: np.ndarray, market: np.ndarray, factor_series: dict[str, np.ndarray],
-    end: int, var_prior: float, lookback: int,
-) -> tuple[float, dict[str, float], int] | None:
-    """Point-in-time (beta, style loadings, n_obs) for one name as of return-index ``end``,
-    using only data up to ``end``. None if there isn't enough history to fit."""
-    s = rets[: end + 1]
-    m = market[: end + 1]
-    if s.shape[0] < MIN_BETA_OBS:
-        return None
-    rb = raw_beta(s, m, lookback)
-    if rb.n_obs < MIN_BETA_OBS:
-        return None
-    beta, _ = vasicek_shrinkage(rb.beta_raw, rb.var_ols, var_prior)
-    loadings: dict[str, float] = {}
-    win = min(s.shape[0], lookback)
-    sw = s[-win:]
-    for f, fs in factor_series.items():
-        fw = fs[: end + 1][-win:]
-        if fw.shape[0] != sw.shape[0] or float(np.var(fw)) == 0.0:
-            continue
-        loadings[f] = float(np.cov(sw, fw, bias=True)[0, 1] / np.var(fw))
-    return beta, loadings, rb.n_obs
-
-
 def hedge_backtest(
     market_data,
     portfolio: Portfolio,
@@ -99,8 +76,13 @@ def hedge_backtest(
     beta_add_budget: float | None = None,
     n_cap: int = 35,
 ) -> BacktestResult:
-    """Replay the hedging process over history; see module docstring. ``universe_tickers`` is the
-    shortable set (current longs are excluded automatically). Returns realized-net-beta stats."""
+    """Replay the hedging process over history; see module docstring. Reads the MATERIALIZED daily
+    betas (``securities.betas``) point-in-time at each rebalance — one query per date, no
+    regressions — so a budget calibration (one replay per budget) is cheap. ``universe_tickers``
+    is the shortable set (current longs excluded automatically). Returns realized-net-beta stats.
+    Style loadings are computed on the fly ONLY when a factor panel is loaded (else beta-only)."""
+    session = market_data.session
+    benchmark = market_data.benchmark
     market = np.asarray(market_data.market_returns(), dtype=float)
     dates = list(market_data.return_dates())
     n = min(market.shape[0], len(dates))
@@ -117,7 +99,14 @@ def hedge_backtest(
         return BacktestResult(tol=beta_tol)
     long_tickers = {p.ticker for p in portfolio.longs}
 
-    # Cache benchmark-aligned return series (tail of the common axis) for every name we touch.
+    # Stored betas, read point-in-time and cached per date: {date_index: {ticker: beta}}.
+    _maps: dict[int, dict[str, float]] = {}
+    def betas_on(idx: int) -> dict[str, float]:
+        if idx not in _maps:
+            _maps[idx] = beta_store.stored_betas_asof(session, dates[idx], benchmark)
+        return _maps[idx]
+
+    # Return series cached only for variance (diversification weight) and on-the-fly loadings.
     cache: dict[str, np.ndarray | None] = {}
     def series(ticker: str) -> np.ndarray | None:
         if ticker not in cache:
@@ -128,8 +117,34 @@ def hedge_backtest(
                 cache[ticker] = None
         return cache[ticker]
 
-    def name_index(r: np.ndarray, end: int) -> int:
-        return end - (n - r.shape[0])  # the name's own index for axis position `end`
+    # Per-name return variance (a stable risk proxy for the diversification penalty) — computed
+    # once, not per date (the penalty only needs relative riskiness, not a point-in-time value).
+    var_cache: dict[str, float] = {}
+    def variance_of(ticker: str) -> float:
+        if ticker not in var_cache:
+            r = series(ticker)
+            var_cache[ticker] = float(np.var(r)) if r is not None and r.shape[0] > 1 else 1.0
+        return var_cache[ticker]
+
+    def loadings_of(ticker: str, idx: int) -> dict[str, float]:
+        if not factor_series:
+            return {}  # no factor panel loaded → beta-only matching (the common case)
+        r = series(ticker)
+        if r is None or not r.shape[0]:
+            return {}
+        offset = n - r.shape[0]
+        name_end = idx - offset
+        if name_end + 1 < MIN_BETA_OBS:
+            return {}
+        win = min(name_end + 1, lookback)
+        sw = r[: name_end + 1][-win:]
+        out: dict[str, float] = {}
+        for f, fs in factor_series.items():
+            fw = fs[offset: idx + 1][-win:]  # the factor over the SAME dates as the name's window
+            if fw.shape[0] != sw.shape[0] or float(np.var(fw)) == 0.0:
+                continue
+            out[f] = float(np.cov(sw, fw, bias=True)[0, 1] / np.var(fw))
+        return out
 
     # Rebalance indices: the most recent `points`, stepped, each needing a NEXT index to realize.
     last = n - 1 - rebalance_step  # leave room to measure forward
@@ -143,38 +158,24 @@ def hedge_backtest(
 
     for end in ends:
         nxt = min(end + rebalance_step, n - 1)
+        bmap = betas_on(end)
 
         # --- residual from the long book + discretionary shorts, as of `end` ---
         resid_positions: list[tuple[float, float, dict[str, float]]] = []
         for p in pq.positions:
             if p.short_type is ShortType.SYSTEMATIC:
                 continue  # the systematic book is what we re-propose
-            r = series(p.ticker)
-            beta, loadings = 1.0, {}
-            if r is not None and r.shape[0]:
-                bl = _beta_loadings_asof(r, market, factor_series, name_index(r, end),
-                                         DEFAULT_PRIOR_VAR, lookback)
-                if bl is not None:
-                    beta, loadings, _ = bl
-            resid_positions.append((p.signed_notional, beta, loadings))
+            beta = bmap.get(p.ticker, 1.0)  # no full-window beta yet → 1.0 prior (like live book)
+            resid_positions.append((p.signed_notional, beta, loadings_of(p.ticker, end)))
         residual_beta, residual_factors = compute_residual(resid_positions, long_aum)
 
-        # --- candidate universe as of `end` ---
+        # --- candidate universe as of `end` (only names with a full-window stored beta) ---
         cands: list[Candidate] = []
         for t in universe_tickers:
-            if t in long_tickers:
+            if t in long_tickers or t not in bmap:
                 continue
-            r = series(t)
-            if r is None or not r.shape[0]:
-                continue
-            bl = _beta_loadings_asof(r, market, factor_series, name_index(r, end),
-                                     DEFAULT_PRIOR_VAR, lookback)
-            if bl is None:
-                continue
-            beta, loadings, _ = bl
-            idx = name_index(r, end)
-            variance = float(np.var(r[: idx + 1][-lookback:])) if idx >= 1 else 1.0
-            cands.append(Candidate(ticker=t, beta=beta, loadings=loadings, variance=variance))
+            cands.append(Candidate(ticker=t, beta=bmap[t], loadings=loadings_of(t, end),
+                                   variance=variance_of(t)))
         if len(cands) < 2:
             continue
 
@@ -190,30 +191,14 @@ def hedge_backtest(
 
         weights = {s.ticker: s.weight for s in proposal.positions}
 
-        # --- realize: same weights, betas re-estimated at the NEXT rebalance ---
-        realized_beta_adj = 0.0
-        # long/discretionary side at t+1
-        for p in pq.positions:
-            if p.short_type is ShortType.SYSTEMATIC:
-                continue
-            r = series(p.ticker)
-            beta = 1.0
-            if r is not None and r.shape[0]:
-                bl = _beta_loadings_asof(r, market, factor_series, name_index(r, nxt),
-                                         DEFAULT_PRIOR_VAR, lookback)
-                if bl is not None:
-                    beta = bl[0]
-            realized_beta_adj += p.signed_notional * beta
-        # the proposed shorts at t+1 (short → negative signed notional)
-        for tkr, w in weights.items():
-            r = series(tkr)
-            beta = 1.0
-            if r is not None and r.shape[0]:
-                bl = _beta_loadings_asof(r, market, factor_series, name_index(r, nxt),
-                                         DEFAULT_PRIOR_VAR, lookback)
-                if bl is not None:
-                    beta = bl[0]
-            realized_beta_adj += -(w * long_aum) * beta
+        # --- realize: SAME weights, betas read at the NEXT rebalance ---
+        nmap = betas_on(nxt)
+        realized_beta_adj = sum(
+            p.signed_notional * nmap.get(p.ticker, 1.0)
+            for p in pq.positions if p.short_type is not ShortType.SYSTEMATIC
+        )
+        for tkr, w in weights.items():  # proposed shorts → negative signed notional
+            realized_beta_adj += -(w * long_aum) * nmap.get(tkr, 1.0)
         realized_net = realized_beta_adj / long_aum
 
         turnover = sum(
