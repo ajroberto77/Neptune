@@ -302,3 +302,20 @@ def test_stress_returns_three_var_methods(client):
     assert by["parametric"]["n_observations"] == 0
     # Back-compat: top-level `var` is the parametric result.
     assert body["var"]["method"] == "parametric"
+
+
+def test_hedge_approve_books_systematic_shorts(client):
+    # Approving a basket books each name as a SYSTEMATIC short (never discretionary — I-03),
+    # recorded, never routed (I-01).
+    r = client.post(f"/portfolios/{PID}/hedge/approve", json={
+        "shorts": [{"ticker": "HDGX", "shares": 1000, "price": 50.0}],
+    })
+    assert r.status_code == 201
+    assert r.json()["booked"] == 1
+    shorts = [p for p in client.get(f"/portfolios/{PID}/positions").json()
+              if p["ticker"] == "HDGX"]
+    assert shorts and shorts[0]["side"] == "SHORT"
+    assert shorts[0]["short_type"] == "SYSTEMATIC"
+    # Consolidated is read-only — can't approve into it.
+    assert client.post("/portfolios/__consolidated__/hedge/approve",
+                       json={"shorts": []}).status_code == 409

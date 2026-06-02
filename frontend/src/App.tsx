@@ -7,6 +7,7 @@ import type {
   StressReport,
 } from "./types";
 import {
+  approveHedge,
   fetchFrontier,
   fetchPortfolios,
   fetchPositions,
@@ -72,6 +73,32 @@ export default function App() {
       })
       .catch((e) => setError(String(e)));
   }, [portfolioId]);
+
+  const [approving, setApproving] = useState(false);
+
+  // Approve the WHOLE basket → book the names as systematic shorts (I-03), then go to Trade.
+  async function handleApproveHedge() {
+    if (!proposal) return;
+    setApproving(true);
+    setError(null);
+    try {
+      const shorts = proposal.proposed_shorts
+        .filter((s) => s.shares && s.price)
+        .map((s) => ({ ticker: s.ticker, shares: s.shares as number, price: s.price as number }));
+      await approveHedge(portfolioId, shorts);
+      setProposal(null);
+      await refreshBook();
+      setTab("Trade");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  function handleRejectHedge() {
+    setProposal(null);
+  }
 
   async function handlePropose(sectorLimit?: number, maxNames?: number) {
     setProposing(true);
@@ -211,6 +238,9 @@ export default function App() {
                 onPropose={handlePropose}
                 proposing={proposing}
                 onApplySectorLimit={(limit) => handlePropose(limit)}
+                onApprove={handleApproveHedge}
+                onReject={handleRejectHedge}
+                approving={approving}
                 frontier={frontier}
                 onFrontier={handleFrontier}
                 frontierLoading={frontierLoading}

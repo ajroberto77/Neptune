@@ -86,6 +86,17 @@ export function fetchPortfolios(): Promise<{ id: string; name: string }[]> {
   return getJSON("/portfolios");
 }
 
+export function approveHedge(
+  portfolioId: string,
+  shorts: { ticker: string; shares: number; price: number }[],
+): Promise<{ booked: number }> {
+  return getJSON(`/portfolios/${portfolioId}/hedge/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ shorts }),
+  });
+}
+
 export interface SecuritiesHealth {
   benchmark?: string;
   benchmark_bars?: number;

@@ -699,6 +699,8 @@ def propose_hedge(
             # soft, so net_beta_after reports whether neutrality was achieved.
             target = max_names if max_names is not None else settings.target_hedge_names
             proposal = optimize_hedge_capped(n_cap=target, **common)
+            # Capture the mark for each proposed short so the UI can show shares-to-short.
+            prices = {s.ticker: _safe_price(md, s.ticker) for s in proposal.positions}
     except (InfeasibleHedge, ValueError) as exc:
         # Cannot hedge to neutral with this universe — a domain state, not a 500. Append the
         # live universe diagnostics so the message is self-explanatory (why is it empty?).
@@ -713,8 +715,10 @@ def propose_hedge(
         "net_beta_after": proposal.net_beta_after,
         "long_aum": proposal.long_aum,
         "proposed_shorts": [
-            {"ticker": s.ticker, "notional": round(s.notional, 2), "beta": s.beta,
-             "sector": s.sector}
+            {"ticker": s.ticker,
+             "shares": (round(s.notional / prices[s.ticker]) if prices.get(s.ticker) else None),
+             "price": prices.get(s.ticker),
+             "notional": round(s.notional, 2), "beta": s.beta, "sector": s.sector}
             for s in proposal.positions
         ],
         "sector_limit": proposal.sector_limit,
@@ -725,6 +729,34 @@ def propose_hedge(
             for s in proposal.sectors
         ],
     }
+
+
+class HedgeShortIn(BaseModel):
+    ticker: str
+    shares: float = Field(gt=0)
+    price: float = Field(gt=0)
+
+
+class HedgeApproveIn(BaseModel):
+    """Approve a whole proposed hedge basket. Each name is booked as a SYSTEMATIC short — kept
+    distinct from discretionary shorts (I-03), and recorded, never routed to a broker (I-01)."""
+
+    shorts: list[HedgeShortIn]
+
+
+@app.post("/portfolios/{portfolio_id}/hedge/approve", status_code=201)
+def approve_hedge(portfolio_id: str, body: HedgeApproveIn,
+                  session: Session = Depends(get_session)):
+    service = PositionService(session)
+    _require_portfolio(service, portfolio_id)  # real book only (rejects Consolidated)
+    booked = 0
+    for s in body.shorts:
+        service.record_trade(
+            portfolio_id, s.ticker, Side.SHORT, ShortType.SYSTEMATIC,
+            s.shares, s.price, date.today(),
+        )
+        booked += 1
+    return {"booked": booked, "portfolio_id": portfolio_id}
 
 
 @app.post("/portfolios/{portfolio_id}/hedge/frontier")

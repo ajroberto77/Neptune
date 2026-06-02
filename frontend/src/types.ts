@@ -60,6 +60,8 @@ export interface PortfolioPnL {
 
 export interface ProposedShort {
   ticker: string;
+  shares?: number | null;
+  price?: number | null;
   notional: number;
   beta: number;
   sector?: string | null;

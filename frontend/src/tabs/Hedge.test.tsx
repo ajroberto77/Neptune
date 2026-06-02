@@ -9,7 +9,9 @@ const proposal: HedgeProposal = {
   net_beta_before: 0.94,
   net_beta_after: 0.0123,
   long_aum: 2_500_000,
-  proposed_shorts: [{ ticker: "HDG1", notional: 300000, beta: 1.1, sector: "Technology" }],
+  proposed_shorts: [
+    { ticker: "HDG1", shares: 1200, price: 250, notional: 300000, beta: 1.1, sector: "Technology" },
+  ],
   sector_limit: 0.3,
   sector_breaches: ["Technology"],
   sectors: [
@@ -31,6 +33,9 @@ const base = {
   onPropose: () => {},
   proposing: false,
   onApplySectorLimit: () => {},
+  onApprove: () => {},
+  onReject: () => {},
+  approving: false,
   frontier: null as Frontier | null,
   onFrontier: () => {},
   frontierLoading: false,
@@ -44,13 +49,17 @@ describe("Hedge", () => {
     expect(onPropose).toHaveBeenCalledOnce();
   });
 
-  it("renders the proposed short basket and the pending status", () => {
-    render(<Hedge {...base} proposal={proposal} />);
+  it("renders the basket with shares + beta-adj notional and a single approve/reject", () => {
+    const onApprove = vi.fn();
+    render(<Hedge {...base} proposal={proposal} onApprove={onApprove} />);
     expect(screen.getByText("HDG1")).toBeInTheDocument();
     expect(screen.getByText("PENDING_APPROVAL")).toBeInTheDocument();
-    // Approve/Reject controls are present (advisory — Neptune never executes).
-    expect(screen.getByText("Approve")).toBeInTheDocument();
-    expect(screen.getByText("Reject")).toBeInTheDocument();
+    expect(screen.getByText("1,200")).toBeInTheDocument(); // shares to short
+    // ONE basket-level approve (not per name); clicking it fires onApprove.
+    fireEvent.click(screen.getByText("Approve basket"));
+    expect(onApprove).toHaveBeenCalledOnce();
+    // Weighted-average beta total (1.1 with a single name) renders.
+    expect(screen.getAllByText("1.10").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders the complexity-quality frontier rows when present", () => {

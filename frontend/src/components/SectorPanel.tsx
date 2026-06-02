@@ -7,12 +7,16 @@ import { money } from "../format";
 export function SectorPanel({
   proposal,
   onApplyLimit,
+  defaultLimit = 0.3,
 }: {
-  proposal: HedgeProposal;
+  proposal: HedgeProposal | null;
   onApplyLimit: (limit: number) => void;
+  defaultLimit?: number;
 }) {
   // Limit is stored as a percentage for the input; sent to the API as a fraction.
-  const [limitPct, setLimitPct] = useState(Math.round(proposal.sector_limit * 100));
+  const [limitPct, setLimitPct] = useState(
+    Math.round((proposal?.sector_limit ?? defaultLimit) * 100),
+  );
 
   return (
     <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
@@ -41,7 +45,14 @@ export function SectorPanel({
         </div>
       </div>
 
-      {proposal.sector_breaches.length > 0 && (
+      {!proposal && (
+        <p className="mt-3 text-xs text-ocean-muted">
+          Set the per-sector concentration cap; it's enforced on every proposed hedge. Run
+          Propose to see the basket's sector breakdown.
+        </p>
+      )}
+
+      {proposal && proposal.sector_breaches.length > 0 && (
         <p className="mt-3 text-xs text-status-breach">
           {proposal.sector_breaches.length} sector
           {proposal.sector_breaches.length > 1 ? "s" : ""} over the{" "}
@@ -51,6 +62,7 @@ export function SectorPanel({
         </p>
       )}
 
+      {proposal && (
       <table className="mt-4 w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase text-ocean-muted">
@@ -89,6 +101,7 @@ export function SectorPanel({
           ))}
         </tbody>
       </table>
+      )}
     </div>
   );
 }
