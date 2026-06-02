@@ -1,14 +1,45 @@
 import type { PositionRow } from "../types";
 import { money, pnlColor, price, signedMoney } from "../format";
 
-const SECTIONS: { title: string; side: string }[] = [
-  { title: "Longs", side: "LONG" },
-  { title: "Shorts", side: "SHORT" },
+const SECTIONS: { title: string; total: string; side: string }[] = [
+  { title: "Longs", total: "Total Long", side: "LONG" },
+  { title: "Shorts", total: "Total Short", side: "SHORT" },
 ];
+
+// Signed exposure: longs +, shorts −. Beta-adjusted notional = signed notional × beta, so a
+// beta-neutral book nets to ~0 (longs and shorts offset).
+const sign = (p: PositionRow) => (p.side === "SHORT" ? -1 : 1);
+const betaAdj = (p: PositionRow) => sign(p) * p.notional * p.beta;
+
+interface Totals {
+  notional: number; // gross notional in the section
+  signedNotional: number; // longs − shorts
+  betaAdj: number;
+  day: number;
+  unrealized: number;
+  realized: number;
+  total: number;
+}
+
+function sumTotals(rows: PositionRow[]): Totals {
+  return rows.reduce<Totals>(
+    (a, p) => ({
+      notional: a.notional + p.notional,
+      signedNotional: a.signedNotional + sign(p) * p.notional,
+      betaAdj: a.betaAdj + betaAdj(p),
+      day: a.day + p.pnl.day,
+      unrealized: a.unrealized + p.pnl.unrealized,
+      realized: a.realized + p.pnl.realized,
+      total: a.total + p.pnl.total,
+    }),
+    { notional: 0, signedNotional: 0, betaAdj: 0, day: 0, unrealized: 0, realized: 0, total: 0 },
+  );
+}
 
 /** Portfolio view: the book IS the portfolio. Positions are grouped into Longs and Shorts;
  * each short carries a systematic-vs-discretionary tag (systematic = optimizer hedge), kept
- * distinct per invariant I-03. Optional live-pricing control polls prices on an interval. */
+ * distinct per invariant I-03. Each row and the totals show beta-adjusted notional, so the Net
+ * Position's beta-adjusted exposure is ~0 when the book is hedged to zero net beta. */
 export function Portfolio({
   positions,
   refreshMins,
@@ -24,6 +55,10 @@ export function Portfolio({
   lastPriced?: string | null;
   pricing?: boolean;
 }) {
+  const longs = positions.filter((p) => p.side === "LONG" && p.notional !== 0);
+  const shorts = positions.filter((p) => p.side === "SHORT" && p.notional !== 0);
+  const net = sumTotals([...longs, ...shorts]);
+
   return (
     <div className="space-y-6">
       {onRefreshNow && (
@@ -47,14 +82,12 @@ export function Portfolio({
           {lastPriced && <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>}
         </div>
       )}
-      {SECTIONS.map(({ title, side }) => {
-        // Hide flat (fully-closed) positions; the book is the portfolio, grouped by side.
-        const rows = positions.filter((p) => p.side === side && p.notional !== 0);
+
+      {SECTIONS.map(({ title, total, side }) => {
+        const rows = side === "LONG" ? longs : shorts;
+        const t = sumTotals(rows);
         return (
-          <div
-            key={side}
-            className="rounded-lg border border-ocean-border bg-ocean-panel p-5"
-          >
+          <div key={side} className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
             <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
               {title} <span className="text-ocean-muted/60">({rows.length})</span>
             </h3>
@@ -65,13 +98,14 @@ export function Portfolio({
                 <thead>
                   <tr className="text-left text-xs uppercase text-ocean-muted">
                     <th className="pb-2 font-medium">Ticker</th>
-                    <th className="pb-2 text-right font-medium">Beta</th>
                     <th className="pb-2 text-right font-medium">Price</th>
                     <th className="pb-2 text-right font-medium">Notional</th>
+                    <th className="pb-2 text-right font-medium">Beta-Adj Notional</th>
                     <th className="pb-2 text-right font-medium">Day P&L</th>
                     <th className="pb-2 text-right font-medium">Unrealized</th>
                     <th className="pb-2 text-right font-medium">Realized</th>
                     <th className="pb-2 text-right font-medium">Total</th>
+                    <th className="pb-2 text-right font-medium">Beta</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -98,9 +132,11 @@ export function Portfolio({
                               : "live"}
                         </span>
                       </td>
-                      <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>
-                      <td className="py-2 text-right font-mono">{price(p.price)}</td>
+                      <td className="py-2 text-right font-mono">
+                        {p.price == null ? "—" : price(p.price)}
+                      </td>
                       <td className="py-2 text-right font-mono">{money(p.notional)}</td>
+                      <td className="py-2 text-right font-mono">{signedMoney(betaAdj(p))}</td>
                       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.day)}`}>
                         {signedMoney(p.pnl.day)}
                       </td>
@@ -113,14 +149,66 @@ export function Portfolio({
                       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.total)}`}>
                         {signedMoney(p.pnl.total)}
                       </td>
+                      <td className="py-2 text-right font-mono">{p.beta.toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-ocean-border font-medium">
+                    <td className="py-2 text-xs uppercase text-ocean-muted">{total}</td>
+                    <td></td>
+                    <td className="py-2 text-right font-mono">{money(t.notional)}</td>
+                    <td className="py-2 text-right font-mono">{signedMoney(t.betaAdj)}</td>
+                    <td className={`py-2 text-right font-mono ${pnlColor(t.day)}`}>{signedMoney(t.day)}</td>
+                    <td className={`py-2 text-right font-mono ${pnlColor(t.unrealized)}`}>{signedMoney(t.unrealized)}</td>
+                    <td className={`py-2 text-right font-mono ${pnlColor(t.realized)}`}>{signedMoney(t.realized)}</td>
+                    <td className={`py-2 text-right font-mono ${pnlColor(t.total)}`}>{signedMoney(t.total)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
               </table>
             )}
           </div>
         );
       })}
+
+      {/* Net position: long − short. Net beta-adjusted notional ~0 means the book is hedged to
+          zero net beta. */}
+      <div className="rounded-lg border border-ocean-accent/40 bg-ocean-panel p-5">
+        <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-accent">
+          Net Position
+        </h3>
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+          <Stat label="Net Notional" value={signedMoney(net.signedNotional)} />
+          <Stat
+            label="Net Beta-Adj Notional"
+            value={signedMoney(net.betaAdj)}
+            hint="≈ $0 when hedged to zero net beta"
+          />
+          <Stat label="Net Day P&L" value={signedMoney(net.day)} color={pnlColor(net.day)} />
+          <Stat label="Net Total P&L" value={signedMoney(net.total)} color={pnlColor(net.total)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  color,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  color?: string;
+}) {
+  return (
+    <div>
+      <div className="text-xs uppercase text-ocean-muted">{label}</div>
+      <div className={`font-mono text-lg ${color ?? "text-slate-100"}`}>{value}</div>
+      {hint && <div className="text-[11px] text-ocean-muted/70">{hint}</div>}
     </div>
   );
 }

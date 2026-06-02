@@ -33,7 +33,7 @@ export interface PositionRow {
   book: string;
   notional: number;
   quantity: number;
-  price: number;
+  price: number | null; // null when the name isn't priced yet
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
   cost_basis_method?: string;

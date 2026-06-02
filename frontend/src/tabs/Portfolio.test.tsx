@@ -44,11 +44,28 @@ describe("Portfolio", () => {
         positions={[pos({ pnl: { day: -100, total: 5000, unrealized: 5000, realized: 0 } })]}
       />,
     );
-    expect(screen.getByText("-$100")).toBeInTheDocument();
-    // Unrealised and Total both show +$5,000.
-    expect(screen.getAllByText("+$5,000").length).toBe(2);
+    // Day P&L shows on the row, the Total-Long footer, and the Net Position section.
+    expect(screen.getAllByText("-$100").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("+$5,000").length).toBeGreaterThanOrEqual(2);
     // Per-share price renders with cents.
     expect(screen.getByText("$204.13")).toBeInTheDocument();
+  });
+
+  it("shows beta-adjusted notional and a Net Position that nets long vs short", () => {
+    render(
+      <Portfolio
+        positions={[
+          pos({ ticker: "AAA", side: "LONG", notional: 1_000_000, beta: 1.0 }),
+          pos({ ticker: "HDG", side: "SHORT", short_type: "SYSTEMATIC", notional: 1_000_000, beta: 1.0 }),
+        ]}
+      />,
+    );
+    // Long beta-adj = +1,000,000; short beta-adj = -1,000,000; net beta-adj ~ $0.
+    expect(screen.getByText("Net Position")).toBeInTheDocument();
+    expect(screen.getByText("Net Beta-Adj Notional")).toBeInTheDocument();
+    expect(screen.getAllByText("+$0").length).toBeGreaterThanOrEqual(1); // net beta-adj nets out
+    expect(screen.getByText("Total Long")).toBeInTheDocument();
+    expect(screen.getByText("Total Short")).toBeInTheDocument();
   });
 
   it("shows an empty message for a section with no positions", () => {
