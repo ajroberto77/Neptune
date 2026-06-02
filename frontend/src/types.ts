@@ -186,3 +186,25 @@ export interface FactorIngestResult {
   end: string;
   counts: Record<string, number>;
 }
+
+export interface BetaDiagRow {
+  ticker: string;
+  status: "ok" | "insufficient_data" | "no_prices";
+  bars?: number;
+  first_bar?: string | null;
+  last_bar?: string | null;
+  obs_used?: number;
+  gap_days?: number;
+  starts_after_benchmark?: boolean;
+  beta?: number;
+  beta_raw?: number;
+  var_ols?: number;
+  vasicek_weight?: number;
+  note?: string;
+}
+
+export interface BetaDiagnostics {
+  benchmark: { ticker: string; bars: number; first_bar: string; last_bar: string; obs_used: number };
+  min_obs: number;
+  names: BetaDiagRow[];
+}

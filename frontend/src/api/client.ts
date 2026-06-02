@@ -131,6 +131,7 @@ import type {
   SyncResult,
   IngestResult,
   FactorIngestResult,
+  BetaDiagnostics,
 } from "../types";
 
 export function fetchConnections(): Promise<ConnectionRow[]> {
@@ -164,6 +165,14 @@ export function ingestPrices(tickers?: string[]): Promise<IngestResult> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(tickers && tickers.length ? { tickers } : {}),
+  });
+}
+
+export function fetchBetaDiagnostics(tickers: string[]): Promise<BetaDiagnostics> {
+  return getJSON<BetaDiagnostics>(`/securities/beta-diagnostics`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tickers }),
   });
 }
 

@@ -99,6 +99,49 @@ def test_ingest_reports_feed_unavailable_when_yfinance_missing(client):
     assert "yfinance" in r.json()["detail"]
 
 
+def test_beta_diagnostics_traces_low_beta_to_data(client):
+    """The per-ticker beta diagnostic exposes the regression inputs: a full-history name returns
+    a fitted beta ('ok'); a name with too little history is flagged insufficient_data and held at
+    the 1.0 prior — so a surprising beta can be traced to data vs a genuine fit."""
+    from datetime import date, timedelta
+
+    import numpy as np
+    from sqlalchemy.orm import Session
+
+    from neptune.db.base import securities_engine
+    from neptune.securities.models import Price, Security
+
+    rng = np.random.default_rng(1)
+    n = 200
+    mkt = rng.normal(0.0, 0.01, n)
+
+    def _seed(sec, iid, ticker, rets, base=50.0):
+        sec.add(Security(instrument_id=iid, ticker=ticker, security_type="Common Stock"))
+        px = [base]
+        for r in rets:
+            px.append(px[-1] * (1 + r))
+        start = date.today() - timedelta(days=len(px) + 1)
+        for i, p in enumerate(px):
+            sec.add(Price(instrument_id=iid, ts=start + timedelta(days=i),
+                          close=p, adj_close=p, source="yfinance"))
+
+    with Session(securities_engine) as sec:
+        _seed(sec, 1, "SPY", mkt, base=400.0)
+        _seed(sec, 2, "FULL", 1.20 * mkt + rng.normal(0, 0.004, n))  # full history, beta ~1.2
+        _seed(sec, 3, "THIN", (1.20 * mkt)[-20:])                    # 20 bars — below the floor
+        sec.commit()
+
+    r = client.post("/securities/beta-diagnostics", json={"tickers": ["FULL", "THIN"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["benchmark"]["ticker"] == "SPY" and body["benchmark"]["bars"] >= 100
+    by = {row["ticker"]: row for row in body["names"]}
+    assert by["FULL"]["status"] == "ok"
+    assert by["FULL"]["beta_raw"] == pytest.approx(1.20, abs=0.3)  # data-traced, not muted to 0
+    assert by["THIN"]["status"] == "insufficient_data"
+    assert by["THIN"]["obs_used"] < body["min_obs"]
+
+
 def test_factor_ingest_reports_feed_unavailable(client, monkeypatch):
     # An unreachable Ken French feed → clean 503, not a 500. Force the download to fail so the
     # test is deterministic (never hits the real network, even on a connected machine).

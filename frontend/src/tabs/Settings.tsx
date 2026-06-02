@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import type { ConnectionRow } from "../types";
+import type { BetaDiagnostics, ConnectionRow } from "../types";
 import type { SecuritiesHealth } from "../api/client";
 import {
+  fetchBetaDiagnostics,
   fetchConnections,
   fetchSecuritiesHealth,
   ingestFactors,
@@ -54,6 +55,7 @@ export function Settings() {
   const [status, setStatus] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [oneTicker, setOneTicker] = useState("");
+  const [betaDiag, setBetaDiag] = useState<BetaDiagnostics | null>(null);
 
   function load() {
     fetchConnections()
@@ -128,6 +130,19 @@ export function Settings() {
         ...s,
         SECURITIES: `Ingested ${bars} price bars across ${r.ingested.length} names (${r.start} → ${r.end})`,
       }));
+    } catch (e) {
+      setStatus((s) => ({ ...s, SECURITIES: String(e) }));
+    }
+  }
+
+  async function handleDiagnose(tickers: string[]) {
+    if (!tickers.length) return;
+    setStatus((s) => ({ ...s, SECURITIES: `Diagnosing ${tickers.join(", ")}…` }));
+    setBetaDiag(null);
+    try {
+      const r = await fetchBetaDiagnostics(tickers);
+      setBetaDiag(r);
+      setStatus((s) => ({ ...s, SECURITIES: "" }));
     } catch (e) {
       setStatus((s) => ({ ...s, SECURITIES: String(e) }));
     }
@@ -277,18 +292,18 @@ export function Settings() {
                     className="np-input w-24"
                   />
                   <button
-                    onClick={() =>
-                      handleIngest(
-                        oneTicker
-                          .split(/[,\s]+/)
-                          .map((t) => t.trim())
-                          .filter(Boolean),
-                      )
-                    }
+                    onClick={() => handleIngest(parseTickers(oneTicker))}
                     disabled={!oneTicker.trim()}
                     className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
                   >
                     Backfill one
+                  </button>
+                  <button
+                    onClick={() => handleDiagnose(parseTickers(oneTicker))}
+                    disabled={!oneTicker.trim()}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
+                  >
+                    Diagnose beta
                   </button>
                 </>
               )}
@@ -299,6 +314,74 @@ export function Settings() {
           </div>
         );
       })}
+
+      {betaDiag && <BetaDiagPanel diag={betaDiag} />}
+    </div>
+  );
+}
+
+function parseTickers(s: string): string[] {
+  return s
+    .split(/[,\s]+/)
+    .map((t) => t.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+/** Per-ticker beta diagnostics: the regression inputs behind a surprising beta — stored bars,
+ *  date span vs the benchmark, observations used, forward-filled gap days, and raw vs shrunk
+ *  beta — so "too low/high" can be traced to data vs a genuine fit. */
+function BetaDiagPanel({ diag }: { diag: BetaDiagnostics }) {
+  const b = diag.benchmark;
+  return (
+    <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+      <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
+        Beta diagnostics
+      </h3>
+      <p className="mt-1 text-xs text-ocean-muted">
+        Benchmark {b.ticker}: {b.bars} bars, {b.first_bar} → {b.last_bar} ({b.obs_used} obs used).
+        A name with far fewer bars, a later start, or many gap days will read a muted beta — that's
+        data, not the market. Names below {diag.min_obs} obs are held at the 1.0 prior.
+      </p>
+      <table className="mt-3 w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs uppercase text-ocean-muted">
+            <th className="pb-2 font-medium">Ticker</th>
+            <th className="pb-2 text-right font-medium">Bars</th>
+            <th className="pb-2 font-medium">Span</th>
+            <th className="pb-2 text-right font-medium">Obs used</th>
+            <th className="pb-2 text-right font-medium">Gap days</th>
+            <th className="pb-2 text-right font-medium">Raw β</th>
+            <th className="pb-2 text-right font-medium">Shrunk β</th>
+            <th className="pb-2 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {diag.names.map((n) => (
+            <tr key={n.ticker} className="border-t border-ocean-border/60">
+              <td className="py-2 font-mono">{n.ticker}</td>
+              <td className="py-2 text-right font-mono">{n.bars ?? "—"}</td>
+              <td className="py-2 font-mono text-xs text-ocean-muted">
+                {n.first_bar ? `${n.first_bar} → ${n.last_bar}` : "—"}
+                {n.starts_after_benchmark ? " ⚠" : ""}
+              </td>
+              <td className="py-2 text-right font-mono">{n.obs_used ?? "—"}</td>
+              <td className={`py-2 text-right font-mono ${n.gap_days ? "text-status-watch" : ""}`}>
+                {n.gap_days ?? "—"}
+              </td>
+              <td className="py-2 text-right font-mono">{n.beta_raw?.toFixed(2) ?? "—"}</td>
+              <td className="py-2 text-right font-mono">{n.beta?.toFixed(2) ?? "—"}</td>
+              <td
+                className={`py-2 text-xs ${
+                  n.status === "ok" ? "text-status-ok" : "text-status-breach"
+                }`}
+                title={n.note ?? ""}
+              >
+                {n.status}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

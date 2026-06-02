@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager, contextmanager
 
+import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -304,6 +305,93 @@ def securities_health(session: Session = Depends(get_session)):
         out = {"benchmark": settings.benchmark}
         out.update(_universe_diag(sec, empty))
         return out
+
+
+class BetaDiagIn(BaseModel):
+    """Tickers to introspect (e.g. one whose beta looks off)."""
+
+    tickers: list[str]
+
+
+@app.post("/securities/beta-diagnostics")
+def beta_diagnostics(body: BetaDiagIn, session: Session = Depends(get_session)):
+    """Why is a name's beta what it is? For each ticker report the REGRESSION INPUTS — stored
+    bar count, date span vs the benchmark, observations actually used, forward-filled gap days
+    (zero-return days inside the window), and raw vs shrunk beta — so a surprising beta can be
+    traced to data (short/gappy history, span shorter than SPY) vs a genuine low/high fit.
+    Read-only; no solver, no writes."""
+    from neptune.quant.beta import (
+        cross_sectional_prior_var as _xprior,
+        raw_beta as _raw,
+        vasicek_shrinkage as _shrink,
+    )
+    from neptune.risk.analytics import DEFAULT_PRIOR_VAR, MIN_BETA_OBS
+
+    tickers = [t.strip().upper() for t in body.tickers if t.strip()]
+    with securities_session(session) as sec:
+        try:
+            md = DbMarketData(sec, benchmark=settings.benchmark)
+        except TickerNotFound as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        market = md.market_returns()
+        bench_series = md._series(settings.benchmark)
+        bench = {
+            "ticker": settings.benchmark,
+            "bars": len(bench_series),
+            "first_bar": bench_series[0][0].isoformat(),
+            "last_bar": bench_series[-1][0].isoformat(),
+            "obs_used": int(min(market.shape[0], 252)),
+        }
+
+        # Raw betas first (to form the same cross-sectional Vasicek prior the universe uses).
+        raws: dict[str, object] = {}
+        for t in tickers:
+            try:
+                raws[t] = _raw(md.ticker_returns(t), market)
+            except (ValueError, TickerNotFound):
+                raws[t] = None
+        good = [r.beta_raw for r in raws.values() if r is not None and r.n_obs >= MIN_BETA_OBS]
+        prior_var = _xprior(good) if len(good) >= 2 else DEFAULT_PRIOR_VAR
+
+        rows = []
+        for t in tickers:
+            r = raws[t]
+            try:
+                series = md._series(t)
+                rets = md.ticker_returns(t)
+            except TickerNotFound:
+                rows.append({"ticker": t, "status": "no_prices",
+                             "note": "no stored prices for this ticker"})
+                continue
+            window = rets[-252:] if rets.shape[0] > 252 else rets
+            gap_days = int((np.abs(window) < 1e-12).sum())  # forward-filled / flat days
+            row = {
+                "ticker": t,
+                "bars": len(series),
+                "first_bar": series[0][0].isoformat() if series else None,
+                "last_bar": series[-1][0].isoformat() if series else None,
+                "obs_used": int(r.n_obs) if r is not None else 0,
+                "gap_days": gap_days,  # zero-return days in the window (gaps muted toward 0 beta)
+                "starts_after_benchmark": bool(series and series[0][0] > bench_series[0][0]),
+            }
+            if r is None:
+                row["status"] = "insufficient_data"
+                row["note"] = "too few observations to regress (<3)"
+            elif r.n_obs < MIN_BETA_OBS:
+                row["status"] = "insufficient_data"
+                row["beta_raw"] = round(r.beta_raw, 4)
+                row["note"] = f"only {r.n_obs} obs (<{MIN_BETA_OBS}); beta held at 1.0 prior"
+            else:
+                shrunk, w = _shrink(r.beta_raw, r.var_ols, prior_var)
+                row["status"] = "ok"
+                row["beta_raw"] = round(r.beta_raw, 4)
+                row["beta"] = round(shrunk, 4)
+                row["var_ols"] = float(r.var_ols)
+                row["vasicek_weight"] = round(w, 4)
+            rows.append(row)
+
+        return {"benchmark": bench, "min_obs": MIN_BETA_OBS, "names": rows}
 
 
 @app.get("/portfolios/{portfolio_id}/hedge/diagnostics")
