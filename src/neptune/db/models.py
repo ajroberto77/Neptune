@@ -87,6 +87,10 @@ class PortfolioORM(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     base_currency: Mapped[str] = mapped_column(String, default="USD")
     is_paper: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Shorting mandate: "LONG_SHORT" (hedged, beta-constrained) or "LONG_ONLY" (no shorting).
+    # Stored as a plain string (not a native enum) so the column-add migration stays
+    # dialect-agnostic; the domain layer converts it to/from the Mandate enum.
+    mandate: Mapped[str] = mapped_column(String, default="LONG_SHORT", nullable=False)
     firm_id: Mapped[str | None] = mapped_column(
         ForeignKey("management_firms.id"), nullable=True
     )

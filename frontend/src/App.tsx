@@ -20,6 +20,7 @@ import {
   refreshPrices,
   setPriceRefresh,
 } from "./api/client";
+import type { PortfolioMeta } from "./api/client";
 import type { TransactionInput } from "./types";
 import { Portfolio } from "./tabs/Portfolio";
 import { Trade } from "./tabs/Trade";
@@ -31,14 +32,16 @@ import { Settings } from "./tabs/Settings";
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
-// The virtual "all books" roll-up; the backend resolves this id to every book's positions.
-const CONSOLIDATED_ID = "__consolidated__";
+// Virtual roll-up views; the backend resolves these ids to the right slice of books.
+const CONSOLIDATED_ID = "__consolidated__"; // every book
+const LONGSHORT_GROUP_ID = "__long_short__"; // hedged (long/short) books only
+const LONGONLY_GROUP_ID = "__long_only__"; // long-only books only
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Portfolio");
   // The selected portfolio. Defaults to the Consolidated roll-up across every book.
   const [portfolioId, setPortfolioId] = useState<string>(CONSOLIDATED_ID);
-  const [portfolios, setPortfolios] = useState<{ id: string; name: string }[]>([]);
+  const [portfolios, setPortfolios] = useState<PortfolioMeta[]>([]);
   // The Hedge tab always targets a REAL book (you can't hedge the Consolidated roll-up).
   const [hedgePortfolioId, setHedgePortfolioId] = useState<string>("");
   const [summary, setSummary] = useState<RiskSummary | null>(null);
@@ -62,8 +65,9 @@ export default function App() {
     fetchPortfolios()
       .then((ps) => {
         setPortfolios(ps); // keep the Consolidated default; the user picks a book explicitly
-        // The hedge book defaults to a real portfolio (Consolidated can't be hedged/booked).
-        if (ps.length) setHedgePortfolioId((cur) => cur || ps[0].id);
+        // The hedge book defaults to a real LONG/SHORT book (roll-ups and long-only can't be hedged).
+        const firstLS = ps.find((p) => p.mandate === "LONG_SHORT");
+        if (firstLS) setHedgePortfolioId((cur) => cur || firstLS.id);
       })
       .catch((e) => setError(String(e)));
     getPriceRefresh()
@@ -216,6 +220,11 @@ export default function App() {
     return () => clearInterval(id);
   }, [refreshMins]);
 
+  // Split books by mandate for the grouped switcher and to scope the Hedge tab (you can only
+  // hedge a real long/short book — never a roll-up or a long-only book).
+  const longShortBooks = portfolios.filter((p) => p.mandate === "LONG_SHORT");
+  const longOnlyBooks = portfolios.filter((p) => p.mandate === "LONG_ONLY");
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-ocean-border bg-ocean-panel/60">
@@ -261,7 +270,7 @@ export default function App() {
             {tab === "Hedge" && (
               <Hedge
                 proposal={proposal}
-                portfolios={portfolios}
+                portfolios={longShortBooks}
                 hedgePortfolioId={hedgePortfolioId}
                 onHedgePortfolio={(id) => {
                   setHedgePortfolioId(id);
@@ -280,8 +289,10 @@ export default function App() {
             )}
             {tab === "Portfolio" && (
               <div className="space-y-6">
-                {/* The portfolio selector lives on the Portfolio page. Consolidated (all
-                    books) is the default; the choice persists across the other tabs. */}
+                {/* The portfolio selector lives on the Portfolio page. The roll-ups (bold) are
+                    selectable views: Consolidated = every book; Long / Short and Long Only roll
+                    up their group. Individual books sit (indented) under their group with a
+                    (L/S) or (LO) tag. The choice persists across the other tabs. */}
                 <label className="flex items-center gap-2 text-xs text-ocean-muted">
                   Portfolio
                   <select
@@ -292,11 +303,32 @@ export default function App() {
                     <option value={CONSOLIDATED_ID} style={{ fontWeight: 700 }}>
                       Consolidated
                     </option>
-                    {portfolios.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
+                    {longShortBooks.length > 0 && (
+                      <>
+                        <option value={LONGSHORT_GROUP_ID} style={{ fontWeight: 700 }}>
+                          Long / Short
+                        </option>
+                        {longShortBooks.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {"  "}
+                            {p.name} (L/S)
+                          </option>
+                        ))}
+                      </>
+                    )}
+                    {longOnlyBooks.length > 0 && (
+                      <>
+                        <option value={LONGONLY_GROUP_ID} style={{ fontWeight: 700 }}>
+                          Long Only
+                        </option>
+                        {longOnlyBooks.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {"  "}
+                            {p.name} (LO)
+                          </option>
+                        ))}
+                      </>
+                    )}
                   </select>
                 </label>
                 <Portfolio

@@ -11,7 +11,9 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from neptune.db.repository import OrgRepository, PositionRepository
-from neptune.domain.models import LotEntry, Portfolio, Position, Side, ShortType, TradeAction
+from neptune.domain.models import (
+    LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
+)
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, Lot, reduce_position
 
@@ -58,6 +60,12 @@ class PositionService:
         return self.repo.list_portfolios()
 
     def add_position(self, portfolio_id: str, position: Position) -> int:
+        if position.side is Side.SHORT:
+            book = self.repo.get_portfolio(portfolio_id)
+            if book is not None and book.mandate is Mandate.LONG_ONLY:
+                raise ConflictError(
+                    f"{portfolio_id!r} is a LONG_ONLY book — shorting is not allowed."
+                )
         existing = self.repo.list_positions(portfolio_id)
         self._check_long_short_conflict(position, existing)
         return self.repo.add_position(portfolio_id, position)
@@ -86,6 +94,13 @@ class PositionService:
         once approved: recording an execution is not auto-execution (no broker routing), and
         the book tag (``short_type``) keeps systematic and discretionary shorts distinct
         (I-03)."""
+        if side is Side.SHORT:
+            book = self.repo.get_portfolio(portfolio_id)
+            if book is not None and book.mandate is Mandate.LONG_ONLY:
+                raise ConflictError(
+                    f"{portfolio_id!r} is a LONG_ONLY book — shorting is not allowed "
+                    f"(no systematic hedge, no discretionary short)."
+                )
         lot = LotEntry(quantity=quantity, entry_price=price, entry_date=trade_date,
                        fee_per_share=fee_per_share)
         existing = self.repo.list_positions(portfolio_id)

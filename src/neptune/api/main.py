@@ -36,7 +36,9 @@ from neptune.settings_store.app_settings import AppSettingsService
 from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
 from neptune.db.models import PositionORM
 from neptune.db.runtime import securities_session
-from neptune.domain.models import BookType, LotEntry, Portfolio, Position, Side, ShortType, TradeAction
+from neptune.domain.models import (
+    BookType, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
+)
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
 from neptune.quant.factors import STYLE_FACTORS
@@ -260,17 +262,21 @@ def get_session():
         yield session
 
 
-# The consolidated ("Consolidated") view: every book's positions rolled into one virtual
-# portfolio. A read/analysis-only target — you cannot trade against it (pick a real book).
+# Read-only roll-up views (virtual portfolios). You cannot trade against a roll-up — pick a
+# real book. Consolidated = every book; the two group roll-ups slice by mandate so the desk can
+# see the hedged (Long/Short) book and the Long-Only book separately.
 CONSOLIDATED_ID = "__consolidated__"
+LONGSHORT_GROUP_ID = "__long_short__"
+LONGONLY_GROUP_ID = "__long_only__"
+ROLLUP_IDS = {CONSOLIDATED_ID, LONGSHORT_GROUP_ID, LONGONLY_GROUP_ID}
 
 
 def _require_portfolio(service: PositionService, portfolio_id: str):
-    """A real, mutable book. Rejects the consolidated sentinel — you trade into a real book."""
-    if portfolio_id == CONSOLIDATED_ID:
+    """A real, mutable book. Rejects the roll-up sentinels — you trade into a real book."""
+    if portfolio_id in ROLLUP_IDS:
         raise HTTPException(
             status_code=409,
-            detail="Consolidated is a read-only roll-up; select a specific portfolio to trade.",
+            detail="Roll-up views are read-only; select a specific portfolio to trade.",
         )
     portfolio = service.get_portfolio(portfolio_id)
     if portfolio is None:
@@ -278,13 +284,32 @@ def _require_portfolio(service: PositionService, portfolio_id: str):
     return portfolio
 
 
+def _rollup_portfolio(service: PositionService, portfolio_id: str) -> Portfolio | None:
+    """The virtual portfolio for a roll-up sentinel, or None if ``portfolio_id`` isn't one.
+
+    Consolidated concatenates every book. The group roll-ups filter by mandate: Long/Short =
+    the hedged books (these must hold to net-beta neutrality); Long Only = the long-only books
+    (intentionally long-beta — carved out of the consolidated balance check). The roll-up
+    carries the mandate so the risk view knows whether neutrality even applies."""
+    if portfolio_id not in ROLLUP_IDS:
+        return None
+    books = service.list_portfolios()
+    if portfolio_id == LONGSHORT_GROUP_ID:
+        books = [b for b in books if b.mandate is Mandate.LONG_SHORT]
+        name, mandate = "Long / Short", Mandate.LONG_SHORT
+    elif portfolio_id == LONGONLY_GROUP_ID:
+        books = [b for b in books if b.mandate is Mandate.LONG_ONLY]
+        name, mandate = "Long Only", Mandate.LONG_ONLY
+    else:
+        name, mandate = "Consolidated", Mandate.LONG_SHORT
+    positions = [p for b in books for p in b.positions]
+    return Portfolio(id=portfolio_id, name=name, positions=positions, mandate=mandate)
+
+
 def _resolve_portfolio(service: PositionService, portfolio_id: str):
-    """A book for read/analysis. The consolidated sentinel yields a virtual portfolio that
-    concatenates every book's positions (the firm roll-up); otherwise a real book."""
-    if portfolio_id == CONSOLIDATED_ID:
-        positions = [p for b in service.list_portfolios() for p in b.positions]
-        return Portfolio(id=CONSOLIDATED_ID, name="Consolidated", positions=positions)
-    return _require_portfolio(service, portfolio_id)
+    """A book for read/analysis: a roll-up sentinel yields its virtual portfolio, else a real book."""
+    rollup = _rollup_portfolio(service, portfolio_id)
+    return rollup if rollup is not None else _require_portfolio(service, portfolio_id)
 
 
 # --- endpoints -------------------------------------------------------------------
@@ -521,6 +546,7 @@ class PortfolioIn(BaseModel):
 
     id: str
     name: str
+    mandate: str = "LONG_SHORT"  # or "LONG_ONLY" (no shorting)
     firm_id: str | None = None
     investor_entity_id: str | None = None
     lead_pm_ids: list[str] = Field(default_factory=list)
@@ -528,10 +554,11 @@ class PortfolioIn(BaseModel):
 
 @app.get("/portfolios")
 def list_portfolios(session: Session = Depends(get_session)):
-    """All books, for the portfolio switcher and the Total Book rollup."""
+    """All books, for the portfolio switcher and the Total Book rollup. ``mandate`` drives the
+    grouped switcher (Long/Short vs Long Only) and the consolidated beta-balance carve-out."""
     svc = PositionService(session)
     return [
-        {"id": p.id, "name": p.name, "firm_id": p.firm_id,
+        {"id": p.id, "name": p.name, "mandate": p.mandate.value, "firm_id": p.firm_id,
          "investor_entity_id": p.investor_entity_id, "lead_pm_ids": p.lead_pm_ids}
         for p in svc.list_portfolios()
     ]
@@ -542,12 +569,13 @@ def create_portfolio(body: PortfolioIn, session: Session = Depends(get_session))
     svc = PositionService(session)
     if svc.get_portfolio(body.id) is not None:
         raise HTTPException(status_code=409, detail=f"portfolio {body.id} already exists")
+    mandate = Mandate(body.mandate) if body.mandate else Mandate.LONG_SHORT
     kwargs = {k: v for k, v in (
         ("firm_id", body.firm_id), ("investor_entity_id", body.investor_entity_id),
         ("lead_pm_ids", body.lead_pm_ids),
     ) if v}
-    p = svc.create_portfolio(body.id, body.name, **kwargs)
-    return {"id": p.id, "name": p.name}
+    p = svc.create_portfolio(body.id, body.name, mandate=mandate.value, **kwargs)
+    return {"id": p.id, "name": p.name, "mandate": p.mandate.value}
 
 
 class PersonIn(BaseModel):
@@ -718,26 +746,47 @@ def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
 def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     service = PositionService(session)
     portfolio = _resolve_portfolio(service, portfolio_id)
-    with market_data_for(session, portfolio) as md:
-        metrics = analytics.compute_metrics(portfolio, md)
-    net_beta, net_factors = analytics.net_metrics(portfolio, metrics)
+    # The beta-balance check is "adjusted for long-only": a long-only book is intentionally
+    # long-beta, so the Consolidated roll-up measures neutrality over the HEDGED (long/short)
+    # books only — the long-only longs show in the totals but never trip a breach. A long-only
+    # *view itself* (the Long Only roll-up or a real long-only book) is reported as informational:
+    # neutrality is not required, so its net long beta is expected, not a breach.
+    long_only_view = portfolio.mandate is Mandate.LONG_ONLY
+    if portfolio_id == CONSOLIDATED_ID:
+        beta_portfolio = Portfolio(
+            id=portfolio_id, name="Consolidated",
+            positions=[p for b in service.list_portfolios()
+                       if b.mandate is Mandate.LONG_SHORT for p in b.positions],
+        )
+    else:
+        beta_portfolio = portfolio
+
+    with market_data_for(session, beta_portfolio) as md:
+        metrics = analytics.compute_metrics(beta_portfolio, md)
+    net_beta, net_factors = analytics.net_metrics(beta_portfolio, metrics)
     # Market is shown by the net-beta gauge; the factor table covers the style factors.
     style_factors = {f: net_factors[f] for f in STYLE_FACTORS}
     summary = summarize(
         net_beta=net_beta,
         factor_exposures=style_factors,
-        long_aum=portfolio.long_aum,
+        long_aum=beta_portfolio.long_aum,
         beta_tol=settings.beta_tol,
         factor_limit=settings.factor_limit,
     )
     return {
         "portfolio_id": portfolio_id,
+        "mandate": portfolio.mandate.value,
+        # Long-only views are NOT held to neutrality — the UI shows their beta as informational.
+        "beta_neutral_required": not long_only_view,
         "net_beta": summary.net_beta,
         "beta_tol": summary.beta_tol,
-        "beta_status": summary.beta_status,
+        "beta_status": "INFO" if long_only_view else summary.beta_status,
         "beta_neutral": summary.beta_neutral,
         "long_aum": summary.long_aum,
-        "headline": summary.headline(),
+        "headline": (
+            "Long-only mandate — net long beta is expected (no neutrality constraint)."
+            if long_only_view else summary.headline()
+        ),
         "factors": [
             {"factor": f.factor, "exposure": f.exposure, "limit": f.limit, "status": f.status}
             for f in summary.factors
@@ -760,6 +809,11 @@ def propose_hedge(
 ):
     service = PositionService(session)
     portfolio = _resolve_portfolio(service, portfolio_id)
+    if portfolio.mandate is Mandate.LONG_ONLY:
+        raise HTTPException(
+            status_code=422,
+            detail="Long-only books are not hedged (shorting is disallowed by mandate).",
+        )
     long_tickers = {p.ticker for p in portfolio.longs}
     try:
         with market_data_for(session, portfolio) as md:
@@ -832,7 +886,12 @@ class HedgeApproveIn(BaseModel):
 def approve_hedge(portfolio_id: str, body: HedgeApproveIn,
                   session: Session = Depends(get_session)):
     service = PositionService(session)
-    _require_portfolio(service, portfolio_id)  # real book only (rejects Consolidated)
+    book = _require_portfolio(service, portfolio_id)  # real book only (rejects roll-ups)
+    if book.mandate is Mandate.LONG_ONLY:
+        raise HTTPException(
+            status_code=422,
+            detail="Long-only books cannot book a systematic hedge (shorting disallowed).",
+        )
     # A hedge proposal is a FULL replacement for the systematic book (residual_metrics excludes
     # systematic shorts, so the optimizer re-sizes the whole hedge against the long book). Clear
     # the existing systematic shorts first, so approving REPLACES the hedge rather than stacking a

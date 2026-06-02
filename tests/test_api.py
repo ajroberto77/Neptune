@@ -48,6 +48,35 @@ def test_consolidated_rolls_up_all_books(client):
     assert r.status_code == 409
 
 
+def test_mandate_rollups_and_long_only_guards(client):
+    # Create a long-only book and a hedged book; the switcher reports mandate per book.
+    client.post("/portfolios", json={"id": "LO-1", "name": "Long Only Fund", "mandate": "LONG_ONLY"})
+    client.post("/portfolios/LO-1/positions", json={
+        "ticker": "LOLONG", "side": "LONG", "notional": 2_000_000.0,
+    })
+    by_id = {p["id"]: p for p in client.get("/portfolios").json()}
+    assert by_id["LO-1"]["mandate"] == "LONG_ONLY"
+    assert by_id[PID]["mandate"] == "LONG_SHORT"  # seeded book defaults to hedged
+
+    # The Long Only roll-up spans only long-only books and is reported as informational
+    # (no neutrality required), so its net long beta is not a breach.
+    lo = client.get("/portfolios/__long_only__/risk").json()
+    assert lo["mandate"] == "LONG_ONLY"
+    assert lo["beta_neutral_required"] is False
+    assert lo["beta_status"] == "INFO"
+    assert "LOLONG" in {p["ticker"] for p in client.get("/portfolios/__long_only__/positions").json()}
+
+    # The Long/Short roll-up excludes the long-only book.
+    ls_tickers = {p["ticker"] for p in client.get("/portfolios/__long_short__/positions").json()}
+    assert "LOLONG" not in ls_tickers
+
+    # A long-only book cannot be shorted or hedged.
+    assert client.post("/portfolios/LO-1/positions", json={
+        "ticker": "X", "side": "SHORT", "notional": 100.0, "short_type": "DISCRETIONARY",
+    }).status_code in (409, 422)
+    assert client.post("/portfolios/LO-1/hedge/propose").status_code == 422
+
+
 def test_list_and_create_portfolios(client):
     # The seeded golden book is listed.
     ids = {p["id"] for p in client.get("/portfolios").json()}

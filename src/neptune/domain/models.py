@@ -48,6 +48,16 @@ class BookType(str, Enum):
     DISCRETIONARY_SHORT = "DISCRETIONARY_SHORT"
 
 
+class Mandate(str, Enum):
+    """A portfolio's shorting mandate. LONG_SHORT books carry a hedge and must hold to the
+    net-beta constraint; LONG_ONLY books may NOT short at all (no systematic hedge, no
+    discretionary short) and are intentionally long-beta — so they're carved OUT of the
+    consolidated beta-balance check (their exposure is expected, not a breach)."""
+
+    LONG_SHORT = "LONG_SHORT"
+    LONG_ONLY = "LONG_ONLY"
+
+
 @dataclass
 class LotEntry:
     """A position's open lot as carried on the domain object (mirrors pnl.Lot).
@@ -146,6 +156,7 @@ class Portfolio:
     investor_entity_id: str | None = None
     lead_pm_ids: list[str] = field(default_factory=list)
     positions: list[Position] = field(default_factory=list)
+    mandate: Mandate = Mandate.LONG_SHORT  # LONG_ONLY books may not short (see Mandate)
 
     @property
     def longs(self) -> list[Position]:

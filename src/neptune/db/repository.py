@@ -13,7 +13,7 @@ from neptune.db.models import (
     PortfolioORM,
     PositionORM,
 )
-from neptune.domain.models import LotEntry, Portfolio, Position, Side, ShortType
+from neptune.domain.models import LotEntry, Mandate, Portfolio, Position, Side, ShortType
 from neptune.domain.org import InvestorEntity, ManagementFirm, Person, PersonRole
 from neptune.pnl import CostBasisMethod
 
@@ -51,6 +51,7 @@ def _to_domain_portfolio(row: PortfolioORM) -> Portfolio:
         investor_entity_id=row.investor_entity_id,
         lead_pm_ids=[m.person_id for m in row.managers if m.is_lead],
         positions=[_to_domain_position(p) for p in row.positions],
+        mandate=Mandate(getattr(row, "mandate", None) or "LONG_SHORT"),
     )
 
 

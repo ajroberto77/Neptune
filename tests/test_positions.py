@@ -50,6 +50,29 @@ def test_clear_systematic_shorts_replaces_not_stacks(session):
     assert positions["DISCX"].short_type is ShortType.DISCRETIONARY
 
 
+def test_long_only_book_rejects_shorting(session):
+    """A LONG_ONLY mandate blocks any short (systematic hedge or discretionary) at the booking
+    layer — longs are fine, shorts raise. The other books keep their default LONG_SHORT mandate."""
+    from datetime import date
+    from neptune.domain.models import Mandate, TradeAction
+
+    service = PositionService(session)
+    service.create_portfolio("LO", "Long Only Book", mandate=Mandate.LONG_ONLY.value)
+    assert service.get_portfolio("LO").mandate is Mandate.LONG_ONLY
+
+    # Longs are allowed.
+    service.record_trade("LO", "AAA", Side.LONG, ShortType.NA, 100, 50.0, date.today())
+    # Any short is rejected — systematic and discretionary alike.
+    with pytest.raises(ConflictError):
+        service.record_trade("LO", "BSX", Side.SHORT, ShortType.SYSTEMATIC, 100, 50.0, date.today())
+    # A manual SELL beyond the long would open a discretionary short → also rejected.
+    with pytest.raises(ConflictError):
+        service.book_trade("LO", "AAA", TradeAction.SELL, 500, 50.0, date.today())
+
+    service.create_portfolio("LS", "Hedged Book")  # default mandate
+    assert service.get_portfolio("LS").mandate is Mandate.LONG_SHORT
+
+
 def test_fundamental_layer_round_trips(session):
     service = PositionService(session)
     service.create_portfolio("P2", "Thesis Book")

@@ -82,8 +82,14 @@ export function refreshPrices(
   return getJSON(`/portfolios/${portfolioId}/refresh-prices`, { method: "POST" });
 }
 
-export function fetchPortfolios(): Promise<{ id: string; name: string }[]> {
-  return getJSON("/portfolios");
+export interface PortfolioMeta {
+  id: string;
+  name: string;
+  mandate: "LONG_SHORT" | "LONG_ONLY";
+}
+
+export function fetchPortfolios(): Promise<PortfolioMeta[]> {
+  return getJSON<PortfolioMeta[]>("/portfolios");
 }
 
 export function approveHedge(
