@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { PendingHedge, TradeAction, TransactionInput } from "../types";
-import { money } from "../format";
+import { money, price } from "../format";
 
 const ACTIONS: { value: TradeAction; label: string }[] = [
   { value: "BUY", label: "Buy" },
@@ -190,7 +190,7 @@ export function Trade({
                   <td className="py-2 text-right font-mono">
                     {s.shares.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </td>
-                  <td className="py-2 text-right font-mono">{money(s.price)}</td>
+                  <td className="py-2 text-right font-mono">{price(s.price)}</td>
                   <td className="py-2 text-right font-mono">{money(s.notional)}</td>
                   <td className="py-2 text-right font-mono">{s.beta.toFixed(2)}</td>
                 </tr>
