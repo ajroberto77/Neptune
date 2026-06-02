@@ -169,3 +169,51 @@ def cross_sectional_prior_var(raw_betas: np.ndarray) -> float:
     if arr.size < 2:
         raise ValueError("need at least 2 raw betas to estimate cross-sectional variance")
     return float(np.var(arr, ddof=1))
+
+
+@dataclass(frozen=True)
+class BetaPoint:
+    """One sample of the walk-forward beta history."""
+
+    end_index: int   # index into the (aligned) return arrays this fit ends on (inclusive)
+    beta_raw: float  # raw OLS beta on the trailing window ending at end_index
+    beta: float      # Vasicek-shrunk beta
+    n_obs: int       # observations in the trailing window
+
+
+def beta_history(
+    stock_returns: np.ndarray,
+    market_returns: np.ndarray,
+    var_prior: float,
+    lookback: int = DEFAULT_LOOKBACK,
+    points: int = 26,
+    step: int = 5,
+    min_obs: int = 3,
+) -> list[BetaPoint]:
+    """Walk-forward beta: refit the 252-day OLS → Vasicek beta on the trailing ``lookback``
+    window ending at each of the most recent ``points`` sample dates (sampled every ``step``
+    returns). POINT-IN-TIME — each fit uses only returns up to its end index, so this is exactly
+    what the beta WOULD have read on that date; plotting it shows how stable a name's beta is over
+    time (and why a hedge sized last week can differ from today).
+
+    ``stock_returns`` and ``market_returns`` must be date-aligned and equal length (the caller
+    aligns and owns the date mapping). Samples with fewer than ``min_obs`` trailing observations
+    are skipped. Returns oldest→newest."""
+    stock = np.asarray(stock_returns, dtype=float)
+    market = np.asarray(market_returns, dtype=float)
+    if stock.shape[0] != market.shape[0]:
+        raise ValueError("stock and market return series must be aligned and equal length")
+    n = stock.shape[0]
+    if n == 0:
+        return []
+    # Sample end indices: newest at n-1, stepping back, up to `points` samples (oldest first).
+    ends = sorted({max(0, n - 1 - step * k) for k in range(max(points, 1))})
+    out: list[BetaPoint] = []
+    for end in ends:
+        s, m = stock[: end + 1], market[: end + 1]
+        if s.shape[0] < min_obs:
+            continue
+        rb = raw_beta(s, m, lookback)  # raw_beta keeps only the trailing `lookback` itself
+        beta, _ = vasicek_shrinkage(rb.beta_raw, rb.var_ols, var_prior)
+        out.append(BetaPoint(end_index=end, beta_raw=rb.beta_raw, beta=beta, n_obs=rb.n_obs))
+    return out

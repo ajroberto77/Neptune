@@ -26,10 +26,11 @@ import { Portfolio } from "./tabs/Portfolio";
 import { Trade } from "./tabs/Trade";
 import { RiskDashboard } from "./tabs/RiskDashboard";
 import { Hedge } from "./tabs/Hedge";
+import { BetaHistory } from "./tabs/BetaHistory";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 
-const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Stress", "Settings"] as const;
+const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 // Virtual roll-up views; the backend resolves these ids to the right slice of books.
@@ -353,6 +354,7 @@ export default function App() {
                 onConsumeHedge={() => setPendingHedge(null)}
               />
             )}
+            {tab === "Beta" && <BetaHistory portfolioId={portfolioId} />}
             {tab === "Stress" && (
               <Stress report={stress} onRun={handleStress} loading={stressLoading} />
             )}

@@ -106,6 +106,31 @@ def test_cross_sectional_prior_var():
         cross_sectional_prior_var(np.array([1.0]))
 
 
+def test_beta_history_is_flat_for_a_stable_name_and_moves_on_a_regime_change():
+    """Walk-forward beta: a name whose beta is constant over time yields a ~flat history; a name
+    whose beta steps up partway through shows the history rising. Each fit is point-in-time."""
+    from neptune.quant.beta import beta_history
+
+    market = make_market_returns(n=600, seed=4)
+    stable = make_stock_returns(market, beta_true=0.8, noise_std=0.01, seed=1)
+    hist = beta_history(stable, market, var_prior=VAR_PRIOR, lookback=252, points=8, step=40)
+    betas = [p.beta for p in hist]
+    assert len(betas) >= 5
+    assert max(betas) - min(betas) < 0.15  # consistent over time
+    assert all(b == pytest.approx(0.8, abs=0.2) for b in betas)
+
+    # Regime change: beta 0.5 first half, 1.5 second half → the trailing beta drifts UP.
+    half = 300
+    regime = make_stock_returns(market, beta_true=0.5, noise_std=0.01, seed=2)
+    regime[half:] = 1.5 * market[half:] + (regime[half:] - 0.5 * market[half:])
+    b2 = [p.beta for p in beta_history(regime, market, var_prior=VAR_PRIOR,
+                                       lookback=252, points=8, step=40)]
+    assert b2[-1] > b2[0] + 0.2  # the recent window has rolled into the high-beta regime
+
+    with pytest.raises(ValueError):  # aligned/equal-length contract enforced
+        beta_history(stable[:-1], market, var_prior=VAR_PRIOR)
+
+
 def test_semibetas_capture_down_up_asymmetry():
     """A name engineered to move 2x with down-markets and 0.5x with up-markets should yield
     down_beta ~ 2 and up_beta ~ 0.5 — and neither should touch the pipeline beta."""

@@ -794,6 +794,45 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     }
 
 
+@app.get("/portfolios/{portfolio_id}/beta-history")
+def portfolio_beta_history(
+    portfolio_id: str,
+    points: int = Query(default=26, ge=2, le=104, description="Number of sample dates."),
+    step: int = Query(default=5, ge=1, le=63, description="Trading days between samples (5=weekly)."),
+    session: Session = Depends(get_session),
+):
+    """Beta consistency over time: the book's NET beta on a trailing-window walk-forward (current
+    weights held fixed, point-in-time betas), plus each holding's beta history and drift stats.
+    Shows whether betas — and therefore the hedge target — are stable across time. Read-only."""
+    service = PositionService(session)
+    portfolio = _resolve_portfolio(service, portfolio_id)
+    holdings = [p for p in portfolio.positions if p.notional]
+    with securities_session(session) as sec:
+        try:
+            md = DbMarketData(sec, benchmark=settings.benchmark)
+        except TickerNotFound as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        net = analytics.portfolio_beta_history(md, portfolio, points=points, step=step)
+        positions = []
+        for p in holdings:
+            try:
+                series = analytics.ticker_beta_history(md, p.ticker, points=points, step=step)
+            except TickerNotFound:
+                series = []
+            positions.append({
+                "ticker": p.ticker, "side": p.side.value, "short_type": p.short_type.value,
+                "notional": round(p.notional, 2),
+                "stats": analytics.consistency_stats([pt["beta"] for pt in series]),
+                "series": series,
+            })
+    return {
+        "portfolio_id": portfolio_id, "lookback": 252, "points": points, "step": step,
+        "net": net,
+        "net_stats": analytics.consistency_stats([pt["net_beta"] for pt in net]),
+        "positions": positions,
+    }
+
+
 @app.post("/portfolios/{portfolio_id}/hedge/propose")
 def propose_hedge(
     portfolio_id: str,

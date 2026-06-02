@@ -142,6 +142,54 @@ def test_beta_diagnostics_traces_low_beta_to_data(client):
     assert by["THIN"]["obs_used"] < body["min_obs"]
 
 
+def test_portfolio_beta_history_returns_net_and_per_position_series(client):
+    """The beta-consistency endpoint returns a net-beta walk-forward plus per-holding beta
+    histories with drift stats — date-stamped, point-in-time, over the benchmark's date axis."""
+    from datetime import date, timedelta
+
+    import numpy as np
+    from sqlalchemy.orm import Session
+
+    from neptune.db.base import securities_engine
+    from neptune.securities.models import Price, Security
+
+    rng = np.random.default_rng(3)
+    n = 320
+    mkt = rng.normal(0.0, 0.01, n)
+
+    def _seed(sec, iid, ticker, rets, base=100.0):
+        sec.add(Security(instrument_id=iid, ticker=ticker, security_type="Common Stock"))
+        px = [base]
+        for r in rets:
+            px.append(px[-1] * (1 + r))
+        start = date.today() - timedelta(days=len(px) + 1)
+        for i, p in enumerate(px):
+            sec.add(Price(instrument_id=iid, ts=start + timedelta(days=i),
+                          close=p, adj_close=p, source="yfinance"))
+
+    with Session(securities_engine) as sec:
+        _seed(sec, 1, "SPY", mkt, base=400.0)
+        _seed(sec, 2, "HB", 1.20 * mkt + rng.normal(0, 0.004, n))  # ~1.2 beta name
+        sec.commit()
+
+    # A real book holding the priced name.
+    client.post("/portfolios", json={"id": "BH", "name": "Beta Hist Book"})
+    client.post("/portfolios/BH/positions", json={
+        "ticker": "HB", "side": "LONG", "notional": 1_000_000.0,
+    })
+
+    r = client.get("/portfolios/BH/beta-history?points=10&step=10")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["net"]) >= 5
+    assert all("date" in pt and "net_beta" in pt for pt in body["net"])
+    assert body["net_stats"]["points"] == len(body["net"])
+    hb = next(p for p in body["positions"] if p["ticker"] == "HB")
+    assert len(hb["series"]) >= 5
+    assert hb["stats"]["mean"] == pytest.approx(1.2, abs=0.3)  # recovers the name's ~1.2 beta
+    assert hb["stats"]["range"] < 0.4  # stable name → low drift
+
+
 def test_factor_ingest_reports_feed_unavailable(client, monkeypatch):
     # An unreachable Ken French feed → clean 503, not a 500. Force the download to fail so the
     # test is deterministic (never hits the real network, even on a connected machine).

@@ -203,6 +203,35 @@ export interface BetaDiagRow {
   note?: string;
 }
 
+export interface BetaStats {
+  last: number;
+  mean: number;
+  std: number;
+  min: number;
+  max: number;
+  range: number;
+  points: number;
+}
+
+export interface BetaHistoryPosition {
+  ticker: string;
+  side: string;
+  short_type: string;
+  notional: number;
+  stats: BetaStats | null;
+  series: { date: string; beta: number; beta_raw: number; n_obs: number }[];
+}
+
+export interface BetaHistory {
+  portfolio_id: string;
+  lookback: number;
+  points: number;
+  step: number;
+  net: { date: string; net_beta: number }[];
+  net_stats: BetaStats | null;
+  positions: BetaHistoryPosition[];
+}
+
 export interface BetaDiagnostics {
   benchmark: { ticker: string; bars: number; first_bar: string; last_bar: string; obs_used: number };
   min_obs: number;

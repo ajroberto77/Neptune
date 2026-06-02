@@ -19,7 +19,9 @@ from neptune.data.market import SyntheticMarketData
 from neptune.data.source import MarketData
 from neptune.domain.models import Portfolio, ShortType
 from neptune.quant.beta import (
+    DEFAULT_LOOKBACK,
     RawBetaResult,
+    beta_history as _beta_history_engine,
     raw_beta,
     vasicek_shrinkage,
 )
@@ -195,3 +197,90 @@ def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate
                       sector=market_data.sector(t), variance=variance)
         )
     return candidates
+
+
+# --- beta consistency / walk-forward history ----------------------------------------
+
+def consistency_stats(betas: list[float]) -> dict | None:
+    """Summary stats over a beta time series: where it sits now and how much it has drifted."""
+    if not betas:
+        return None
+    arr = np.asarray(betas, dtype=float)
+    return {
+        "last": round(float(arr[-1]), 4),
+        "mean": round(float(arr.mean()), 4),
+        "std": round(float(arr.std(ddof=1)) if arr.size > 1 else 0.0, 4),
+        "min": round(float(arr.min()), 4),
+        "max": round(float(arr.max()), 4),
+        "range": round(float(arr.max() - arr.min()), 4),
+        "points": int(arr.size),
+    }
+
+
+def ticker_beta_history(
+    market_data, ticker: str,
+    lookback: int = DEFAULT_LOOKBACK, points: int = 26, step: int = 5,
+) -> list[dict]:
+    """Point-in-time beta for one name over the recent past (date-stamped), for the consistency
+    chart. Aligns the name to the benchmark's return-date axis and refits on trailing windows."""
+    market = np.asarray(market_data.market_returns(), dtype=float)
+    rets = np.asarray(market_data.ticker_returns(ticker), dtype=float)  # may raise TickerNotFound
+    dates = list(market_data.return_dates())
+    k = min(market.shape[0], rets.shape[0], len(dates))
+    if k < 3:
+        return []
+    market, rets, dates = market[-k:], rets[-k:], dates[-k:]
+    pts = _beta_history_engine(rets, market, DEFAULT_PRIOR_VAR, lookback, points, step)
+    return [
+        {"date": dates[p.end_index].isoformat(), "beta": round(p.beta, 4),
+         "beta_raw": round(p.beta_raw, 4), "n_obs": p.n_obs}
+        for p in pts
+    ]
+
+
+def portfolio_beta_history(
+    market_data, portfolio,
+    lookback: int = DEFAULT_LOOKBACK, points: int = 26, step: int = 5,
+) -> list[dict]:
+    """The book's NET beta over time, holding the CURRENT weights fixed and using each name's
+    point-in-time beta on the benchmark's date axis. This isolates beta DRIFT (how the hedge's
+    target moved as betas re-estimated) from position changes — answering 'is the net beta
+    consistent over time?'. A name without enough trailing history at a sample date falls back to
+    the 1.0 prior (same as the live book), so the line is never broken by thin names."""
+    market = np.asarray(market_data.market_returns(), dtype=float)
+    dates = list(market_data.return_dates())
+    n = min(market.shape[0], len(dates))
+    if n < 3:
+        return []
+    market, dates = market[-n:], dates[-n:]
+    long_aum = portfolio.long_aum or 0.0
+    if long_aum <= 0:
+        return []
+
+    # Cache each name's benchmark-aligned return series (tail of the common date axis).
+    cache: dict[str, np.ndarray | None] = {}
+    for p in portfolio.positions:
+        if p.ticker in cache:
+            continue
+        try:
+            r = np.asarray(market_data.ticker_returns(p.ticker), dtype=float)
+            cache[p.ticker] = r[-n:] if r.shape[0] > n else r
+        except TickerNotFound:
+            cache[p.ticker] = None
+
+    ends = sorted({max(0, n - 1 - step * k) for k in range(max(points, 1))})
+    series: list[dict] = []
+    for end in ends:
+        net_beta_adj = 0.0
+        for p in portfolio.positions:
+            r = cache.get(p.ticker)
+            beta = 1.0  # insufficient/unpriced names hold at the prior, like the live book
+            if r is not None and r.shape[0]:
+                offset = n - r.shape[0]              # name starts `offset` returns into the axis
+                name_end = end - offset              # its index for this sample date
+                if name_end + 1 >= MIN_BETA_OBS:
+                    rb = raw_beta(r[: name_end + 1], market[offset: end + 1])
+                    beta, _ = vasicek_shrinkage(rb.beta_raw, rb.var_ols, DEFAULT_PRIOR_VAR)
+            net_beta_adj += p.signed_notional * beta
+        series.append({"date": dates[end].isoformat(), "net_beta": round(net_beta_adj / long_aum, 4)})
+    return series

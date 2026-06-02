@@ -138,6 +138,7 @@ import type {
   IngestResult,
   FactorIngestResult,
   BetaDiagnostics,
+  BetaHistory,
 } from "../types";
 
 export function fetchConnections(): Promise<ConnectionRow[]> {
@@ -172,6 +173,16 @@ export function ingestPrices(tickers?: string[]): Promise<IngestResult> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(tickers && tickers.length ? { tickers } : {}),
   });
+}
+
+export function fetchBetaHistory(
+  portfolioId: string,
+  points = 26,
+  step = 5,
+): Promise<BetaHistory> {
+  return getJSON<BetaHistory>(
+    `/portfolios/${portfolioId}/beta-history?points=${points}&step=${step}`,
+  );
 }
 
 export function fetchBetaDiagnostics(tickers: string[]): Promise<BetaDiagnostics> {

@@ -153,6 +153,11 @@ class DbMarketData:
     def market_returns(self) -> np.ndarray:
         return self._market
 
+    def return_dates(self) -> list[date]:
+        """The trading dates aligned to ``market_returns()`` — ``return[i]`` is the move INTO
+        ``return_dates()[i]``. The x-axis for the walk-forward beta history."""
+        return list(self._dates[1:])
+
     def factor_returns(self) -> dict[str, np.ndarray]:
         """``{MKT, SMB, HML, MOM}`` once the Ken French panel is ingested; ``{MKT}`` only
         until then. MKT is the SPY benchmark; the style factors are read from
