@@ -1,0 +1,31 @@
+# Neptune local dev stack. Postgres is the canonical database; the app connects via
+# DATABASE_URL. SQLite (in-memory) is used only for fast tests behind the same ORM.
+#
+#   docker compose up -d
+#   export DATABASE_URL=postgresql+psycopg://neptune:neptune@localhost:5432/neptune
+#   alembic upgrade head    # (once migrations exist)
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: neptune
+      POSTGRES_PASSWORD: neptune
+      POSTGRES_DB: neptune
+    ports:
+      - "5432:5432"
+    volumes:
+      - neptune_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neptune"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+volumes:
+  neptune_pgdata:

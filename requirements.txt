@@ -1,0 +1,36 @@
+# Neptune backend dependencies — pinned to tested versions. Windows-compatible
+# (use `pip install -r requirements.txt`). Per roadmap: avoid pyproject-only installs
+# on Windows to dodge setuptools backend errors.
+
+# --- API ---
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+
+# --- Persistence (Postgres canonical; SQLite is stdlib for tests) ---
+SQLAlchemy==2.0.50
+# 3.2+ ships wheels for newer Pythons (incl. 3.14); 3.1.x predates them.
+psycopg[binary]>=3.2,<4
+alembic==1.13.2
+
+# --- Quant Engine ---
+numpy==2.4.6
+scipy==1.17.1
+cvxpy==1.9.1
+
+# --- Market data ingestion (imported lazily; only needed for live backfill) ---
+yfinance==0.2.66
+# Ken French factor panel (SMB/HML/MOM) is fetched from its published CSV zips with the
+# stdlib (urllib + zipfile) — no third-party reader, which keeps us off pandas-datareader.
+
+# --- Scheduling (always-on price refresh; imported lazily, degrades if absent) ---
+apscheduler==3.11.0
+
+# --- Task queue (deferred wiring; pinned for forward compatibility) ---
+celery==5.4.0
+redis==5.0.7
+
+# --- Dev / test ---
+pytest==9.0.3
+httpx==0.28.1

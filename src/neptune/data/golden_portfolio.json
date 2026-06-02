@@ -1,0 +1,27 @@
+{
+  "_comment": "Golden-number fixture: a known portfolio with a known expected net beta. Betas are set via PM forward_beta overrides so the net-beta arithmetic is exact and independent of the regression engine. Factor loadings are zero here so this fixture isolates the |net beta| <= 0.05 invariant; factor regression is tested separately.",
+  "portfolio_id": "IRIDIUM-CORE",
+  "name": "Iridium Core L/S",
+  "long_aum": 2500000.0,
+  "beta_tol": 0.05,
+  "max_position_weight": 0.15,
+  "positions": [
+    {"ticker": "AAA", "side": "LONG", "notional": 1000000.0, "forward_beta": 1.20, "thesis": "core conviction long"},
+    {"ticker": "BBB", "side": "LONG", "notional": 1000000.0, "forward_beta": 0.90, "thesis": "quality compounder"},
+    {"ticker": "CCC", "side": "LONG", "notional": 500000.0, "forward_beta": 1.50, "thesis": "high-beta growth"},
+    {"ticker": "DDD", "side": "SHORT", "short_type": "DISCRETIONARY", "notional": 500000.0, "forward_beta": 1.00, "thesis": "governance short"}
+  ],
+  "expected_long_dollar_beta": 2850000.0,
+  "expected_residual_dollar_beta": 2350000.0,
+  "expected_net_beta_before": 0.94,
+  "universe": [
+    {"ticker": "HDG1", "beta": 1.10},
+    {"ticker": "HDG2", "beta": 0.95},
+    {"ticker": "HDG3", "beta": 1.25},
+    {"ticker": "HDG4", "beta": 0.85},
+    {"ticker": "HDG5", "beta": 1.05},
+    {"ticker": "HDG6", "beta": 1.15},
+    {"ticker": "HDG7", "beta": 0.90},
+    {"ticker": "HDG8", "beta": 1.20}
+  ]
+}
