@@ -4,7 +4,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from neptune.quant.factors import factor_loadings, portfolio_factor_exposure
+from neptune.quant.factors import (
+    factor_loadings,
+    portfolio_factor_exposure,
+    rolling_factor_loadings,
+)
 
 
 def _factor_panel(n=200, seed=21):
@@ -26,6 +30,28 @@ def test_loadings_recovered_from_synthetic_returns():
 
     for f, expected in true.items():
         assert result.loadings[f] == pytest.approx(expected, abs=1e-8)
+
+
+def test_rolling_factor_loadings_match_single_window_fit():
+    """The vectorized rolling loadings must equal factor_loadings on the trailing window at each
+    index, so the materialized loading series is identical to computing on the fly."""
+    rng = np.random.default_rng(9)
+    n, window = 300, 60
+    factors = {
+        "MKT": rng.normal(0, 0.01, n), "SMB": rng.normal(0, 0.008, n),
+        "HML": rng.normal(0, 0.008, n), "MOM": rng.normal(0, 0.009, n),
+    }
+    asset = (1.1 * factors["MKT"] + 0.3 * factors["SMB"] - 0.2 * factors["HML"]
+             + 0.15 * factors["MOM"] + rng.normal(0, 0.003, n))
+    roll = rolling_factor_loadings(asset, factors, window=window)
+
+    assert np.isnan(roll.loadings["MKT"][2])  # < params obs → NaN
+    for i in (80, 150, 299):  # full-window indices match the single-window multivariate fit
+        ref = factor_loadings(asset[: i + 1], {f: s[: i + 1] for f, s in factors.items()},
+                              window=window)
+        for f in factors:
+            assert roll.loadings[f][i] == pytest.approx(ref.loadings[f], abs=1e-6)
+        assert int(roll.n_obs[i]) == window
 
 
 def test_portfolio_exposure_is_notional_weighted():

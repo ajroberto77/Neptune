@@ -879,6 +879,8 @@ def hedge_backtest(
         # The backtest reads stored daily betas; materialize once if the table is empty.
         if beta_store.latest_stored_date(sec, settings.benchmark) is None:
             beta_store.rebuild_betas(sec, benchmark=settings.benchmark)
+        if not beta_store.loadings_materialized(sec):
+            beta_store.rebuild_loadings(sec, benchmark=settings.benchmark)  # no-op without a panel
         res = backtest_engine.hedge_backtest(
             md, portfolio, md.available_tickers(),
             rebalance_step=step, points=points,
@@ -921,6 +923,8 @@ def calibrate_hedge(
         # Each budget replays the backtest; stored betas make that cheap. Materialize if empty.
         if beta_store.latest_stored_date(sec, settings.benchmark) is None:
             beta_store.rebuild_betas(sec, benchmark=settings.benchmark)
+        if not beta_store.loadings_materialized(sec):
+            beta_store.rebuild_loadings(sec, benchmark=settings.benchmark)  # no-op without a panel
         rows = backtest_engine.calibrate_beta_add_budget(
             md, portfolio, md.available_tickers(),
             rebalance_step=step, points=points,
@@ -1323,7 +1327,11 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
                 betas_written = beta_store.rebuild_betas(
                     sec_session, benchmark=settings.benchmark, tickers=ingested
                 )
-        except Exception:  # noqa: BLE001 — never fail an ingest because the beta sweep hiccuped
+                # Style loadings too (no-op until the factor panel is ingested).
+                beta_store.rebuild_loadings(
+                    sec_session, benchmark=settings.benchmark, tickers=ingested
+                )
+        except Exception:  # noqa: BLE001 — never fail an ingest because a sweep hiccuped
             betas_written = 0
     return {
         "start": start.isoformat(),
@@ -1358,4 +1366,11 @@ def ingest_factor_panel(body: FactorIngestIn, session: Session = Depends(get_ses
             raise HTTPException(
                 status_code=502, detail=f"factor ingest failed: {type(exc).__name__}"
             ) from exc
-    return {"start": start.isoformat(), "end": end.isoformat(), "counts": counts}
+        # The panel just changed → (re)materialize style loadings for the whole universe.
+        loadings_written = 0
+        try:
+            loadings_written = beta_store.rebuild_loadings(sec_session, benchmark=settings.benchmark)
+        except Exception:  # noqa: BLE001 — never fail the panel ingest on a loadings hiccup
+            loadings_written = 0
+    return {"start": start.isoformat(), "end": end.isoformat(), "counts": counts,
+            "loadings_written": loadings_written}

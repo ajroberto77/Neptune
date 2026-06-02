@@ -237,3 +237,24 @@ class Beta(SecuritiesBase):
     var_ols: Mapped[float] = mapped_column(Float, nullable=False)
     n_obs: Mapped[int] = mapped_column(Integer, nullable=False)
     prior_var: Mapped[float] = mapped_column(Float, nullable=False)   # Vasicek prior used
+
+
+class FactorLoading(SecuritiesBase):
+    """The MATERIALIZED daily per-security STYLE-FACTOR loadings — multivariate OLS of a name's
+    returns on the factor panel (MKT + FF5 + momentum), stored one row per (security, date,
+    factor, model). Mirrors ``Beta``: computed in a sweep after ingest (full-window dates only),
+    idempotent, read point-in-time by the optimizer/backtest. ``model`` tags the factor set/window
+    (e.g. 'FF5MOM') so a future expanded set (e.g. +BAB) can coexist without collision. Only
+    materialized once the factor return panel is loaded; otherwise the hedge is beta-only."""
+
+    __tablename__ = "factor_loadings"
+
+    instrument_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.instrument_id"), primary_key=True
+    )
+    ts: Mapped[date] = mapped_column(Date, primary_key=True)
+    factor: Mapped[str] = mapped_column(String, primary_key=True)   # SMB/HML/RMW/CMA/MOM
+    model: Mapped[str] = mapped_column(String, primary_key=True)    # factor set + window tag
+    loading: Mapped[float] = mapped_column(Float, nullable=False)   # multivariate regression coef
+    window: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_obs: Mapped[int] = mapped_column(Integer, nullable=False)

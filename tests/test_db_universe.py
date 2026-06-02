@@ -174,6 +174,39 @@ def test_rebuild_betas_stores_full_window_only_and_is_idempotent(securities_sess
     assert total == written
 
 
+def test_rebuild_loadings_materializes_only_with_a_factor_panel(securities_session):
+    """Style loadings materialize only once the factor return panel is ingested; without it the
+    sweep is a no-op (the hedge stays beta-only). With a panel, full-window loadings are stored."""
+    from datetime import date as _date
+    from neptune.risk import beta_store
+    from neptune.securities.models import FactorReturn
+
+    synth = SyntheticMarketData(n=200)
+    _seed(securities_session, "SPY", 1, synth.market_returns())
+    _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"))
+    securities_session.commit()
+
+    # No factor panel yet → no-op.
+    assert beta_store.rebuild_loadings(securities_session, benchmark="SPY", window=40) == 0
+    assert beta_store.stored_loadings_latest(securities_session) == {}
+
+    # Ingest a style-factor panel over the benchmark's return dates, then re-sweep.
+    md = DbMarketData(securities_session, benchmark="SPY")
+    rdates = md.return_dates()
+    rng = np.random.default_rng(1)
+    for f in ("SMB", "HML", "RMW", "CMA", "MOM"):
+        for ts in rdates:
+            securities_session.add(FactorReturn(factor=f, ts=ts, ret=float(rng.normal(0, 0.006)),
+                                                source="test"))
+    securities_session.commit()
+
+    written = beta_store.rebuild_loadings(securities_session, benchmark="SPY", window=40)
+    assert written > 0
+    latest = beta_store.stored_loadings_latest(securities_session)
+    assert "AAA" in latest
+    assert set(latest["AAA"]) == {"SMB", "HML", "RMW", "CMA", "MOM"}
+
+
 def test_beta_uses_completed_closes_not_todays_live_bar(securities_session):
     """A beta as-of today is computed from CLOSES strictly before today, so an intraday price
     refresh (which rewrites today's bar) never moves it — only marks do."""

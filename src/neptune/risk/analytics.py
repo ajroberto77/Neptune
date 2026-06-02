@@ -186,11 +186,21 @@ def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate
     if not raws:
         return []
     prior_var = DEFAULT_PRIOR_VAR  # fixed market-level prior — same frame as the book (compute_metrics)
+    # Prefer MATERIALIZED style loadings (latest stored) over recomputing the multivariate factor
+    # regression for the whole universe on every propose; fall back to computing per name when a
+    # name isn't materialized (or the panel isn't loaded → empty → beta-only).
+    stored_loadings: dict[str, dict[str, float]] = {}
+    sess = getattr(market_data, "session", None)
+    if sess is not None:
+        from neptune.risk import beta_store  # lazy import avoids a circular dependency
+        stored_loadings = beta_store.stored_loadings_latest(sess)
     candidates: list[Candidate] = []
     for t, raw in raws.items():
         beta, _ = vasicek_shrinkage(raw.beta_raw, raw.var_ols, prior_var)
         rets = market_data.ticker_returns(t)
-        loadings = factor_loadings(rets, factors).loadings
+        loadings = stored_loadings.get(t)
+        if loadings is None:
+            loadings = factor_loadings(rets, factors).loadings if len(factors) > 1 else {}
         variance = float(np.var(rets)) if rets.size else 1.0  # risk proxy for diversification
         candidates.append(
             Candidate(ticker=t, beta=beta, loadings=loadings,

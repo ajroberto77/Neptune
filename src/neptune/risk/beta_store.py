@@ -22,8 +22,12 @@ from sqlalchemy.orm import Session
 
 from neptune.data.db_market import DbMarketData, TickerNotFound
 from neptune.quant.beta import DEFAULT_LOOKBACK, rolling_ols
+from neptune.quant.factors import STYLE_FACTORS, rolling_factor_loadings
 from neptune.risk.analytics import DEFAULT_PRIOR_VAR
-from neptune.securities.models import Beta, Security
+from neptune.securities.models import Beta, FactorLoading, Security
+
+DEFAULT_LOADING_WINDOW = 60      # style-loading regression window (matches factor_loadings)
+DEFAULT_FACTOR_MODEL = "FF5MOM"  # the factor set/window these loadings were fit against
 
 
 def rebuild_betas(
@@ -89,6 +93,103 @@ def rebuild_betas(
             written += len(rows)
     session.commit()
     return written
+
+
+def rebuild_loadings(
+    session: Session,
+    benchmark: str = "SPY",
+    window: int = DEFAULT_LOADING_WINDOW,
+    model: str = DEFAULT_FACTOR_MODEL,
+    tickers: list[str] | None = None,
+) -> int:
+    """Recompute and store the daily STYLE-FACTOR loadings for ``tickers`` (or every backfilled
+    name) via the multivariate factor regression. No-op (returns 0) until the factor return panel
+    is loaded — without it the hedge is beta-only. Full-window dates only; idempotent per name."""
+    md = DbMarketData(session, benchmark=benchmark)
+    factors = md.factor_returns()
+    style = [f for f in STYLE_FACTORS if f in factors]
+    if not style:
+        return 0  # factor panel not ingested yet — nothing to materialize
+    dates = md.return_dates()
+    if len(dates) < window:
+        return 0
+
+    names = tickers if tickers is not None else md.available_tickers()
+    id_by_ticker = dict(
+        session.execute(
+            select(Security.ticker, Security.instrument_id).where(Security.ticker.in_(names))
+        ).all()
+    )
+    written = 0
+    for ticker in names:
+        iid = id_by_ticker.get(ticker)
+        if iid is None:
+            continue
+        session.execute(
+            delete(FactorLoading).where(
+                FactorLoading.instrument_id == iid, FactorLoading.model == model
+            )
+        )
+        try:
+            rets = md.ticker_returns(ticker)
+        except TickerNotFound:
+            continue
+        if np.asarray(rets, dtype=float).shape[0] < window:
+            continue
+        roll = rolling_factor_loadings(rets, factors, window)
+        nd = dates[-roll.n_obs.shape[0]:]  # the name's dates, aligned to the loading series
+        full = roll.n_obs >= window
+        if not full.any():
+            continue
+        rows = []
+        for i in np.nonzero(full)[0]:
+            for f in style:
+                val = roll.loadings[f][i]
+                if np.isfinite(val):
+                    rows.append({
+                        "instrument_id": iid, "ts": nd[i], "factor": f, "model": model,
+                        "loading": float(val), "window": window, "n_obs": int(roll.n_obs[i]),
+                    })
+        if rows:
+            session.bulk_insert_mappings(FactorLoading, rows)
+            written += len(rows)
+    session.commit()
+    return written
+
+
+def stored_loadings_asof(
+    session: Session, as_of: date, model: str = DEFAULT_FACTOR_MODEL
+) -> dict[str, dict[str, float]]:
+    """Every name's stored style loadings AS OF ``as_of`` → {ticker: {factor: loading}}. One
+    query; empty if loadings aren't materialized (caller treats as beta-only)."""
+    rows = session.execute(
+        select(Security.ticker, FactorLoading.factor, FactorLoading.loading)
+        .join(FactorLoading, FactorLoading.instrument_id == Security.instrument_id)
+        .where(FactorLoading.ts == as_of, FactorLoading.model == model)
+    ).all()
+    out: dict[str, dict[str, float]] = {}
+    for ticker, factor, loading in rows:
+        out.setdefault(ticker, {})[factor] = float(loading)
+    return out
+
+
+def stored_loadings_latest(
+    session: Session, model: str = DEFAULT_FACTOR_MODEL
+) -> dict[str, dict[str, float]]:
+    """Each name's MOST RECENT stored loadings → {ticker: {factor: loading}} (for the live
+    universe). Empty if nothing is materialized."""
+    latest = session.scalar(
+        select(FactorLoading.ts).where(FactorLoading.model == model)
+        .order_by(FactorLoading.ts.desc()).limit(1)
+    )
+    return stored_loadings_asof(session, latest, model) if latest is not None else {}
+
+
+def loadings_materialized(session: Session, model: str = DEFAULT_FACTOR_MODEL) -> bool:
+    """Whether any style loadings are stored (used to decide a lazy rebuild)."""
+    return session.scalar(
+        select(FactorLoading.ts).where(FactorLoading.model == model).limit(1)
+    ) is not None
 
 
 def stored_beta_series(
