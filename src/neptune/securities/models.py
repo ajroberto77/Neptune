@@ -214,3 +214,26 @@ class FactorReturn(SecuritiesBase):
     ts: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     ret: Mapped[float] = mapped_column(Float, nullable=False)  # decimal daily return
     source: Mapped[str] = mapped_column(String, nullable=False, default="ken_french")
+
+
+class Beta(SecuritiesBase):
+    """The MATERIALIZED daily beta series — computed once per ingest in a single sweep, not on
+    the fly. One row per (security, date, benchmark): the point-in-time 252-day OLS → Vasicek
+    beta as it would have read that day. Stored ONLY for dates with a full trailing ``lookback``
+    window (so 1000 days of prices → ~750 days of beta); the sweep is idempotent and re-run after
+    each ingest to extend/fill as more history lands. The Vasicek prior is the fixed market-level
+    constant, so a name's beta is independent of any book — safe to precompute and cache."""
+
+    __tablename__ = "betas"
+
+    instrument_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.instrument_id"), primary_key=True
+    )
+    ts: Mapped[date] = mapped_column(Date, primary_key=True)
+    benchmark: Mapped[str] = mapped_column(String, primary_key=True)  # market proxy (e.g. SPY)
+    lookback: Mapped[int] = mapped_column(Integer, nullable=False)    # trailing window (252)
+    beta: Mapped[float] = mapped_column(Float, nullable=False)        # Vasicek-shrunk beta
+    beta_raw: Mapped[float] = mapped_column(Float, nullable=False)    # raw OLS slope
+    var_ols: Mapped[float] = mapped_column(Float, nullable=False)
+    n_obs: Mapped[int] = mapped_column(Integer, nullable=False)
+    prior_var: Mapped[float] = mapped_column(Float, nullable=False)   # Vasicek prior used

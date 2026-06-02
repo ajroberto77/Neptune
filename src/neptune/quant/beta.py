@@ -217,3 +217,63 @@ def beta_history(
         beta, _ = vasicek_shrinkage(rb.beta_raw, rb.var_ols, var_prior)
         out.append(BetaPoint(end_index=end, beta_raw=rb.beta_raw, beta=beta, n_obs=rb.n_obs))
     return out
+
+
+@dataclass(frozen=True)
+class RollingBeta:
+    """Trailing-window OLS beta at EVERY index (the materialized daily series)."""
+
+    beta_raw: np.ndarray  # OLS slope on the window ending at each index (NaN where invalid)
+    var_ols: np.ndarray   # estimation variance of that slope
+    n_obs: np.ndarray     # window length used at each index (int)
+
+
+def rolling_ols(
+    stock_returns: np.ndarray,
+    market_returns: np.ndarray,
+    lookback: int = DEFAULT_LOOKBACK,
+) -> RollingBeta:
+    """Vectorized trailing-window OLS beta at every index in ONE pass (no per-date Python loop) —
+    the engine behind materializing the daily beta series after ingest. For index ``i`` the window
+    is the trailing ``min(i+1, lookback)`` observations ending at ``i``. Returns ``beta_raw``,
+    ``var_ols`` and ``n_obs`` arrays the length of the inputs; entries with fewer than 3 obs or
+    zero market variance are NaN. Matches ``raw_beta``'s slope and var_ols on a full window.
+
+    Window sums come from cumulative sums, so the whole series is O(n) regardless of lookback."""
+    s = np.asarray(stock_returns, dtype=float)
+    m = np.asarray(market_returns, dtype=float)
+    if s.shape[0] != m.shape[0]:
+        raise ValueError("stock and market return series must be aligned and equal length")
+    n = s.shape[0]
+    if n == 0:
+        empty = np.array([])
+        return RollingBeta(empty, empty, empty.astype(int))
+
+    def _cumsum0(a: np.ndarray) -> np.ndarray:
+        out = np.zeros(a.shape[0] + 1)
+        out[1:] = np.cumsum(a)
+        return out
+
+    cm, cy, cmm, cyy, cmy = (_cumsum0(a) for a in (m, s, m * m, s * s, m * s))
+    idx = np.arange(n)
+    L = np.minimum(idx + 1, lookback)          # window length at each index
+    start = idx + 1 - L                         # window start (inclusive), in 0..n
+    end = idx + 1
+    Lf = L.astype(float)
+    Sx = cm[end] - cm[start]
+    Sy = cy[end] - cy[start]
+    Sxx = cmm[end] - cmm[start]
+    Syy = cyy[end] - cyy[start]
+    Sxy = cmy[end] - cmy[start]
+    cxx = Sxx - Sx * Sx / Lf                    # centered Σ(m-mean)²
+    cxy = Sxy - Sx * Sy / Lf
+    cyy_c = Syy - Sy * Sy / Lf
+    with np.errstate(divide="ignore", invalid="ignore"):
+        beta = cxy / cxx
+        dof = np.maximum(L - 2, 1).astype(float)
+        sigma2 = (cyy_c - beta * cxy) / dof      # residual variance
+        var_ols = sigma2 / cxx                   # = sigma2 * (XᵀX)⁻¹[1,1] for centered design
+    invalid = (cxx <= 0) | (L < 3)
+    beta = np.where(invalid, np.nan, beta)
+    var_ols = np.where(invalid, np.nan, np.maximum(var_ols, 0.0))
+    return RollingBeta(beta_raw=beta, var_ols=var_ols, n_obs=L.astype(int))

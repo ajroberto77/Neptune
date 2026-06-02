@@ -50,6 +50,7 @@ from neptune.quant.optimizer import (
 )
 from neptune.risk import analytics
 from neptune.risk import backtest as backtest_engine
+from neptune.risk import beta_store
 from neptune.risk import pnl as pnl_engine
 from neptune.risk import stress as stress_engine
 from neptune.risk.summary import summarize
@@ -319,6 +320,19 @@ def _resolve_portfolio(service: PositionService, portfolio_id: str):
 @app.get("/health")
 def health():
     return {"status": "ok", "beta_tol": settings.beta_tol}
+
+
+@app.post("/securities/betas/rebuild")
+def rebuild_betas(session: Session = Depends(get_session)):
+    """Recompute the MATERIALIZED daily beta series for the whole universe in one sweep and store
+    it. Idempotent; normally runs automatically after ingest, exposed here for a manual rebuild
+    (e.g. after changing the prior or benchmark). Returns rows written."""
+    with securities_session(session) as sec:
+        try:
+            written = beta_store.rebuild_betas(sec, benchmark=settings.benchmark)
+        except TickerNotFound as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"betas_written": written, "benchmark": settings.benchmark}
 
 
 @app.get("/securities/health")
@@ -803,9 +817,10 @@ def portfolio_beta_history(
     step: int = Query(default=5, ge=1, le=63, description="Trading days between samples (5=weekly)."),
     session: Session = Depends(get_session),
 ):
-    """Beta consistency over time: the book's NET beta on a trailing-window walk-forward (current
-    weights held fixed, point-in-time betas), plus each holding's beta history and drift stats.
-    Shows whether betas — and therefore the hedge target — are stable across time. Read-only."""
+    """Beta consistency over time: the book's NET beta walk-forward (current weights held fixed),
+    plus each holding's beta history and drift stats. Reads the MATERIALIZED daily betas from the
+    DB (rebuilt per ingest); only falls back to an on-the-fly compute if a name isn't materialized
+    yet. Read-only."""
     service = PositionService(session)
     portfolio = _resolve_portfolio(service, portfolio_id)
     holdings = [p for p in portfolio.positions if p.notional]
@@ -814,13 +829,20 @@ def portfolio_beta_history(
             md = DbMarketData(sec, benchmark=settings.benchmark)
         except TickerNotFound as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        net = analytics.portfolio_beta_history(md, portfolio, points=points, step=step)
+        # Net series: prefer stored betas; compute on the fly only if nothing is materialized.
+        net = beta_store.portfolio_net_history(sec, portfolio, settings.benchmark, points, step)
+        if net is None:
+            net = analytics.portfolio_beta_history(md, portfolio, points=points, step=step)
         positions = []
         for p in holdings:
-            try:
-                series = analytics.ticker_beta_history(md, p.ticker, points=points, step=step)
-            except TickerNotFound:
-                series = []
+            series = beta_store.ticker_history_sampled(
+                sec, p.ticker, settings.benchmark, points, step
+            )
+            if series is None:  # not materialized yet — fall back to computing it
+                try:
+                    series = analytics.ticker_beta_history(md, p.ticker, points=points, step=step)
+                except TickerNotFound:
+                    series = []
             positions.append({
                 "ticker": p.ticker, "side": p.side.value, "short_type": p.short_type.value,
                 "notional": round(p.notional, 2),
@@ -1279,11 +1301,23 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
                 {"ticker": res.ticker, "prices": res.prices,
                  "dividends": res.dividends, "corporate_actions": res.corporate_actions}
             )
+        # Materialize the daily beta series for what we just ingested (best-effort): betas live
+        # in the DB and are recomputed in one sweep here, never on the fly per request.
+        betas_written = 0
+        try:
+            ingested = [r["ticker"] for r in results if r["ticker"] != settings.benchmark]
+            if ingested:
+                betas_written = beta_store.rebuild_betas(
+                    sec_session, benchmark=settings.benchmark, tickers=ingested
+                )
+        except Exception:  # noqa: BLE001 — never fail an ingest because the beta sweep hiccuped
+            betas_written = 0
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
         "ingested": results,
         "errors": errors,
+        "betas_written": betas_written,
     }
 
 

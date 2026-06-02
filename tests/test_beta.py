@@ -131,6 +131,28 @@ def test_beta_history_is_flat_for_a_stable_name_and_moves_on_a_regime_change():
         beta_history(stable[:-1], market, var_prior=VAR_PRIOR)
 
 
+def test_rolling_ols_matches_raw_beta_and_flags_short_windows():
+    """The vectorized rolling sweep must equal the per-window raw_beta at each index, so the
+    materialized series is identical to computing on the fly — just done once, in one pass."""
+    from neptune.quant.beta import raw_beta, rolling_ols
+
+    market = make_market_returns(n=400, seed=5)
+    stock = make_stock_returns(market, beta_true=0.9, noise_std=0.02, seed=6)
+    roll = rolling_ols(stock, market, lookback=252)
+
+    assert roll.beta_raw.shape[0] == stock.shape[0]
+    # First two indices have < 3 obs → NaN; from index 2 on they match raw_beta on the slice.
+    assert np.isnan(roll.beta_raw[0]) and np.isnan(roll.beta_raw[1])
+    for i in (5, 100, 251, 252, 399):  # spans the partial- and full-window regimes
+        ref = raw_beta(stock[: i + 1], market[: i + 1], lookback=252)
+        assert roll.beta_raw[i] == pytest.approx(ref.beta_raw, rel=1e-9, abs=1e-9)
+        assert roll.var_ols[i] == pytest.approx(ref.var_ols, rel=1e-7, abs=1e-12)
+        assert int(roll.n_obs[i]) == ref.n_obs
+
+    with pytest.raises(ValueError):  # aligned/equal-length contract enforced
+        rolling_ols(stock[:-1], market)
+
+
 def test_semibetas_capture_down_up_asymmetry():
     """A name engineered to move 2x with down-markets and 0.5x with up-markets should yield
     down_beta ~ 2 and up_beta ~ 0.5 — and neither should touch the pipeline beta."""
