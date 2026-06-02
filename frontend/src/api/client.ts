@@ -158,11 +158,12 @@ export function syncUniverse(): Promise<SyncResult> {
   return getJSON<SyncResult>(`/settings/universe/sync`, { method: "POST" });
 }
 
-export function ingestPrices(): Promise<IngestResult> {
+export function ingestPrices(tickers?: string[]): Promise<IngestResult> {
+  // No tickers → backfill the whole projection; a list → just those names (e.g. one thin name).
   return getJSON<IngestResult>(`/securities/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+    body: JSON.stringify(tickers && tickers.length ? { tickers } : {}),
   });
 }
 

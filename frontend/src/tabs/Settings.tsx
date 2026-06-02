@@ -53,6 +53,7 @@ export function Settings() {
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [status, setStatus] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [oneTicker, setOneTicker] = useState("");
 
   function load() {
     fetchConnections()
@@ -117,10 +118,11 @@ export function Settings() {
     }
   }
 
-  async function handleIngest() {
-    setStatus((s) => ({ ...s, SECURITIES: "Backfilling prices…" }));
+  async function handleIngest(tickers?: string[]) {
+    const label = tickers?.length ? tickers.join(", ") : "all names";
+    setStatus((s) => ({ ...s, SECURITIES: `Backfilling prices (${label})…` }));
     try {
-      const r = await ingestPrices();
+      const r = await ingestPrices(tickers);
       const bars = r.ingested.reduce((n, row) => n + row.prices, 0);
       setStatus((s) => ({
         ...s,
@@ -256,7 +258,7 @@ export function Settings() {
               {row.role === "SECURITIES" && (
                 <>
                   <button
-                    onClick={handleIngest}
+                    onClick={() => handleIngest()}
                     className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
                   >
                     Backfill prices
@@ -266,6 +268,27 @@ export function Settings() {
                     className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
                   >
                     Backfill factors
+                  </button>
+                  <input
+                    value={oneTicker}
+                    onChange={(e) => setOneTicker(e.target.value.toUpperCase())}
+                    placeholder="WEN"
+                    aria-label="backfill-one-ticker"
+                    className="np-input w-24"
+                  />
+                  <button
+                    onClick={() =>
+                      handleIngest(
+                        oneTicker
+                          .split(/[,\s]+/)
+                          .map((t) => t.trim())
+                          .filter(Boolean),
+                      )
+                    }
+                    disabled={!oneTicker.trim()}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
+                  >
+                    Backfill one
                   </button>
                 </>
               )}
