@@ -15,7 +15,7 @@ const rows: ConnectionRow[] = [
 const saveConnection = vi.fn(async (_role: string, _body: unknown) => rows[2]);
 const testConnection = vi.fn(async (role: string) => ({ role, ok: true }));
 const syncUniverse = vi.fn(async () => ({ synced: 42, source: "cato_securities" }));
-const ingestPrices = vi.fn(async (_tickers?: string[]) => ({
+const ingestPrices = vi.fn(async (_tickers?: string[], _years?: number) => ({
   start: "2025-04-26",
   end: "2026-05-31",
   ingested: [
@@ -46,7 +46,7 @@ vi.mock("../api/client", () => ({
   saveConnection: (role: string, body: unknown) => saveConnection(role, body),
   testConnection: (role: string) => testConnection(role),
   syncUniverse: () => syncUniverse(),
-  ingestPrices: (tickers?: string[]) => ingestPrices(tickers),
+  ingestPrices: (tickers?: string[], years?: number) => ingestPrices(tickers, years),
   ingestFactors: () => ingestFactors(),
 }));
 

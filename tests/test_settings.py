@@ -190,6 +190,56 @@ def test_portfolio_beta_history_returns_net_and_per_position_series(client):
     assert hb["stats"]["range"] < 0.4  # stable name → low drift
 
 
+def test_hedge_backtest_replays_and_controls_net_beta(client):
+    """The walk-forward hedge backtest re-optimizes at each rebalance and reports the REALIZED
+    net beta. With a clean universe that can hedge the long book, realized |β| should stay well
+    inside tolerance most of the time (high coverage)."""
+    from datetime import date, timedelta
+
+    import numpy as np
+    from sqlalchemy.orm import Session
+
+    from neptune.db.base import securities_engine
+    from neptune.securities.models import Price, Security
+
+    rng = np.random.default_rng(7)
+    n = 900  # ~3.5y of daily bars so the walk-forward has room
+    mkt = rng.normal(0.0, 0.01, n)
+
+    def _seed(sec, iid, ticker, betas_to_market, base=100.0):
+        rets = betas_to_market * mkt + rng.normal(0, 0.004, n)
+        sec.add(Security(instrument_id=iid, ticker=ticker, security_type="Common Stock"))
+        px = [base]
+        for r in rets:
+            px.append(px[-1] * (1 + r))
+        start = date.today() - timedelta(days=len(px) + 1)
+        for i, p in enumerate(px):
+            sec.add(Price(instrument_id=iid, ts=start + timedelta(days=i),
+                          close=p, adj_close=p, source="yfinance"))
+
+    with Session(securities_engine) as sec:
+        _seed(sec, 1, "SPY", np.ones(n))            # benchmark
+        _seed(sec, 2, "LONGA", 1.1 * np.ones(n))    # the long we must hedge
+        # A diversified shortable universe of positive-beta names (ample capacity to hedge to ~0).
+        betas = [0.6, 0.8, 1.0, 1.2, 1.4, 0.9, 1.1, 0.7, 0.5, 1.3, 0.85, 1.05, 0.95, 1.15, 0.75, 1.25]
+        for j, b in enumerate(betas, start=3):
+            _seed(sec, j, f"H{j}", b * np.ones(n))
+        sec.commit()
+
+    client.post("/portfolios", json={"id": "BT", "name": "Backtest Book"})
+    client.post("/portfolios/BT/positions", json={
+        "ticker": "LONGA", "side": "LONG", "notional": 1_000_000.0,
+    })
+
+    r = client.get("/portfolios/BT/hedge-backtest?points=10&step=21")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_rebalances"] >= 5
+    assert all("realized_net_beta" in p for p in body["points"])
+    assert body["rmse"] < 0.05           # the process keeps realized net beta controlled
+    assert body["coverage"] >= 0.8       # most rebalances land inside |β| <= tol
+
+
 def test_factor_ingest_reports_feed_unavailable(client, monkeypatch):
     # An unreachable Ken French feed → clean 503, not a 500. Force the download to fail so the
     # test is deterministic (never hits the real network, even on a connected machine).

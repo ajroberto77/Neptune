@@ -49,6 +49,7 @@ from neptune.quant.optimizer import (
     optimize_hedge_capped,
 )
 from neptune.risk import analytics
+from neptune.risk import backtest as backtest_engine
 from neptune.risk import pnl as pnl_engine
 from neptune.risk import stress as stress_engine
 from neptune.risk.summary import summarize
@@ -68,10 +69,11 @@ from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sy
 MARKET_DATA = SyntheticMarketData()
 UNIVERSE_TICKERS = default_universe_tickers(60)
 
-# Default price/factor backfill window: ~3 years. The beta pipeline needs 252 trailing days,
-# so 3 years leaves ~1.5–2 years of dates with a full lookback — the history a walk-forward
-# backtest replays over. (A specific start/end in the request still overrides this.)
-DEFAULT_BACKFILL_DAYS = 365 * 3 + 30
+# Default price/factor backfill window: ~7 years. The beta pipeline needs 252 trailing days,
+# so this leaves ~6 years of dates with a full lookback — the history a walk-forward hedge
+# backtest replays over (deeper history = more out-of-sample data to calibrate against). A
+# specific start/end (or `years`) in the ingest request still overrides this.
+DEFAULT_BACKFILL_DAYS = 365 * 7 + 30
 
 
 def _shortable_universe(md):
@@ -833,6 +835,75 @@ def portfolio_beta_history(
     }
 
 
+@app.get("/portfolios/{portfolio_id}/hedge-backtest")
+def hedge_backtest(
+    portfolio_id: str,
+    points: int = Query(default=24, ge=2, le=120, description="Number of rebalances."),
+    step: int = Query(default=21, ge=5, le=63, description="Trading days between rebalances (21=monthly)."),
+    session: Session = Depends(get_session),
+):
+    """Walk-forward HEDGE backtest: re-optimize the hedge at each historical rebalance, hold it
+    forward, and measure the REALIZED net beta — the control metric the constraint levels are
+    calibrated against. Returns the per-rebalance series + summary (RMSE, coverage, turnover)."""
+    service = PositionService(session)
+    portfolio = _resolve_portfolio(service, portfolio_id)
+    if portfolio.mandate is Mandate.LONG_ONLY:
+        raise HTTPException(status_code=422, detail="Long-only books are not hedged.")
+    with securities_session(session) as sec:
+        try:
+            md = DbMarketData(sec, benchmark=settings.benchmark)
+        except TickerNotFound as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        res = backtest_engine.hedge_backtest(
+            md, portfolio, md.available_tickers(),
+            rebalance_step=step, points=points,
+            beta_tol=settings.beta_tol, factor_limit=settings.factor_limit,
+            max_position_weight=settings.max_position_weight, sector_limit=settings.sector_limit,
+            beta_add_budget=settings.beta_add_budget, n_cap=settings.target_hedge_names,
+        )
+    return {
+        "portfolio_id": portfolio_id, "tol": res.tol, "rebalance_step": step,
+        "rmse": res.rmse, "coverage": res.coverage,
+        "mean_abs_realized": res.mean_abs_realized, "mean_turnover": res.mean_turnover,
+        "n_rebalances": res.n_rebalances,
+        "points": [
+            {"date": p.date, "target_net_beta": p.target_net_beta,
+             "realized_net_beta": p.realized_net_beta, "n_names": p.n_names, "turnover": p.turnover}
+            for p in res.points
+        ],
+    }
+
+
+@app.get("/portfolios/{portfolio_id}/hedge-backtest/calibrate")
+def calibrate_hedge(
+    portfolio_id: str,
+    points: int = Query(default=18, ge=2, le=60),
+    step: int = Query(default=21, ge=5, le=63),
+    session: Session = Depends(get_session),
+):
+    """Sweep ``beta_add_budget`` across the backtest and report realized control vs. cost for
+    each level (RMSE, coverage, turnover) — the curve to pick the budget from. Heavier than the
+    single backtest (one replay per budget); keep ``points`` modest."""
+    service = PositionService(session)
+    portfolio = _resolve_portfolio(service, portfolio_id)
+    if portfolio.mandate is Mandate.LONG_ONLY:
+        raise HTTPException(status_code=422, detail="Long-only books are not hedged.")
+    with securities_session(session) as sec:
+        try:
+            md = DbMarketData(sec, benchmark=settings.benchmark)
+        except TickerNotFound as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        rows = backtest_engine.calibrate_beta_add_budget(
+            md, portfolio, md.available_tickers(),
+            rebalance_step=step, points=points,
+            beta_tol=settings.beta_tol, factor_limit=settings.factor_limit,
+            max_position_weight=settings.max_position_weight, sector_limit=settings.sector_limit,
+            n_cap=settings.target_hedge_names,
+        )
+    return {"portfolio_id": portfolio_id, "tol": settings.beta_tol,
+            "current_budget": settings.beta_add_budget, "grid": rows}
+
+
 @app.post("/portfolios/{portfolio_id}/hedge/propose")
 def propose_hedge(
     portfolio_id: str,
@@ -1150,12 +1221,14 @@ def sync_universe(session: Session = Depends(get_session)):
 
 
 class IngestIn(BaseModel):
-    """A price-ingestion request. Tickers default to the whole projected universe; the
-    window defaults to a 252-day-plus lookback ending today (enough for the beta pipeline)."""
+    """A price-ingestion request. Tickers default to the whole projected universe; the window
+    defaults to the ~7-year backfill (enough for a deep walk-forward backtest). ``years`` is a
+    convenience to request a specific depth; an explicit ``start`` still wins."""
 
     tickers: list[str] | None = None
     start: date | None = None
     end: date | None = None
+    years: float | None = Field(default=None, gt=0, le=25)
 
 
 @app.post("/securities/ingest")
@@ -1164,7 +1237,8 @@ def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
     tickers (or the whole projection). Requires network + the optional yfinance package, so
     it returns 503 when the feed is unavailable rather than failing opaquely."""
     end = body.end or date.today()
-    start = body.start or (end - timedelta(days=DEFAULT_BACKFILL_DAYS))  # ~3 years
+    days = round(body.years * 365) + 30 if body.years else DEFAULT_BACKFILL_DAYS
+    start = body.start or (end - timedelta(days=days))
     provider = YFinanceProvider()
     results = []
     with securities_session(session) as sec_session:

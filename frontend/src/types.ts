@@ -232,6 +232,42 @@ export interface BetaHistory {
   positions: BetaHistoryPosition[];
 }
 
+export interface HedgeBacktestPoint {
+  date: string;
+  target_net_beta: number;
+  realized_net_beta: number;
+  n_names: number;
+  turnover: number;
+}
+
+export interface HedgeBacktest {
+  portfolio_id: string;
+  tol: number;
+  rebalance_step: number;
+  rmse: number;
+  coverage: number;
+  mean_abs_realized: number;
+  mean_turnover: number;
+  n_rebalances: number;
+  points: HedgeBacktestPoint[];
+}
+
+export interface CalibrationRow {
+  beta_add_budget: number;
+  rmse: number;
+  coverage: number;
+  mean_abs_realized: number;
+  mean_turnover: number;
+  n_rebalances: number;
+}
+
+export interface HedgeCalibration {
+  portfolio_id: string;
+  tol: number;
+  current_budget: number;
+  grid: CalibrationRow[];
+}
+
 export interface BetaDiagnostics {
   benchmark: { ticker: string; bars: number; first_bar: string; last_bar: string; obs_used: number };
   min_obs: number;

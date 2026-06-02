@@ -55,6 +55,7 @@ export function Settings() {
   const [status, setStatus] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [oneTicker, setOneTicker] = useState("");
+  const [years, setYears] = useState(7); // backfill depth (more = deeper backtest history)
   const [betaDiag, setBetaDiag] = useState<BetaDiagnostics | null>(null);
 
   function load() {
@@ -122,9 +123,9 @@ export function Settings() {
 
   async function handleIngest(tickers?: string[]) {
     const label = tickers?.length ? tickers.join(", ") : "all names";
-    setStatus((s) => ({ ...s, SECURITIES: `Backfilling prices (${label})…` }));
+    setStatus((s) => ({ ...s, SECURITIES: `Backfilling ${years}y of prices (${label})…` }));
     try {
-      const r = await ingestPrices(tickers);
+      const r = await ingestPrices(tickers, years);
       const bars = r.ingested.reduce((n, row) => n + row.prices, 0);
       setStatus((s) => ({
         ...s,
@@ -272,6 +273,15 @@ export function Settings() {
               )}
               {row.role === "SECURITIES" && (
                 <>
+                  <label className="flex items-center gap-1 text-xs text-ocean-muted">
+                    <input
+                      type="number" min={1} max={25} value={years}
+                      aria-label="backfill-years"
+                      onChange={(e) => setYears(Math.max(1, Math.min(25, Number(e.target.value))))}
+                      className="np-input w-16"
+                    />
+                    yrs
+                  </label>
                   <button
                     onClick={() => handleIngest()}
                     className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"

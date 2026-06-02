@@ -139,6 +139,8 @@ import type {
   FactorIngestResult,
   BetaDiagnostics,
   BetaHistory,
+  HedgeBacktest,
+  HedgeCalibration,
 } from "../types";
 
 export function fetchConnections(): Promise<ConnectionRow[]> {
@@ -166,12 +168,15 @@ export function syncUniverse(): Promise<SyncResult> {
   return getJSON<SyncResult>(`/settings/universe/sync`, { method: "POST" });
 }
 
-export function ingestPrices(tickers?: string[]): Promise<IngestResult> {
-  // No tickers → backfill the whole projection; a list → just those names (e.g. one thin name).
+export function ingestPrices(tickers?: string[], years?: number): Promise<IngestResult> {
+  // No tickers → backfill the whole projection; a list → just those names. `years` sets depth.
+  const body: Record<string, unknown> = {};
+  if (tickers && tickers.length) body.tickers = tickers;
+  if (years) body.years = years;
   return getJSON<IngestResult>(`/securities/ingest`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(tickers && tickers.length ? { tickers } : {}),
+    body: JSON.stringify(body),
   });
 }
 
@@ -182,6 +187,26 @@ export function fetchBetaHistory(
 ): Promise<BetaHistory> {
   return getJSON<BetaHistory>(
     `/portfolios/${portfolioId}/beta-history?points=${points}&step=${step}`,
+  );
+}
+
+export function fetchHedgeBacktest(
+  portfolioId: string,
+  points = 24,
+  step = 21,
+): Promise<HedgeBacktest> {
+  return getJSON<HedgeBacktest>(
+    `/portfolios/${portfolioId}/hedge-backtest?points=${points}&step=${step}`,
+  );
+}
+
+export function fetchHedgeCalibration(
+  portfolioId: string,
+  points = 18,
+  step = 21,
+): Promise<HedgeCalibration> {
+  return getJSON<HedgeCalibration>(
+    `/portfolios/${portfolioId}/hedge-backtest/calibrate?points=${points}&step=${step}`,
   );
 }
 
