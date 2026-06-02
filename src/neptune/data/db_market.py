@@ -184,6 +184,14 @@ class DbMarketData:
             raise TickerNotFound(f"ticker {ticker!r} has no prices")
         return float(series[-2][2] if len(series) >= 2 else series[-1][2])
 
+    def mark_date(self, ticker: str) -> date:
+        """The trading date of the current mark (the latest stored bar). Anchors day P&L to the
+        data, not the wall clock: a lot opened on or after this date is same-session."""
+        series = self._series(ticker)
+        if not series:
+            raise TickerNotFound(f"ticker {ticker!r} has no prices")
+        return series[-1][0]
+
     # --- Universe enumeration (for the real shortable universe) --------------------
 
     def available_tickers(self, min_bars: int = 30) -> list[str]:

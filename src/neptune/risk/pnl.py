@@ -25,13 +25,19 @@ def position_pnl_for(position: Position, market: MarketData, as_of: date | None 
     lots = [
         Lot(l.quantity, l.entry_price, l.entry_date, l.fee_per_share) for l in position.lots
     ]
+    # Anchor "today" to the data's latest mark date (not the wall clock), so a same-day trade
+    # is recognized regardless of the client/server timezone. Falls back to today for sources
+    # without a calendar.
+    if as_of is None:
+        mark = getattr(market, "mark_date", None)
+        as_of = mark(position.ticker) if mark is not None else date.today()
     return position_pnl(
         lots=lots,
         current_price=market.current_price(position.ticker),
         prev_close=market.prev_close(position.ticker),
         direction=position.direction,
         realised=position.realised_pnl,
-        as_of=as_of if as_of is not None else date.today(),
+        as_of=as_of,
     )
 
 

@@ -52,6 +52,25 @@ def test_day_pnl_for_lot_opened_today_measures_from_entry():
     assert pnl.day == pytest.approx(50.0)
 
 
+def test_day_pnl_same_day_trade_reflects_only_fees_not_market_move():
+    """The reported bug: a same-day trade where current == execution should show day P&L equal
+    to the fee cost (== unrealised), NOT the move from the prior close."""
+    from datetime import timedelta
+
+    # 1000 sh bought TODAY at $7.85 with $0.10/sh fee; current == execution; prev close $7.70.
+    lots = [Lot(1000, 7.85, TODAY, fee_per_share=0.10)]
+    pnl = position_pnl(lots, current_price=7.85, prev_close=7.70, direction=LONG, as_of=TODAY)
+    assert pnl.day == pytest.approx(-100.0)          # 1000*(7.85-7.95), the fee — NOT +150
+    assert pnl.day == pytest.approx(pnl.unrealised)  # same-day: day == unrealised
+
+    # A lot dated AFTER the mark date (client/server timezone skew) still counts same-session.
+    future = position_pnl(
+        [Lot(1000, 7.85, TODAY + timedelta(days=1), fee_per_share=0.10)],
+        current_price=7.85, prev_close=7.70, direction=LONG, as_of=TODAY,
+    )
+    assert future.day == pytest.approx(-100.0)
+
+
 def test_pnl_addition_aggregates_books():
     a = PnL(1, 2, 3, 4)
     b = PnL(10, 20, 30, 40)

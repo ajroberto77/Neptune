@@ -10,6 +10,7 @@ to the injected noise — exactly what exercises Vasicek shrinkage.
 from __future__ import annotations
 
 import hashlib
+from datetime import date
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -129,4 +130,9 @@ class SyntheticMarketData:
     def prev_close(self, ticker: str) -> float:
         """The prior synthetic close (for day P&L)."""
         return float(self.price_series(ticker)[-2])
+
+    def mark_date(self, ticker: str) -> date:
+        """The date the current mark belongs to. Synthetic data has no calendar, so the marks
+        are treated as 'today' — a lot opened today is then same-session."""
+        return date.today()
 

@@ -97,12 +97,13 @@ def day_pnl(
     direction: int,
     as_of: date | None = None,
 ) -> float:
-    """P&L since the prior close. A lot opened on ``as_of`` is measured from its entry
-    price (it did not exist at the prior close), otherwise from ``prev_close``."""
+    """P&L since the prior close. A lot opened on or after ``as_of`` (the current mark's
+    session) did not exist at the prior close, so it is measured from its cost basis;
+    older lots are measured from ``prev_close``."""
     total = 0.0
     for lot in lots:
-        opened_today = as_of is not None and lot.entry_date == as_of
-        ref = cost_basis(lot, direction) if opened_today else prev_close
+        opened_this_session = as_of is not None and lot.entry_date >= as_of
+        ref = cost_basis(lot, direction) if opened_this_session else prev_close
         total += lot.quantity * (current_price - ref) * direction
     return total
 

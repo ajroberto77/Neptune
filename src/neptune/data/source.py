@@ -37,3 +37,8 @@ class MarketData(Protocol):
 
     def prev_close(self, ticker: str) -> float:
         ...
+
+    def mark_date(self, ticker: str):
+        """The trading date the current mark belongs to — anchors day P&L to the data's latest
+        session rather than the wall clock (so a same-day trade is detected across timezones)."""
+        ...
