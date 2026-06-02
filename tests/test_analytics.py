@@ -17,9 +17,9 @@ def test_market_data_is_deterministic_and_shaped():
 
 
 class _ThinMarketData:
-    """A market-data source with too few observations to fit the Dimson regression."""
+    """A market-data source with too few observations to fit the beta regression (OLS needs 3)."""
 
-    def __init__(self, n=4):
+    def __init__(self, n=2):
         import numpy as np
 
         self._r = np.linspace(0.001, 0.004, n)

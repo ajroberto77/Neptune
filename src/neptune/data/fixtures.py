@@ -71,7 +71,7 @@ def make_stock_returns(
 ) -> np.ndarray:
     """Synthetic stock returns r = beta_true * market (+ optional seeded noise).
 
-    With noise_std=0 the EWMA+Dimson regression recovers beta_true exactly and the
+    With noise_std=0 the OLS regression recovers beta_true exactly and the
     estimation variance is ~0 (Vasicek weight w ~ 1). With noise_std>0 the estimation
     variance is strictly positive, so Vasicek shrinkage is genuinely exercised.
     """

@@ -2,16 +2,16 @@
 
 The order is a HARD invariant (see CLAUDE.md, layer-4):
 
-  1. Raw beta  -> a single EWMA-weighted regression (lambda=0.94, 252-day) with the
-                  Dimson lead/lag market terms (k=-1,0,+1) folded into the SAME
-                  regression. Raw beta = sum of contemporaneous + lag + lead market
-                  coefficients. The regression also yields the estimation variance.
+  1. Raw beta  -> a plain OLS regression of stock returns on market returns over the most
+                  recent 252 trading days (~1 year). Raw beta = the market slope; the
+                  regression also yields its estimation variance (var_ols).
   2. Vasicek   -> shrink the raw estimate toward 1.0 as the FINAL model step:
                   beta = w*beta_raw + (1-w)*1.0,  w = var_prior / (var_prior + var_ols).
   3. Forward   -> a per-position forward_beta override supersedes the whole pipeline.
 
-Dimson is part of *estimation* (it corrects the regression for asynchronous/illiquid
-pricing), so it lives inside the regression — never as a post-shrinkage tweak.
+(History: §4 originally specified an EWMA(λ=0.94)+Dimson lead/lag regression. That weighted
+only ~32 effective observations and its collinear lead/lag terms produced unstable, sometimes
+sign-flipped betas, so it was revised to the 1-year OLS above. Vasicek remains last.)
 """
 from __future__ import annotations
 
@@ -21,20 +21,18 @@ import numpy as np
 
 from neptune.quant.returns import align
 
-DEFAULT_LAMBDA = 0.94
 DEFAULT_LOOKBACK = 252
-DEFAULT_LAGS = (-1, 0, 1)
 PRIOR_MEAN = 1.0  # betas shrink toward the market mean of 1.0
 
 
 @dataclass
 class RawBetaResult:
-    """Output of the EWMA + Dimson regression (step 1)."""
+    """Output of the OLS beta regression (step 1)."""
 
-    beta_raw: float          # sum of contemporaneous + lag + lead market coefficients
+    beta_raw: float          # the OLS market slope
     var_ols: float           # estimation variance of beta_raw (drives Vasicek weight)
-    coefficients: np.ndarray  # [intercept, *market coefficients per lag]
-    n_obs: int               # rows used after lag/lead trimming and lookback
+    coefficients: np.ndarray  # [intercept, market slope]
+    n_obs: int               # rows used after the lookback window
 
 
 @dataclass
@@ -64,7 +62,7 @@ def semibetas(
     selloffs vs rallies — the asymmetry a single beta hides.
 
     It is deliberately NOT the beta pipeline: no EWMA weighting, no Dimson lead/lag, no
-    Vasicek. The pipeline beta (EWMA+Dimson → Vasicek → forward override) and the
+    Vasicek. The pipeline beta (252-day OLS → Vasicek → forward override) and the
     ``|β| ≤ 0.05`` hard constraint are untouched; this feeds the stress scenarios only.
     Degenerate subsets (fewer than ``min_obs`` days, or zero market variance) fall back to
     ``fallback`` (the pipeline beta), so a thin side never invents a spurious slope."""
@@ -83,83 +81,37 @@ def semibetas(
     return SemiBeta(down_beta=_slope(market < 0.0), up_beta=_slope(market > 0.0))
 
 
-def _ewma_weights(n: int, lam: float) -> np.ndarray:
-    """EWMA weights for ``n`` chronological rows (oldest first, newest last).
-
-    The newest row gets weight lambda^0, the previous lambda^1, etc. Weights are
-    normalized to sum to ``n`` so the estimation variance keeps an OLS-like scale.
-    """
-    ages = np.arange(n - 1, -1, -1, dtype=float)  # oldest row has the largest age
-    raw = lam ** ages
-    return raw * (n / raw.sum())
-
-
-def _dimson_design(stock: np.ndarray, market: np.ndarray, lags: tuple[int, ...]):
-    """Build the Dimson design matrix: intercept + one market column per lag/lead.
-
-    Column for offset ``k`` is the market return at t+k, so k<0 is a lagged market
-    return (delayed reaction) and k>0 is a lead. Rows are trimmed to the range where
-    every offset is defined, preserving chronological order.
-    """
-    n = stock.shape[0]
-    lo, hi = max(0, -min(lags)), max(0, max(lags))
-    start, stop = lo, n - hi            # valid t in [start, stop)
-    if stop - start < len(lags) + 2:
-        raise ValueError("not enough observations for the Dimson regression")
-    y = stock[start:stop]
-    cols = [np.ones(stop - start)]      # intercept
-    for k in lags:
-        cols.append(market[start + k:stop + k])
-    return np.column_stack(cols), y
-
-
-def raw_beta_ewma_dimson(
+def raw_beta(
     stock_returns: np.ndarray,
     market_returns: np.ndarray,
-    lam: float = DEFAULT_LAMBDA,
     lookback: int = DEFAULT_LOOKBACK,
-    lags: tuple[int, ...] = DEFAULT_LAGS,
 ) -> RawBetaResult:
-    """Step 1: EWMA-weighted Dimson regression; raw beta = sum of market coefficients."""
+    """Step 1: a plain OLS regression of stock returns on market returns over the most recent
+    ``lookback`` (default 252 = ~1 year) trading days. Raw β is the market slope; ``var_ols`` is
+    the OLS variance of that slope (the input to Vasicek shrinkage).
+
+    This REPLACED the EWMA(λ=0.94) + Dimson lead/lag regression (CLAUDE.md §4, revised). That
+    form weighted only ~32 effective observations, and its three collinear market terms
+    (t−1, t, t+1) produced unstable, sometimes sign-flipped betas (e.g. a high-beta tech name
+    estimated negative). A 1-year equal-weight OLS recovers stable, accurate betas and barely
+    moves when a new day lands. Vasicek shrinkage remains the final model step.
+    """
     stock, market = align(np.asarray(stock_returns, float), np.asarray(market_returns, float))
-    X, y = _dimson_design(stock, market, lags)
+    if stock.shape[0] > lookback:
+        stock, market = stock[-lookback:], market[-lookback:]
+    n = stock.shape[0]
+    if n < 3:
+        raise ValueError("not enough observations for the beta regression")
 
-    # Keep the most recent `lookback` rows (rows are chronological).
-    if X.shape[0] > lookback:
-        X, y = X[-lookback:], y[-lookback:]
+    X = np.column_stack([np.ones(n), market])  # intercept + market
+    XtX_inv = np.linalg.inv(X.T @ X)
+    coef = XtX_inv @ (X.T @ stock)
+    beta_raw = float(coef[1])
 
-    n, p = X.shape
-    w = _ewma_weights(n, lam)
-    W = np.diag(w)
-
-    XtW = X.T @ W
-    XtWX = XtW @ X
-    XtWX_inv = np.linalg.inv(XtWX)
-    coef = XtWX_inv @ (XtW @ y)
-
-    # Market coefficients are everything except the intercept (column 0).
-    selector = np.zeros(p)
-    selector[1:] = 1.0
-    beta_raw = float(selector @ coef)
-
-    # Weighted residual variance with a (n - p) dof correction; weights sum to n.
-    resid = y - X @ coef
-    dof = max(n - p, 1)
-    sigma2_resid = float((w * resid**2).sum() / dof)
-
-    # Variance of the *sum* of the market coefficients: aᵀ Cov(coef) a.
-    #
-    # EWMA weights are a RECENCY decay, not inverse-variance (GLS) weights, so the naive WLS
-    # covariance σ²·(XᵀWX)⁻¹ is wrong here — it treats all 252 rows as equally informative
-    # and badly understates the estimate's uncertainty (effective sample ≈ 1/(1-λ) ≈ 17). The
-    # correct standard error for a weighted estimator with arbitrary weights is the SANDWICH
-    # form σ²·(XᵀWX)⁻¹(XᵀW²X)(XᵀWX)⁻¹. Without it var_ols is several-fold too small (~6x at
-    # λ=0.94, where the effective sample ≈ 32 of 252), so Vasicek sees "precise" betas and
-    # barely shrinks — leaving the wild ±3 raw estimates intact.
-    XtW2X = (X.T * (w**2)) @ X
-    cov_coef = sigma2_resid * (XtWX_inv @ XtW2X @ XtWX_inv)
-    var_ols = float(selector @ cov_coef @ selector)
-
+    resid = stock - X @ coef
+    dof = max(n - 2, 1)
+    sigma2 = float((resid**2).sum() / dof)
+    var_ols = float(sigma2 * XtX_inv[1, 1])  # variance (SE²) of the OLS slope
     return RawBetaResult(beta_raw=beta_raw, var_ols=var_ols, coefficients=coef, n_obs=n)
 
 
@@ -187,11 +139,10 @@ def beta_pipeline(
     market_returns: np.ndarray,
     var_prior: float,
     forward_beta: float | None = None,
-    lam: float = DEFAULT_LAMBDA,
     lookback: int = DEFAULT_LOOKBACK,
-    lags: tuple[int, ...] = DEFAULT_LAGS,
 ) -> BetaResult:
-    """Run the full pipeline. A PM ``forward_beta`` supersedes everything (step 3)."""
+    """Run the full pipeline: 252-day OLS raw beta → Vasicek shrinkage. A PM ``forward_beta``
+    supersedes everything (step 3)."""
     if forward_beta is not None:
         return BetaResult(
             beta=float(forward_beta),
@@ -200,7 +151,7 @@ def beta_pipeline(
             weight=1.0,
             method="forward_override",
         )
-    raw = raw_beta_ewma_dimson(stock_returns, market_returns, lam, lookback, lags)
+    raw = raw_beta(stock_returns, market_returns, lookback)
     beta, w = vasicek_shrinkage(raw.beta_raw, raw.var_ols, var_prior)
     return BetaResult(
         beta=beta,

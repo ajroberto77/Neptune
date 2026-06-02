@@ -3,7 +3,7 @@
 This is the Risk Interface wiring that connects domain positions to the Quant Engine
 using a market-data source. Per position:
   * the market beta is the PM ``forward_beta`` when set, else the full pipeline
-    (EWMA+Dimson raw beta -> Vasicek shrinkage), with the Vasicek prior variance taken
+    (252-day OLS raw beta -> Vasicek shrinkage), with the Vasicek prior variance taken
     from the cross-section of raw betas in the book;
   * factor loadings always come from the regression (a forward beta overrides only the
     market beta, never the factor loadings).
@@ -21,7 +21,7 @@ from neptune.domain.models import Portfolio, ShortType
 from neptune.quant.beta import (
     RawBetaResult,
     cross_sectional_prior_var,
-    raw_beta_ewma_dimson,
+    raw_beta,
     vasicek_shrinkage,
 )
 from neptune.quant.factors import factor_loadings
@@ -49,13 +49,13 @@ def compute_metrics(
     market = market_data.market_returns()
     factors = market_data.factor_returns()
 
-    # A name with too little price history to fit the Dimson regression yet gets a sentinel
+    # A name with too little price history for the beta regression yet gets a sentinel
     # raw beta (prior 1.0, infinite estimation variance) instead of crashing — Vasicek then
     # shrinks it fully to the prior. Real prices/P&L still work; only the beta waits for data.
     raws, insufficient = {}, set()
     for p in portfolio.positions:
         try:
-            raws[p.ticker] = raw_beta_ewma_dimson(market_data.ticker_returns(p.ticker), market)
+            raws[p.ticker] = raw_beta(market_data.ticker_returns(p.ticker), market)
         except (ValueError, TickerNotFound):
             # Too little history (ValueError) OR no stored prices at all (TickerNotFound).
             # Either way: sentinel prior-1.0 beta, fully shrunk — never crash the whole book.
@@ -120,7 +120,7 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
     """Build shortable-universe candidates with live betas and factor loadings."""
     market = market_data.market_returns()
     factors = market_data.factor_returns()
-    raws = {t: raw_beta_ewma_dimson(market_data.ticker_returns(t), market) for t in tickers}
+    raws = {t: raw_beta(market_data.ticker_returns(t), market) for t in tickers}
     prior_var = (
         cross_sectional_prior_var([r.beta_raw for r in raws.values()])
         if len(raws) >= 2
@@ -142,7 +142,7 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
 def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate]:
     """The REAL shortable universe: build candidates from backfilled names (a ``DbMarketData``
     source) with their pipeline betas, factor loadings, and stored sectors. Unlike the
-    synthetic ``live_universe``, names with too little price history to fit the Dimson
+    synthetic ``live_universe``, names with too little price history to fit the OLS
     regression are skipped (they can't be sized), and the sector comes from the securities DB.
     """
     if tickers is None:
@@ -153,7 +153,7 @@ def db_universe(market_data, tickers: list[str] | None = None) -> list[Candidate
     raws = {}
     for t in tickers:
         try:
-            raws[t] = raw_beta_ewma_dimson(market_data.ticker_returns(t), market)
+            raws[t] = raw_beta(market_data.ticker_returns(t), market)
         except (ValueError, TickerNotFound):
             continue  # insufficient history / no prices — not a usable hedge candidate
     if not raws:

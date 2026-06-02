@@ -50,8 +50,8 @@ def test_short_benchmark_empties_universe_despite_priced_names(securities_sessio
     their OWN bars, but the benchmark is short, so EVERY beta regression fails and the
     shortable universe is empty. available_tickers (price-bar count) still lists them."""
     synth = SyntheticMarketData()
-    # Benchmark with only 4 bars — too short to fit the Dimson regression (needs ~7 aligned).
-    _seed(securities_session, "SPY", 1, [0.01, -0.02, 0.0])
+    # Benchmark with only 2 bars (1 return) — too short for the OLS beta regression (needs 3).
+    _seed(securities_session, "SPY", 1, [0.01])
     _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"), sector="Technology")
     _seed(securities_session, "BBB", 3, synth.ticker_returns("BBB"), sector="Energy")
     securities_session.commit()

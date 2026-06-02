@@ -1,4 +1,4 @@
-"""Golden-number tests for the beta pipeline (EWMA + Dimson regression -> Vasicek)."""
+"""Golden-number tests for the beta pipeline (252-day OLS raw beta -> Vasicek shrinkage)."""
 from __future__ import annotations
 
 import numpy as np
@@ -6,11 +6,9 @@ import pytest
 
 from neptune.data.fixtures import make_market_returns, make_stock_returns
 from neptune.quant.beta import (
-    _dimson_design,
-    _ewma_weights,
     beta_pipeline,
     cross_sectional_prior_var,
-    raw_beta_ewma_dimson,
+    raw_beta,
     vasicek_shrinkage,
 )
 
@@ -18,17 +16,14 @@ BETA_TRUE = 1.3
 VAR_PRIOR = 0.08
 
 
-def _reference_raw_beta(stock, market, lam=0.94, lookback=252, lags=(-1, 0, 1)) -> float:
-    """Independent recomputation of the raw beta via sqrt-weighted least squares
-    (QR-based lstsq), a different numerical path than the engine's normal equations."""
+def _reference_raw_beta(stock, market, lookback=252) -> float:
+    """Independent OLS slope via cov/var — a different numerical path than the engine's
+    normal-equations solver."""
     n = min(stock.shape[0], market.shape[0])
-    X, y = _dimson_design(stock[-n:], market[-n:], lags)
-    if X.shape[0] > lookback:
-        X, y = X[-lookback:], y[-lookback:]
-    w = _ewma_weights(X.shape[0], lam)
-    sw = np.sqrt(w)
-    coef, *_ = np.linalg.lstsq(X * sw[:, None], y * sw, rcond=None)
-    return float(coef[1:].sum())  # sum of the three market coefficients
+    s, m = stock[-n:], market[-n:]
+    if s.shape[0] > lookback:
+        s, m = s[-lookback:], m[-lookback:]
+    return float(np.cov(s, m, bias=True)[0, 1] / np.var(m))
 
 
 def test_noise_free_recovers_true_beta_exactly():
@@ -37,7 +32,7 @@ def test_noise_free_recovers_true_beta_exactly():
 
     result = beta_pipeline(stock, market, var_prior=VAR_PRIOR)
 
-    # Exact linear data -> regression recovers beta, variance ~0, Vasicek w ~1.
+    # Exact linear data -> OLS recovers beta, variance ~0, Vasicek w ~1.
     assert result.beta_raw == pytest.approx(BETA_TRUE, abs=1e-8)
     assert result.var_ols == pytest.approx(0.0, abs=1e-12)
     assert result.weight == pytest.approx(1.0, abs=1e-9)
@@ -54,7 +49,7 @@ def test_known_noise_exercises_vasicek_shrinkage():
     assert result.var_ols > 0.0
     assert 0.0 < result.weight < 1.0
 
-    # Raw beta matches an independent solver path.
+    # Raw beta matches an independent OLS path.
     assert result.beta_raw == pytest.approx(_reference_raw_beta(stock, market), rel=1e-9)
 
     # Shrunk beta lies strictly between the raw estimate and the prior mean of 1.0.
@@ -74,6 +69,14 @@ def test_noisier_estimate_shrinks_harder():
     assert abs(high.beta - 1.0) < abs(low.beta - 1.0)
 
 
+def test_ols_recovers_true_beta_far_better_than_a_short_window():
+    """The point of the §4 revision: a 1-year OLS is accurate even with realistic noise."""
+    market = make_market_returns(n=400, seed=2)
+    stock = make_stock_returns(market, beta_true=0.55, noise_std=0.012, seed=9)
+    raw = raw_beta(stock, market)
+    assert raw.beta_raw == pytest.approx(0.55, abs=0.1)  # close to truth, not sign-flipped
+
+
 def test_forward_override_supersedes_pipeline():
     market = make_market_returns(n=300, seed=7)
     stock = make_stock_returns(market, beta_true=BETA_TRUE, noise_std=0.02)
@@ -90,7 +93,7 @@ def test_vasicek_requires_positive_prior():
 def test_raw_beta_returns_estimation_variance():
     market = make_market_returns(n=300, seed=7)
     stock = make_stock_returns(market, BETA_TRUE, noise_std=0.03, seed=5)
-    raw = raw_beta_ewma_dimson(stock, market)
+    raw = raw_beta(stock, market)
     assert raw.var_ols > 0
     assert raw.n_obs <= 252
 

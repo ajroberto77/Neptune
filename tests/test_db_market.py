@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from neptune.data.db_market import DbMarketData, TickerNotFound
-from neptune.quant.beta import raw_beta_ewma_dimson
+from neptune.quant.beta import raw_beta
 from neptune.securities.models import Price, Security
 
 
@@ -79,7 +79,7 @@ def test_recovers_beta_from_stored_prices(securities_session):
     # AAA return = 1.2 * market return, exactly → beta should recover ~1.2.
     _seed(securities_session, "AAA", 2, ds, _compound(100.0, 1.2 * rm))
     md = DbMarketData(securities_session, benchmark="SPY")
-    raw = raw_beta_ewma_dimson(md.ticker_returns("AAA"), md.market_returns())
+    raw = raw_beta(md.ticker_returns("AAA"), md.market_returns())
     assert raw.beta_raw == pytest.approx(1.2, abs=0.03)
 
 

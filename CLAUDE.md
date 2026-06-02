@@ -41,18 +41,20 @@ limit is tighter (`±0.030`) and applies once Book-of-Books exists.
 
 ## 4. Beta pipeline — fixed order, Vasicek is the FINAL step
 
-1. **Raw beta** — a single 252-day **EWMA-weighted regression** (λ = 0.94, weights
-   `λ^k` newest-first, normalized) of stock excess returns on market excess returns,
-   with the **Dimson lead/lag market terms (k = −1, 0, +1) folded into the same
-   regression**. Raw β = sum of the contemporaneous + lag + lead market coefficients.
-   The regression also yields the estimation variance `σ²_OLS`.
+1. **Raw beta** — a plain **252-day (≈1-year) OLS regression** of stock returns on market
+   returns. Raw β = the market slope; the regression also yields the estimation variance
+   `σ²_OLS` (the variance/SE² of the slope).
 2. **Vasicek shrinkage** — applied to the raw estimate as the **final model step**:
    `β = w · β_raw + (1 − w) · 1.0`, with `w = σ²_prior / (σ²_prior + σ²_OLS)`.
 3. **Forward beta override** — a per-position, PM-overridable `forward_beta`
    **supersedes the entire pipeline** for that position (post-catalyst situations).
 
-> Dimson terms are estimated *inside* the EWMA regression — never applied as a
-> post-shrinkage adjustment. Vasicek is always last among model steps.
+> **Revision note.** This originally specified an **EWMA (λ = 0.94) + Dimson lead/lag**
+> regression. In production it weighted only ~32 effective observations and its collinear
+> lead/lag terms produced **unstable, sometimes sign-flipped betas** (a high-beta tech name
+> estimated negative), which broke the hedge — so it was revised (PM-approved) to the 1-year
+> OLS above. Betas are computed on **completed daily closes only** (today's live bar excluded)
+> so they're stable intraday. Vasicek is always last among model steps.
 
 ## 5. The short book is a hedge, not alpha
 

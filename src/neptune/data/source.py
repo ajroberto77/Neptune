@@ -6,7 +6,7 @@ for the other is a constructor change, no engine edits (CLAUDE.md §1: the engin
 functions over arrays).
 
 **The array contract.** Every return series is date-aligned, equal-length, and newest-last
-— exactly what ``raw_beta_ewma_dimson(returns, market)`` and ``factor_loadings(returns,
+— exactly what ``raw_beta(returns, market)`` and ``factor_loadings(returns,
 factors)`` rely on (a stock's returns and the market/factor series must line up index for
 index). Implementations own that alignment; the engine just consumes the arrays.
 """
