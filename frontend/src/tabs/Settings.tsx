@@ -7,6 +7,7 @@ import {
   fetchCredentials,
   fetchSecuritiesHealth,
   ingestFactors,
+  ingestMacro,
   ingestPrices,
   saveConnection,
   saveCredential,
@@ -177,6 +178,20 @@ export function Settings() {
       setStatus((s) => ({ ...s, SECURITIES: "" }));
     } catch (e) {
       setStatus((s) => ({ ...s, SECURITIES: String(e) }));
+    }
+  }
+
+  async function handleMacroIngest() {
+    setStatus((s) => ({ ...s, MACRO: "Backfilling macro series since 2000…" }));
+    try {
+      const r = await ingestMacro(2000);
+      setStatus((s) => ({
+        ...s,
+        MACRO: `Ingested ${r.total} points across ${r.series} macro series`,
+      }));
+      loadCreds();
+    } catch (e) {
+      setStatus((s) => ({ ...s, MACRO: String(e) }));
     }
   }
 
@@ -352,6 +367,14 @@ export function Settings() {
                   className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
                 >
                   Sync universe
+                </button>
+              )}
+              {row.role === "MACRO" && (
+                <button
+                  onClick={handleMacroIngest}
+                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                >
+                  Backfill macro (FRED/ALFRED, since 2000)
                 </button>
               )}
               {row.role === "SECURITIES" && (

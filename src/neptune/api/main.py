@@ -41,7 +41,7 @@ from neptune.db.base import (
     make_engine,
 )
 from neptune.db.models import PositionORM
-from neptune.db.runtime import securities_session
+from neptune.db.runtime import macro_session, securities_session
 from neptune.domain.models import (
     BookType, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
 )
@@ -65,6 +65,8 @@ from neptune.positions.service import ConflictError, PositionService
 from neptune.settings_store import ConnectionRole
 from neptune.settings_store.service import ConnectionSettingsService
 from neptune.settings_store.credentials import CredentialsService
+from neptune.macro import ingest as macro_ingest
+from neptune.macro.catalog import seed_catalog as seed_macro_catalog
 from neptune.securities.ingest import ingest_ticker
 from neptune.securities.factor_ingest import ingest_factors
 from neptune.securities.factor_providers import KenFrenchProvider
@@ -1268,6 +1270,35 @@ def set_credential(provider: str, body: ApiKeyIn, session: Session = Depends(get
         return CredentialsService(session).set_key(provider, body.api_key)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"unknown provider {provider}") from None
+
+
+class MacroIngestIn(BaseModel):
+    """Backfill the macro catalog from FRED/ALFRED. ``start_year`` bounds the history
+    (default 2000); ``series`` optionally restricts to a subset of series ids."""
+
+    start_year: int = Field(default=2000, ge=1900, le=2100)
+    series: list[str] | None = None
+
+
+@app.post("/macro/ingest")
+def ingest_macro(body: MacroIngestIn, session: Session = Depends(get_session)):
+    """Pull the registered macro series (rates/credit via FRED, economic via ALFRED vintages)
+    into the macro DB. Requires a FRED key (Settings → Data provider API keys) and network —
+    returns 400 without a key and 503 if the feed is unreachable, rather than failing opaquely."""
+    try:
+        provider = macro_ingest.build_fred_provider(session)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    only = set(body.series) if body.series else None
+    try:
+        with macro_session(session) as mac:
+            seed_macro_catalog(mac)  # ensure the registry exists before ingesting
+            counts = macro_ingest.ingest_catalog(
+                mac, provider, start=date(body.start_year, 1, 1), only=only
+            )
+    except Exception as exc:  # noqa: BLE001 — network/provider failure → 503, sanitized
+        raise HTTPException(status_code=503, detail=f"macro feed unavailable: {type(exc).__name__}") from exc
+    return {"ingested": counts, "total": sum(counts.values()), "series": len(counts)}
 
 
 class PriceRefreshIn(BaseModel):

@@ -200,11 +200,15 @@ def test_apply_transform_none_is_identity_and_short_series_safe():
 # --- layer purity (CLAUDE.md §1): the pure engine never imports the macro DB --------
 
 
-def _import_lines(pkg: str) -> list[str]:
-    """Actual import statements across a package's source (ignores prose/docstrings)."""
-    root = Path(__file__).resolve().parents[1] / "src" / "neptune" / pkg
+def _import_lines(*rel_paths: str) -> list[str]:
+    """Actual import statements across the given source files/dirs (ignores prose/docstrings)."""
+    base = Path(__file__).resolve().parents[1] / "src" / "neptune"
+    files: list[Path] = []
+    for rel in rel_paths:
+        p = base / rel
+        files.extend(p.rglob("*.py") if p.is_dir() else [p])
     lines: list[str] = []
-    for p in root.rglob("*.py"):
+    for p in files:
         for raw in p.read_text().splitlines():
             s = raw.strip()
             if s.startswith(("import ", "from ")):
@@ -216,10 +220,125 @@ def test_quant_engine_does_not_import_macro():
     assert not [ln for ln in _import_lines("quant") if "neptune.macro" in ln]
 
 
-def test_macro_layer_does_not_import_quant_or_network():
-    imports = _import_lines("macro")
-    # Data layer must not depend on the engine, nor (in 1a–1c) make network calls.
-    assert not [ln for ln in imports if "neptune.quant" in ln]
+def test_macro_layer_does_not_import_quant():
+    # The whole data layer is independent of the pure engine.
+    assert not [ln for ln in _import_lines("macro") if "neptune.quant" in ln]
+
+
+def test_macro_core_is_network_free():
+    # The storage/read core stays network-free; only providers/ingest may do I/O.
+    core = _import_lines("macro/models.py", "macro/repository.py", "macro/catalog.py")
     forbidden = ("requests", "httpx", "urllib.request", "urllib.error", "socket", "aiohttp")
-    bad = [ln for ln in imports if any(mod in ln for mod in forbidden)]
-    assert not bad, f"unexpected network import in macro layer: {bad}"
+    bad = [ln for ln in core if any(mod in ln for mod in forbidden)]
+    assert not bad, f"unexpected network import in macro core: {bad}"
+
+
+# --- 1d: ingest (mocked provider — no live network) -------------------------------
+
+
+class _FakeProvider:
+    def __init__(self, obs=None, vints=None):
+        self._obs = obs or {}
+        self._vints = vints or {}
+
+    def observations(self, code, *, start=None, end=None):
+        return self._obs.get(code, [])
+
+    def vintage_observations(self, code, *, start=None, end=None):
+        return self._vints.get(code, [])
+
+
+def test_ingest_market_and_econ_series(macro_session):
+    from neptune.macro.ingest import ingest_series
+    from neptune.macro.providers import ObservationPoint, VintagePoint
+
+    seed_catalog(macro_session)
+    prov = _FakeProvider(
+        obs={"DGS10": [ObservationPoint(date(2024, 1, 2), 3.95),
+                       ObservationPoint(date(2024, 1, 3), 4.00)]},
+        vints={"GDPC1": [VintagePoint(date(2024, 1, 1), date(2024, 4, 25), 1.6),
+                         VintagePoint(date(2024, 1, 1), date(2024, 6, 27), 1.4)]},
+    )
+    assert ingest_series(macro_session, repo.get_series(macro_session, "UST_10Y"), prov) == 2
+    assert repo.observations(macro_session, "UST_10Y") == [
+        (date(2024, 1, 2), 3.95), (date(2024, 1, 3), 4.00)]
+
+    assert ingest_series(macro_session, repo.get_series(macro_session, "GDP"), prov) == 2
+    # ECON lands as point-in-time vintages: latest vs first-print both recoverable.
+    assert repo.latest(macro_session, "GDP") == [(date(2024, 1, 1), 1.4)]
+    assert repo.first_print(macro_session, "GDP") == [(date(2024, 1, 1), 1.6)]
+    macro_session.commit()
+
+
+def test_ingest_skips_series_without_free_code(macro_session):
+    from neptune.macro.ingest import ingest_series
+
+    seed_catalog(macro_session)
+    # ISM PMI has source 'ISM' and no source_code → nothing to pull.
+    assert ingest_series(macro_session, repo.get_series(macro_session, "ISM_MFG"), _FakeProvider()) == 0
+
+
+def test_ingest_catalog_only_subset_is_idempotent(macro_session):
+    from neptune.macro.ingest import ingest_catalog
+    from neptune.macro.providers import ObservationPoint
+
+    seed_catalog(macro_session)
+    prov = _FakeProvider(obs={"DGS10": [ObservationPoint(date(2024, 1, 2), 3.95)]})
+    counts = ingest_catalog(macro_session, prov, only={"UST_10Y"})
+    assert counts == {"UST_10Y": 1}
+    # Re-running upserts, not duplicates.
+    ingest_catalog(macro_session, prov, only={"UST_10Y"})
+    assert repo.observations(macro_session, "UST_10Y") == [(date(2024, 1, 2), 3.95)]
+
+
+# --- 1d: FRED provider parsing (fake session — no live network) -------------------
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class _FakeSession:
+    def __init__(self, payload):
+        self._payload = payload
+        self.calls = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append((url, params))
+        return _FakeResp(self._payload)
+
+
+def test_fred_provider_parses_and_skips_missing():
+    from neptune.macro.providers import FredProvider, ObservationPoint
+
+    payload = {"observations": [
+        {"date": "2024-01-02", "value": "3.95"},
+        {"date": "2024-01-03", "value": "."},  # missing → skipped
+    ]}
+    sess = _FakeSession(payload)
+    prov = FredProvider("KEY", session=sess)
+    assert prov.observations("DGS10") == [ObservationPoint(date(2024, 1, 2), 3.95)]
+    # api_key + file_type were injected into the query.
+    _url, params = sess.calls[0]
+    assert params["api_key"] == "KEY" and params["file_type"] == "json"
+
+
+def test_fred_provider_maps_realtime_start_to_vintage_date():
+    from neptune.macro.providers import FredProvider, VintagePoint
+
+    payload = {"observations": [
+        {"date": "2009-03-01", "value": "-6.4", "realtime_start": "2009-04-29"},
+        {"date": "2009-03-01", "value": "-5.5", "realtime_start": "2009-06-25"},
+    ]}
+    prov = FredProvider("KEY", session=_FakeSession(payload))
+    assert prov.vintage_observations("GDPC1") == [
+        VintagePoint(date(2009, 3, 1), date(2009, 4, 29), -6.4),
+        VintagePoint(date(2009, 3, 1), date(2009, 6, 25), -5.5),
+    ]

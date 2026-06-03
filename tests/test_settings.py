@@ -76,6 +76,13 @@ def test_set_credential_unknown_provider_404(client):
     assert r.status_code == 404
 
 
+def test_macro_ingest_requires_a_fred_key(client):
+    # With no key configured (none stored, none in env) the endpoint fails fast with 400.
+    r = client.post("/macro/ingest", json={"start_year": 2020})
+    assert r.status_code == 400
+    assert "FRED" in r.json()["detail"]
+
+
 def test_upsert_connection_never_returns_password(client):
     r = client.put(
         "/settings/connections/UNIVERSE",

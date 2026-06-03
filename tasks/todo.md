@@ -320,7 +320,17 @@ first vertical slice · 🔵 LATER = deferred.
       (`NEPTUNE_FRED_API_KEY`/bare `FRED_API_KEY`); `GET/PUT /settings/credentials` (masked,
       never echoes the key); a "Data provider API keys" panel on the Settings tab with the
       FRED how-to-get-one link. One FRED key serves ALFRED. (`test_settings.py`, `Settings.test.tsx`.)
-- [ ] 🔵 **Phase 1d — ingest (needs network + a FRED key).** FRED + ALFRED + Treasury clients
-      reading the key via `CredentialsService.resolve_key("FRED")`; EOD daily MARKET pull (live
-      bar excluded) + event-driven ECON-release pull; Celery schedule. Backfill to 2000.
+- [x] 🟢 **Phase 1d — ingest (logic built + mocked-tested; live run needs network allowlist).**
+      `macro/providers.py` `FredProvider` (FRED current values for MARKET; ALFRED full-vintage
+      via the realtime range → `vintage_date = realtime_start`); `macro/ingest.py`
+      (`build_fred_provider` reads the key via `CredentialsService.resolve_key("FRED")`,
+      `ingest_series`/`ingest_catalog`, skips no-code series like ISM); `db/runtime.py`
+      `macro_session` (own engine cache — fixed a url-collision clobber with securities);
+      `POST /macro/ingest` (400 w/o key, 503 on feed error) + a "Backfill macro" button on the
+      MACRO Settings card. FRED covers the whole Phase-1 core (incl. UST) so no Treasury client
+      needed. Tests: fake-provider ingest + FRED/ALFRED JSON parsing + endpoint guard.
+      **BLOCKED for a live run:** this env's network policy denies `api.stlouisfed.org`
+      ("Host not in allowlist") — allowlist it (and run) here, or run where network is open.
+- [ ] 🔵 **Phase 1d-follow — scheduling.** EOD daily MARKET pull (live bar excluded) +
+      event-driven ECON-release pull on a Celery schedule (manual `/macro/ingest` works now).
 - [ ] 🔵 Global (non-US) rates/FX; paid feeds (CDX/MOVE/intraday) if budgeted.

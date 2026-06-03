@@ -190,6 +190,20 @@ export function saveCredential(
   });
 }
 
+export interface MacroIngestResult {
+  ingested: Record<string, number>;
+  total: number;
+  series: number;
+}
+
+export function ingestMacro(startYear = 2000): Promise<MacroIngestResult> {
+  return getJSON<MacroIngestResult>(`/macro/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start_year: startYear }),
+  });
+}
+
 export function syncUniverse(): Promise<SyncResult> {
   return getJSON<SyncResult>(`/settings/universe/sync`, { method: "POST" });
 }

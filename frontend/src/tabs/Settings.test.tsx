@@ -57,6 +57,8 @@ vi.mock("../api/client", () => ({
   syncUniverse: () => syncUniverse(),
   ingestPrices: (tickers?: string[], years?: number) => ingestPrices(tickers, years),
   ingestFactors: () => ingestFactors(),
+  ingestMacro: (startYear?: number) =>
+    Promise.resolve({ ingested: { UST_10Y: 100 }, total: 100, series: 1, startYear }),
 }));
 
 describe("Settings", () => {
