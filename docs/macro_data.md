@@ -32,7 +32,8 @@ non-stationary level; treating a flow like a stock). Flags live on the registry 
 | `observation_type` | `STOCK` / `FLOW` | level-at-a-point vs over-a-period → aggregation rule |
 | `value_type` | LEVEL, INDEX, RATIO, RATE, RATE_OF_CHANGE, DIFFUSION, SPREAD, YIELD, COUNT, CURRENCY | statistical nature → which transforms are valid |
 | `stationarity` | `STATIONARY` / `NONSTATIONARY` / `UNKNOWN` | is the raw series regression/z-score-ready |
-| `default_transform` | NONE, DIFF, LOG_DIFF, PCT_CHANGE, YOY, ANNUALIZED, ZSCORE | canonical transform to make it analysis-ready |
+| `transform_op` | NONE, DIFF, LOG_DIFF, PCT_CHANGE, ANNUALIZE, ZSCORE | the change *operator* — **constrained by `value_type`** (see below) |
+| `transform_horizon` | NONE, POP, YOY | the *horizon* the operator spans (period-over-period vs year-over-year) |
 | `seasonal_adjustment` | `SA` / `NSA` / `NA` | seasonal handling before MoM/YoY |
 | `frequency` | DAILY, WEEKLY, MONTHLY, QUARTERLY | alignment / resampling |
 | `units`, `country`, `currency`, `source`, `source_code`, `is_vintaged` | — | display, scope, provenance |
@@ -47,6 +48,25 @@ non-stationary level; treating a flow like a stock). Flags live on the registry 
 > form** (CPI index, employment *level*). Transforms (YoY, DIFF→"new jobs", annualized
 > growth, z-score) are applied **on read by the risk layer** — never materialized into the
 > fact tables, never inside the engine.
+
+**Operator + horizon, not a single "YoY".** "YoY" names a *horizon* (12 months), not an
+operation — and the operation depends on `value_type`. A YoY on a price **index** (CPI) is a
+`PCT_CHANGE` → that *is* inflation. A YoY on an already-a-**rate** series (unemployment) is a
+`DIFF` → a change in **percentage points**; you never percent-change a rate. A series that
+arrives **already differenced** (`value_type=RATE_OF_CHANGE`, e.g. a CPI-YoY series) gets
+`transform_op=NONE` so the layer doesn't **double-difference** it. Same 12-month horizon,
+different math per type:
+
+| series | `value_type` | YoY resolves to | result |
+|---|---|---|---|
+| CPI_HEADLINE | INDEX (non-stationary) | `PCT_CHANGE @ YOY` | inflation %, e.g. +3.2% |
+| UNRATE | RATE (stationary) | `DIFF @ YOY` | ±pp, e.g. +0.4pp (often used raw) |
+| CPI_YOY (pre-differenced) | RATE_OF_CHANGE | `NONE` | already inflation — don't transform |
+
+**Validation keys off `value_type`:** INDEX/LEVEL → `PCT_CHANGE`/`LOG_DIFF`;
+RATE/RATIO/YIELD/SPREAD → `DIFF` in native units; RATE_OF_CHANGE/DIFFUSION → `NONE`. The
+risk layer **refuses** `PCT_CHANGE` on a rate and **refuses any second transform** on a
+`RATE_OF_CHANGE` series.
 
 ## 3. Storage schema
 
@@ -127,15 +147,15 @@ commodities (`WTI/BRENT/GOLD/COPPER`); `RETAIL_SALES`, `INDPRO`, `HOUSING_STARTS
 
 Representative typing (store raw + flag + transform-on-read):
 
-| series | class | category | obs_type | value_type | stationary | units | default_transform |
+| series | class | category | obs_type | value_type | stationary | units | transform (op @ horizon) |
 |---|---|---|---|---|---|---|---|
 | UST_10Y | MARKET | RATES | STOCK | YIELD | yes | percent | NONE |
 | IG_OAS | MARKET | CREDIT | STOCK | SPREAD | yes | bp | NONE |
 | VIX | MARKET | VOLATILITY | STOCK | INDEX | yes | index | NONE |
-| CPI_HEADLINE | ECON | INFLATION | STOCK | INDEX | no | index | YOY |
-| UNRATE | ECON | LABOR | STOCK | RATE | yes | percent | NONE |
-| PAYEMS | ECON | LABOR | STOCK | LEVEL | no | thousands | DIFF (→ new jobs) |
-| GDP | ECON | GROWTH | FLOW | LEVEL | no | $bn | LOG_DIFF / ANNUALIZED |
+| CPI_HEADLINE | ECON | INFLATION | STOCK | INDEX | no | index | PCT_CHANGE @ YOY (→ inflation) |
+| UNRATE | ECON | LABOR | STOCK | RATE | yes | percent | NONE (level) or DIFF @ YOY |
+| PAYEMS | ECON | LABOR | STOCK | LEVEL | no | thousands | DIFF @ POP (→ new jobs) |
+| GDP | ECON | GROWTH | FLOW | LEVEL | no | $bn | LOG_DIFF @ POP, ANNUALIZE |
 | ISM_MFG | ECON | ACTIVITY | — | DIFFUSION | yes | index | NONE |
 
 ## 7. Data sources
