@@ -27,6 +27,18 @@ multi-portfolio Book-of-Books are stubbed for later.
 
 ## Run the whole app — one command
 
+**Easiest (auto-setup, no venv activation needed):**
+
+| OS | Command |
+|---|---|
+| Windows | double-click **`start.bat`** (or `.\start.bat`, or `.\start.ps1`) |
+| macOS / Linux | `./start.sh` |
+
+These create the `.venv` and install dependencies on first run, then start both servers —
+calling the venv's Python directly, so you never have to "activate" anything.
+
+**Or, if your venv is already active:**
+
 ```bash
 python run.py
 ```
