@@ -5,7 +5,13 @@ const FACTOR_LABELS: Record<string, string> = {
   MKT: "Market",
   SMB: "Size (SMB)",
   HML: "Value (HML)",
+  RMW: "Profitability (RMW)",
+  CMA: "Investment (CMA)",
   MOM: "Momentum",
+  // Promoted price-only factors (shown here once a PM neutralizes them).
+  IVOL: "Idio Vol",
+  BAB: "Betting-against-beta",
+  AMIHUD: "Illiquidity",
 };
 
 export function FactorTable({ factors }: { factors: FactorStatus[] }) {

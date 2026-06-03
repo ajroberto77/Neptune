@@ -260,9 +260,22 @@ first vertical slice · 🔵 LATER = deferred.
       (`risk/factor_build.py`) + `GET /portfolios/{id}/factor-monitor` + a Factor Monitor panel on
       the Risk tab. Neptune factors are deliberately kept OUT of `factor_returns()`/`FACTORS` so
       they never enter the optimizer's loadings regression. Factors rebuilt on price ingest.
-- [ ] 🔵 If the PM later wants neutralization: promote selected monitor factors into the optimizer
-      (expanded `model` tag + hard factor limit). Deferred by decision; the construction + report
-      are already in place.
+- [x] 🟢 **Promotion path (config-gated, default OFF).** A PM lists factors in
+      `settings.promoted_factors` (e.g. `NEPTUNE_PROMOTED_FACTORS="BAB,IVOL"`); promoted monitor
+      factors then flow end-to-end — `DbMarketData.factor_returns()` merges them (NaN pre-basket
+      history 0-filled so the cumsum rolling regression isn't poisoned), `rebuild_loadings`
+      materializes their loadings, the optimizer NEUTRALIZES them via a threaded `hedge_factors`
+      set (same hard `factor_limit`), and the risk summary classifies them. Empty default ⇒ the
+      model is exactly FF5+MOM, optimizer untouched (asserted). Per-factor limits + a dedicated
+      `model` tag are a later refinement.
+- [x] 🟢 **Covariance hedge objective (net-book minimum variance).** Quant-recommended: the
+      approvable proposal minimizes the NET BOOK's variance via a factor-model covariance
+      Σ = BᵀFB + D (`factor_covariance` = PSD-projected F over [MKT,*hedge_factors];
+      `Candidate.idio_var` = D from `residual_variance`). Objective `quad_form(net_full,F) + Σdᵢxᵢ²`
+      has NO return term → pure risk reduction, never a view (§5); the hard |β|≤0.05 + factor
+      limits are unchanged. Applied to HARD solves only (the soft frontier keeps tracking-error so
+      it still answers "how many names reach neutral"). Auto-falls back to the diagonal
+      diversification penalty when the panel isn't loaded (`covariance_objective` toggle, default on).
 - [ ] 🔵 **Fundamentals feed (Mercury; ingest interim).** REQUIRED for:
       * **value-weighting** the sector factor (needs market cap = price × **shares outstanding**;
         until then the sector factor is **equal-weighted** — a documented proxy);

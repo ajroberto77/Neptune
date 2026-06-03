@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +76,36 @@ class Settings(BaseSettings):
     # name. 0 = off. Borrow availability / hard-to-borrow needs an external feed (roadmap).
     min_adv_usd: float = 0.0
     adv_window: int = 63  # ~3 months of trading days for the ADV average
+
+    # PROMOTION PATH (factor program Stage 2→3). Monitor factors (IVOL/BAB/AMIHUD) the PM has
+    # chosen to NEUTRALIZE — they then enter the materialized loadings, the optimizer's hard
+    # factor constraints, and the risk summary, exactly like the FF5+MOM style factors. EMPTY by
+    # default: monitor-only, optimizer unchanged. A factor must exist in the panel (built by
+    # build_neptune_factors) before promoting it. Set via NEPTUNE_PROMOTED_FACTORS="BAB,IVOL".
+    promoted_factors: list[str] = Field(default_factory=list)
+
+    # Covariance-based hedge objective: when on (and the factor panel is loaded), the optimizer
+    # minimizes the NET BOOK's variance via a factor-model covariance Σ = BᵀFB + D instead of the
+    # diagonal diversification penalty. Pure risk reduction — no return view (CLAUDE.md §5). Falls
+    # back to the diagonal objective automatically when the panel isn't available.
+    covariance_objective: bool = True
+
+    @field_validator("promoted_factors", mode="before")
+    @classmethod
+    def _split_promoted(cls, v):
+        """Accept a comma/space-separated string from the env (NEPTUNE_PROMOTED_FACTORS="BAB,IVOL")
+        as well as a JSON/Python list."""
+        if isinstance(v, str):
+            return [t for t in v.replace(",", " ").split() if t]
+        return v
+
+    @property
+    def promoted(self) -> tuple[str, ...]:
+        """Normalized promoted-factor tuple (upper-cased, de-duplicated, order-preserving)."""
+        seen: dict[str, None] = {}
+        for f in self.promoted_factors:
+            seen.setdefault(f.strip().upper(), None)
+        return tuple(seen)
 
     @property
     def portfolio_url(self) -> str:

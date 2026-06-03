@@ -7,7 +7,9 @@ import pytest
 
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_candidates, golden_positions
 from neptune.domain.models import Portfolio
+from neptune.quant.factors import FACTORS, MARKET_FACTOR
 from neptune.quant.optimizer import (
+    HEDGE_FACTORS,
     Candidate,
     InfeasibleHedge,
     ProposedShort,
@@ -20,6 +22,81 @@ from neptune.quant.optimizer import (
 from neptune.risk import book
 
 BETA_TOL = 0.05
+
+
+def _net_book_variance(proposal, cands, residual_beta, residual_factors, F, hedge_factors):
+    """Net-book daily-return variance for a proposal's basket: net_fullᵀ F net_full + Σ dᵢxᵢ²."""
+    w = {p.ticker: p.weight for p in proposal.positions}
+    x = np.array([w.get(c.ticker, 0.0) for c in cands])
+    betas = np.array([c.beta for c in cands])
+    loads = np.array([[c.loadings.get(f, 0.0) for f in hedge_factors] for c in cands])
+    idio = np.array([(c.idio_var if c.idio_var is not None else c.variance) for c in cands])
+    net_beta = residual_beta - betas @ x
+    net_factors = np.array([residual_factors.get(f, 0.0) for f in hedge_factors]) - loads.T @ x
+    net_full = np.concatenate([[net_beta], net_factors])
+    return float(net_full @ F @ net_full + idio @ (x ** 2))
+
+
+def _diag_psd_cov() -> np.ndarray:
+    """A PSD factor covariance over [MKT, *HEDGE_FACTORS]: large market variance, smaller style
+    variances, with a small MKT–SMB correlation to exercise the off-diagonal."""
+    k = 1 + len(HEDGE_FACTORS)
+    F = np.eye(k) * 0.3
+    F[0, 0] = 1.0
+    F[0, 1] = F[1, 0] = 0.1
+    return F
+
+
+def test_covariance_objective_minimizes_net_book_variance_and_keeps_neutrality():
+    # Two beta-equal, SMB-equal hedges differing only in idiosyncratic risk, plus a pure-beta and
+    # a low-beta name. The covariance objective should reach the global min-variance basket.
+    smb = HEDGE_FACTORS[0]
+    cands = [
+        Candidate("A", beta=1.0, loadings={smb: 0.6}, idio_var=0.001),
+        Candidate("B", beta=1.0, loadings={smb: 0.6}, idio_var=0.02),   # noisier twin of A
+        Candidate("C", beta=1.0, loadings={smb: 0.0}, idio_var=0.001),  # pure beta
+        Candidate("D", beta=0.2, loadings={smb: 0.6}, idio_var=0.001),
+    ]
+    residual_beta = 0.5
+    residual_factors = {f: 0.0 for f in FACTORS}
+    residual_factors[smb] = 0.3
+    F = _diag_psd_cov()
+    common = dict(residual_beta=residual_beta, residual_factors=residual_factors,
+                  universe=cands, long_aum=1_000_000.0, beta_tol=BETA_TOL, factor_limit=0.20)
+
+    diag = optimize_hedge(**common)                 # diagonal diversification objective
+    cov = optimize_hedge(**common, factor_cov=F)    # net-book minimum-variance objective
+
+    # The HARD invariant holds under BOTH objectives.
+    assert abs(cov.net_beta_after) <= BETA_TOL + 1e-6
+    assert all(abs(v) <= 0.20 + 1e-6 for v in cov.factor_after.values())
+    # The covariance run achieves the global min net-book variance over the same feasible set,
+    # so it is no worse than the diagonal run's (feasible) basket.
+    var_cov = _net_book_variance(cov, cands, residual_beta, residual_factors, F, HEDGE_FACTORS)
+    var_diag = _net_book_variance(diag, cands, residual_beta, residual_factors, F, HEDGE_FACTORS)
+    assert var_cov <= var_diag + 1e-9
+    # And it avoids piling into the high-idio twin B.
+    w = {p.ticker: p.weight for p in cov.positions}
+    assert w.get("B", 0.0) <= w.get("A", 0.0) + 1e-6
+
+
+def test_promoted_factor_is_neutralized_when_in_hedge_factors():
+    # A promoted monitor factor "BAB" added to the neutralized set must be held within the limit.
+    hedge_factors = (*HEDGE_FACTORS, "BAB")
+    cands = [
+        Candidate("H1", beta=1.0, loadings={"BAB": 0.8}),
+        Candidate("H2", beta=1.0, loadings={"BAB": -0.2}),
+        Candidate("H3", beta=0.9, loadings={"BAB": 0.0}),
+    ]
+    residual_factors = {f: 0.0 for f in (*FACTORS, "BAB")}
+    residual_factors["BAB"] = 0.3  # the book tilts on the promoted factor
+    proposal = optimize_hedge(
+        residual_beta=0.3, residual_factors=residual_factors, universe=cands,
+        long_aum=1_000_000.0, beta_tol=BETA_TOL, factor_limit=0.20,
+        max_position_weight=0.5, hedge_factors=hedge_factors,
+    )
+    assert abs(proposal.net_beta_after) <= BETA_TOL + 1e-6
+    assert abs(proposal.factor_after["BAB"]) <= 0.20 + 1e-6  # promoted factor neutralized
 
 
 def _golden_portfolio() -> Portfolio:

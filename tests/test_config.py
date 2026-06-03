@@ -2,7 +2,21 @@
 shell environment still wins (so the test suite's DATABASE_URL stays authoritative)."""
 from __future__ import annotations
 
-from neptune.config import get_settings
+from neptune.config import Settings, get_settings
+
+
+def test_promoted_factors_default_empty():
+    assert Settings().promoted == ()
+
+
+def test_promoted_factors_parses_comma_string_normalized():
+    # Env / string form: comma- or space-separated, upper-cased and de-duplicated.
+    s = Settings(promoted_factors="bab, ivol bab")
+    assert s.promoted == ("BAB", "IVOL")
+
+
+def test_promoted_factors_accepts_list():
+    assert Settings(promoted_factors=["BAB", "AMIHUD"]).promoted == ("BAB", "AMIHUD")
 
 
 def test_dotenv_bare_name_is_honored(tmp_path, monkeypatch):

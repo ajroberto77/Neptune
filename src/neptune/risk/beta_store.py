@@ -107,7 +107,9 @@ def rebuild_loadings(
     is loaded — without it the hedge is beta-only. Full-window dates only; idempotent per name."""
     md = DbMarketData(session, benchmark=benchmark)
     factors = md.factor_returns()
-    style = [f for f in STYLE_FACTORS if f in factors]
+    # The neutralized model = FF5+MOM plus any PROMOTED monitor factors (both are in factor_returns
+    # when promoted), so their loadings are materialized and the optimizer can constrain them.
+    style = [f for f in (*STYLE_FACTORS, *md.promoted_factors) if f in factors]
     if not style:
         return 0  # factor panel not ingested yet — nothing to materialize
     dates = md.return_dates()

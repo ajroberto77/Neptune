@@ -62,11 +62,19 @@ class DbMarketData:
         benchmark: str = "SPY",
         lookback: int | None = None,
         source: str | None = None,
+        promoted_factors: tuple[str, ...] | None = None,
     ):
         self.session = session
         self.benchmark = benchmark
         self.lookback = lookback
         self.source = source
+        # Monitor factors PROMOTED into the neutralized model (default from settings). When
+        # non-empty, factor_returns() includes them so the loadings regression + optimizer pick
+        # them up; empty → the optimizer's factor set is exactly FF5+MOM (no behavior change).
+        if promoted_factors is None:
+            from neptune.config import settings as _settings
+            promoted_factors = _settings.promoted
+        self.promoted_factors = tuple(promoted_factors)
         self._series_cache: dict[str, list[tuple[date, float, float]]] = {}
 
         bench = self._series(benchmark)
@@ -167,6 +175,15 @@ class DbMarketData:
         style = self._style_factors()
         if style is not None:
             factors.update(style)
+        # PROMOTED monitor factors join the neutralized model. Pre-basket dates (NaN in the raw
+        # neptune series) are filled with 0.0 — a long-short factor with no basket yet earns no
+        # return — so the cumsum-based rolling loadings regression isn't NaN-poisoned; the recent
+        # window the optimizer uses is all real.
+        if self.promoted_factors:
+            promoted = self.neptune_factor_returns()
+            for f in self.promoted_factors:
+                if f in promoted:
+                    factors[f] = np.nan_to_num(promoted[f], nan=0.0)
         return factors
 
     def neptune_factor_returns(self) -> dict[str, np.ndarray]:

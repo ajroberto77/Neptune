@@ -790,6 +790,9 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     panel = {"loaded": False, "last_date": None, "stale": True}
     with market_data_for(session, beta_portfolio) as md:
         metrics = analytics.compute_metrics(beta_portfolio, md)
+        # The neutralized factor set: FF5+MOM plus any PROMOTED monitor factors.
+        hedge_factors = analytics.hedge_factor_set(md)
+        known_factors = analytics.all_factors(md)
         # Stale-panel guard: if the style-factor panel isn't loaded (or lags the prices), the
         # hedge is effectively BETA-ONLY — surface it rather than silently matching nothing.
         factors_present = md.factor_returns()
@@ -804,9 +807,12 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
             rdates = md.return_dates() if hasattr(md, "return_dates") else []
             panel["last_date"] = last.isoformat() if last else None
             panel["stale"] = bool(last is None or (rdates and (rdates[-1] - last).days > 7))
-    net_beta, net_factors = analytics.net_metrics(beta_portfolio, metrics)
-    # Market is shown by the net-beta gauge; the factor table covers the style factors.
-    style_factors = {f: net_factors[f] for f in STYLE_FACTORS}
+    net_beta, net_factors = analytics.net_metrics(
+        beta_portfolio, metrics, factors=known_factors
+    )
+    # Market is shown by the net-beta gauge; the factor table covers the neutralized style (+
+    # promoted) factors.
+    style_factors = {f: net_factors[f] for f in hedge_factors}
     summary = summarize(
         net_beta=net_beta,
         factor_exposures=style_factors,
@@ -1016,9 +1022,18 @@ def propose_hedge(
     long_tickers = {p.ticker for p in portfolio.longs}
     try:
         with market_data_for(session, portfolio) as md:
+            hedge_factors = analytics.hedge_factor_set(md)
             metrics = analytics.compute_metrics(portfolio, md)
-            residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
+            residual_beta, residual_factors = analytics.residual_metrics(
+                portfolio, metrics, factors=analytics.all_factors(md)
+            )
             universe = _shortable_universe(md)
+            # Covariance (net-book min-variance) objective when enabled and the panel is loaded;
+            # otherwise factor_cov is None and the optimizer uses its diagonal diversification.
+            factor_cov = (
+                analytics.factor_cov_for(md, hedge_factors)
+                if settings.covariance_objective else None
+            )
             common = dict(
                 residual_beta=residual_beta,
                 residual_factors=residual_factors,
@@ -1030,6 +1045,8 @@ def propose_hedge(
                 sector_limit=sector_limit,
                 excluded_tickers=long_tickers,
                 beta_add_budget=beta_add_budget,  # fence negative-beta shorts (Option A; per-run)
+                hedge_factors=hedge_factors,
+                factor_cov=factor_cov,
             )
             # Aim for a DIVERSIFIED basket of ~target names (the variance penalty spreads weight
             # across many moderate names; the cap sets the count). Defaults to
@@ -1117,9 +1134,16 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
     portfolio = _resolve_portfolio(service, portfolio_id)
     long_tickers = {p.ticker for p in portfolio.longs}
     with market_data_for(session, portfolio) as md:
+        hedge_factors = analytics.hedge_factor_set(md)
         metrics = analytics.compute_metrics(portfolio, md)
-        residual_beta, residual_factors = analytics.residual_metrics(portfolio, metrics)
+        residual_beta, residual_factors = analytics.residual_metrics(
+            portfolio, metrics, factors=analytics.all_factors(md)
+        )
         universe = _shortable_universe(md)
+        factor_cov = (
+            analytics.factor_cov_for(md, hedge_factors)
+            if settings.covariance_objective else None
+        )
         runs = complexity_frontier(
             residual_beta=residual_beta,
             residual_factors=residual_factors,
@@ -1130,6 +1154,8 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
             max_position_weight=settings.max_position_weight,
             excluded_tickers=long_tickers,
             beta_add_budget=settings.beta_add_budget,
+            hedge_factors=hedge_factors,
+            factor_cov=factor_cov,
         )
     return {
         "portfolio_id": portfolio_id,

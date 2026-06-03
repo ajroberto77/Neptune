@@ -5,10 +5,46 @@ import numpy as np
 import pytest
 
 from neptune.quant.factors import (
+    factor_covariance,
     factor_loadings,
     portfolio_factor_exposure,
+    residual_variance,
     rolling_factor_loadings,
 )
+
+
+def test_factor_covariance_is_symmetric_psd_and_ordered():
+    rng = np.random.default_rng(7)
+    n = 200
+    fr = {
+        "MKT": rng.normal(0, 0.01, n),
+        "SMB": rng.normal(0, 0.008, n),
+        "HML": rng.normal(0, 0.007, n),
+    }
+    order = ("MKT", "SMB", "HML")
+    F = factor_covariance(fr, order, window=120)
+    assert F.shape == (3, 3)
+    assert np.allclose(F, F.T)                       # symmetric
+    assert np.min(np.linalg.eigvalsh(F)) >= -1e-12   # PSD
+    # Missing factor → None (panel not fully loaded) so the optimizer falls back to diagonal.
+    assert factor_covariance(fr, ("MKT", "SMB", "RMW")) is None
+
+
+def test_residual_variance_is_below_total_and_intercept_invariant():
+    rng = np.random.default_rng(11)
+    n = 300
+    mkt = rng.normal(0, 0.01, n)
+    smb = rng.normal(0, 0.008, n)
+    idio = rng.normal(0, 0.004, n)
+    r = 0.02 + 1.2 * mkt + 0.5 * smb + idio  # 0.02 = alpha (intercept)
+    fr = {"MKT": mkt, "SMB": smb}
+    loadings = factor_loadings(r, fr, window=300).loadings
+    rv = residual_variance(r, fr, loadings, window=300)
+    assert 0.0 < rv < float(np.var(r))               # factor model explains part of the variance
+    assert rv == pytest.approx(float(np.var(idio)), rel=0.2)   # ~ the true idio variance
+    # Variance is invariant to the regression intercept (alpha) by construction.
+    rv_shifted = residual_variance(r + 5.0, fr, loadings, window=300)
+    assert rv_shifted == pytest.approx(rv, rel=1e-9)
 
 
 def _factor_panel(n=200, seed=21):

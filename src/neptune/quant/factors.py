@@ -103,6 +103,63 @@ def factor_loadings(
     return FactorLoadings(loadings=dict(zip(names, coef[1:].tolist())), n_obs=n)
 
 
+def factor_covariance(
+    factor_returns: dict[str, np.ndarray],
+    order: tuple[str, ...],
+    window: int = 60,
+) -> np.ndarray | None:
+    """The factor-return covariance matrix F over ``order`` (the F in Σ = BᵀFB + D), estimated
+    from the trailing ``window`` of the factor return series and PROJECTED to PSD (negative
+    eigenvalues clipped to 0) so it is a valid quadratic form for the optimizer. Returns None if
+    any factor in ``order`` is missing from ``factor_returns`` (the panel isn't fully loaded) —
+    the optimizer then falls back to its diagonal diversification objective.
+
+    Pure: no I/O. The market (MKT) belongs in ``order`` — residual market exposure within the
+    beta band is real risk the min-variance hedge should see."""
+    if any(f not in factor_returns for f in order):
+        return None
+    series = align(*[np.asarray(factor_returns[f], float) for f in order])
+    mat = np.column_stack(series)
+    if mat.shape[0] > window:
+        mat = mat[-window:]
+    if mat.shape[0] < 2:
+        return None
+    cov = np.cov(mat, rowvar=False)
+    cov = np.atleast_2d(cov)
+    # Symmetrize then clip negative eigenvalues → nearest PSD (guards against tiny numerical or
+    # short-window non-PSD-ness before the matrix becomes a cvxpy quadratic form).
+    cov = 0.5 * (cov + cov.T)
+    vals, vecs = np.linalg.eigh(cov)
+    vals = np.clip(vals, 0.0, None)
+    return (vecs * vals) @ vecs.T
+
+
+def residual_variance(
+    asset_returns: np.ndarray,
+    factor_returns: dict[str, np.ndarray],
+    loadings: dict[str, float],
+    window: int = 60,
+) -> float:
+    """Idiosyncratic (factor-residual) variance of one name — the diagonal entry D_ii of the
+    factor-model covariance. Computed as Var(r − Σ_f loadingᵢ_f · factor_f) over the trailing
+    ``window``; variance is invariant to the regression intercept, so none is needed. Only
+    factors present in BOTH ``loadings`` and ``factor_returns`` contribute (matches the loadings
+    actually carried). Falls back to plain return variance when there are no usable factors."""
+    names = [f for f in loadings if f in factor_returns]
+    if not names:
+        rets = np.asarray(asset_returns, float)
+        return float(np.var(rets[-window:])) if rets.size else 1.0
+    series = align(np.asarray(asset_returns, float), *[factor_returns[f] for f in names])
+    y, fseries = series[0], series[1:]
+    if y.shape[0] > window:
+        y = y[-window:]
+        fseries = tuple(f[-window:] for f in fseries)
+    if y.shape[0] == 0:
+        return 1.0
+    predicted = sum(loadings[n] * fseries[i] for i, n in enumerate(names))
+    return float(np.var(y - predicted))
+
+
 def portfolio_factor_exposure(
     positions: list[tuple[float, dict[str, float]]],
     long_aum: float,

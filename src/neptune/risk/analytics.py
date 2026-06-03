@@ -25,7 +25,14 @@ from neptune.quant.beta import (
     raw_beta,
     vasicek_shrinkage,
 )
-from neptune.quant.factors import factor_loadings
+from neptune.quant.factors import (
+    FACTORS,
+    MARKET_FACTOR,
+    STYLE_FACTORS,
+    factor_covariance,
+    factor_loadings,
+    residual_variance,
+)
 from neptune.quant.optimizer import Candidate, compute_residual
 
 # The Vasicek shrinkage prior variance — a FIXED, market-level constant (cross-sectional beta
@@ -121,27 +128,52 @@ def compute_metrics(
 
 
 def net_metrics(
-    portfolio: Portfolio, metrics: dict[str, PositionMetrics]
+    portfolio: Portfolio, metrics: dict[str, PositionMetrics],
+    factors: tuple[str, ...] = FACTORS,
 ) -> tuple[float, dict[str, float]]:
-    """Net beta and net factor exposures across the WHOLE book (normalized by long AUM)."""
+    """Net beta and net factor exposures across the WHOLE book (normalized by long AUM).
+    ``factors`` is the known factor set (pass the promoted-extended set when factors are promoted)."""
     inputs = [
         (p.signed_notional, metrics[p.ticker].beta, metrics[p.ticker].loadings)
         for p in portfolio.positions
     ]
-    return compute_residual(inputs, portfolio.long_aum)
+    return compute_residual(inputs, portfolio.long_aum, factors=factors)
+
+
+def hedge_factor_set(market_data) -> tuple[str, ...]:
+    """The factors the optimizer NEUTRALIZES: FF5+MOM plus any PROMOTED monitor factors that are
+    actually present in the panel. Falls back to the plain style set when the panel isn't loaded
+    (beta-only hedge, candidates carry no style loadings → the factor constraints are trivial)."""
+    factors = market_data.factor_returns()
+    promoted = tuple(getattr(market_data, "promoted_factors", ()) or ())
+    present = tuple(f for f in (*STYLE_FACTORS, *promoted) if f in factors)
+    return present or STYLE_FACTORS
+
+
+def factor_cov_for(market_data, hedge_factors: tuple[str, ...]) -> np.ndarray | None:
+    """The factor-return covariance F over [MKT, *hedge_factors] for the covariance objective, or
+    None when the panel isn't loaded (the optimizer then uses its diagonal diversification)."""
+    return factor_covariance(market_data.factor_returns(), (MARKET_FACTOR, *hedge_factors))
+
+
+def all_factors(market_data) -> tuple[str, ...]:
+    """The full known factor set (MKT + neutralized factors) for residual accumulation."""
+    return (MARKET_FACTOR, *hedge_factor_set(market_data))
 
 
 def residual_metrics(
-    portfolio: Portfolio, metrics: dict[str, PositionMetrics]
+    portfolio: Portfolio, metrics: dict[str, PositionMetrics],
+    factors: tuple[str, ...] = FACTORS,
 ) -> tuple[float, dict[str, float]]:
     """Residual beta/factors the systematic short book must neutralize: long book +
-    discretionary shorts only (systematic shorts are what the optimizer re-proposes)."""
+    discretionary shorts only (systematic shorts are what the optimizer re-proposes).
+    ``factors`` is the known factor set (pass the promoted-extended set when factors are promoted)."""
     inputs = [
         (p.signed_notional, metrics[p.ticker].beta, metrics[p.ticker].loadings)
         for p in portfolio.positions
         if p.short_type is not ShortType.SYSTEMATIC
     ]
-    return compute_residual(inputs, portfolio.long_aum)
+    return compute_residual(inputs, portfolio.long_aum, factors=factors)
 
 
 def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[Candidate]:
@@ -157,8 +189,10 @@ def live_universe(market_data: SyntheticMarketData, tickers: list[str]) -> list[
         loadings = factor_loadings(rets, factors).loadings
         sector = market_data.spec_for(t).sector
         variance = float(np.var(rets)) if rets.size else 1.0
+        idio = residual_variance(rets, factors, loadings)  # diagonal of Σ = BᵀFB + D
         candidates.append(
-            Candidate(ticker=t, beta=beta, loadings=loadings, sector=sector, variance=variance)
+            Candidate(ticker=t, beta=beta, loadings=loadings, sector=sector,
+                      variance=variance, idio_var=idio)
         )
     return candidates
 
@@ -213,9 +247,12 @@ def db_universe(
         if loadings is None:
             loadings = factor_loadings(rets, factors).loadings if len(factors) > 1 else {}
         variance = float(np.var(rets)) if rets.size else 1.0  # risk proxy for diversification
+        # Idiosyncratic variance (D in Σ = BᵀFB + D) from the SAME loadings actually carried —
+        # invariant to the intercept, so it works on stored loadings without re-fitting alpha.
+        idio = residual_variance(rets, factors, loadings)
         candidates.append(
             Candidate(ticker=t, beta=beta, loadings=loadings,
-                      sector=market_data.sector(t), variance=variance)
+                      sector=market_data.sector(t), variance=variance, idio_var=idio)
         )
     return candidates
 

@@ -102,6 +102,50 @@ def test_monitor_report_unavailable_without_panel(securities_session):
     assert rep["available"] is False and rep["factors"] == {}
 
 
+def test_promotion_flows_into_factor_returns_loadings_and_covariance(
+    securities_session, monkeypatch
+):
+    synth = SyntheticMarketData()
+    _seed(securities_session, "SPY", 1, synth.market_returns())
+    _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"), sector="Technology")
+    _seed(securities_session, "BBB", 3, synth.ticker_returns("BBB"), sector="Technology")
+    _seed(securities_session, "CCC", 4, synth.ticker_returns("CCC"), sector="Energy")
+    _seed(securities_session, "DDD", 5, synth.ticker_returns("DDD"), sector="Energy")
+    securities_session.commit()
+    rebuild_betas(securities_session)
+    build_neptune_factors(securities_session, window=60)
+
+    # PROMOTE BAB (was monitor-only) into the neutralized model.
+    from neptune.config import settings
+    from neptune.risk import analytics, beta_store
+    monkeypatch.setattr(settings, "promoted_factors", ["BAB"])
+
+    md = DbMarketData(securities_session)  # reads settings.promoted -> ("BAB",)
+    assert "BAB" in md.factor_returns()                 # promoted factor joins the model
+    hedge_factors = analytics.hedge_factor_set(md)
+    assert "BAB" in hedge_factors
+    F = analytics.factor_cov_for(md, hedge_factors)
+    assert F is not None and F.shape == (1 + len(hedge_factors), 1 + len(hedge_factors))
+
+    # rebuild_loadings now materializes a BAB loading per name.
+    written = beta_store.rebuild_loadings(securities_session)
+    assert written > 0
+    stored = beta_store.stored_loadings_latest(securities_session)
+    assert stored and any("BAB" in loads for loads in stored.values())
+
+
+def test_promotion_default_off_leaves_model_unchanged(securities_session):
+    synth = SyntheticMarketData()
+    _seed(securities_session, "SPY", 1, synth.market_returns())
+    _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"), sector="Technology")
+    securities_session.commit()
+    rebuild_betas(securities_session)
+    build_neptune_factors(securities_session, window=60)
+    # No promotion configured (default) → BAB stays out of the neutralized model.
+    md = DbMarketData(securities_session)
+    assert "BAB" not in md.factor_returns()
+
+
 def test_build_is_idempotent(securities_session):
     synth = SyntheticMarketData()
     _seed(securities_session, "SPY", 1, synth.market_returns())
