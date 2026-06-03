@@ -30,7 +30,7 @@ non-stationary level; treating a flow like a stock). Flags live on the registry 
 | `series_class` | `MARKET` / `ECON` | **storage** — is it revised? (drives which fact table) |
 | `category` | RATES, CREDIT, INFLATION, GROWTH, LABOR, HOUSING, SENTIMENT, MONETARY, FISCAL, TRADE, FX, COMMODITY, VOLATILITY, FIN_CONDITIONS | topical grouping (the PM's rates/credit-vs-economic view) |
 | `observation_type` | `STOCK` / `FLOW` | level-at-a-point vs over-a-period → aggregation rule |
-| `value_type` | LEVEL, INDEX, RATIO, RATE, RATE_OF_CHANGE, DIFFUSION, SPREAD, YIELD, COUNT, CURRENCY | statistical nature → which transforms are valid |
+| `value_type` | LEVEL, PRICE, INDEX, RATIO, RATE, RATE_OF_CHANGE, DIFFUSION, SPREAD, YIELD, COUNT, CURRENCY | statistical nature → which transforms are valid (`PRICE` = market price level: commodities/FX, distinct from an interest `RATE` or a `$`-aggregate `LEVEL`) |
 | `stationarity` | `STATIONARY` / `NONSTATIONARY` / `UNKNOWN` | is the raw series regression/z-score-ready |
 | `transform_op` | NONE, DIFF, LOG_DIFF, PCT_CHANGE, ANNUALIZE, ZSCORE | the change *operator* — **constrained by `value_type`** (see below) |
 | `transform_horizon` | NONE, POP, YOY | the *horizon* the operator spans (period-over-period vs year-over-year) |
@@ -61,10 +61,12 @@ different math per type:
 |---|---|---|---|
 | CPI_HEADLINE | INDEX (non-stationary) | `PCT_CHANGE @ YOY` | inflation %, e.g. +3.2% |
 | UNRATE | RATE (stationary) | `DIFF @ YOY` | ±pp, e.g. +0.4pp (often used raw) |
+| WTI / GBPUSD | PRICE (non-stationary) | `PCT_CHANGE @ YOY` | YoY price change %, e.g. +18% (a genuine two-price operation) |
 | CPI_YOY (pre-differenced) | RATE_OF_CHANGE | `NONE` | already inflation — don't transform |
 
 **Validation keys off `value_type`:** INDEX/LEVEL → `PCT_CHANGE`/`LOG_DIFF`;
-RATE/RATIO/YIELD/SPREAD → `DIFF` in native units; RATE_OF_CHANGE/DIFFUSION → `NONE`. The
+PRICE (commodities/FX) → `LOG_DIFF`/`PCT_CHANGE`; RATE/RATIO/YIELD/SPREAD → `DIFF` in native
+units; RATE_OF_CHANGE/DIFFUSION → `NONE`. The
 risk layer **refuses** `PCT_CHANGE` on a rate and **refuses any second transform** on a
 `RATE_OF_CHANGE` series.
 
@@ -136,14 +138,20 @@ Operational rules:
 ## 6. Indicator catalog
 
 **Phase-1 core — MARKET (daily):** UST `3M/2Y/10Y/30Y` + `2s10s` slope; `SOFR`,
-`FEDFUNDS`; `IG_OAS`, `HY_OAS`; `BREAKEVEN_10Y`; `VIX`.
+`FEDFUNDS`; `IG_OAS`, `HY_OAS`; `BREAKEVEN_10Y`; `VIX`; **commodities `WTI`, `BRENT`,
+`GOLD`, `NATGAS`**; **FX `DXY`, `EURUSD`, `USDJPY`, `GBPUSD`**.
 **Phase-1 core — ECON (vintaged):** `CPI_HEADLINE`, `CPI_CORE`, `PCE_CORE`, `UNRATE`,
 `PAYEMS` (level; DIFF→new jobs), `GDP`, `ISM_MFG`, `ICSA` (claims).
 
-**Later:** full UST curve, `CDX_IG/HY`, `MOVE`, swaps, FX (`DXY/USDJPY/EURUSD`),
-commodities (`WTI/BRENT/GOLD/COPPER`); `RETAIL_SALES`, `INDPRO`, `HOUSING_STARTS`,
-`UMICH_SENT`. **Global extension** (non-US rates/FX, ECB/BoJ) is additive via the
-`country`/`currency` columns once a non-US book exists.
+**Later:** full UST curve, `CDX_IG/HY`, `MOVE`, swaps, **daily copper (COMEX)** + more FX;
+**roll-adjusted / total-return commodity indices (GSCI/BCOM, paid)**; `RETAIL_SALES`,
+`INDPRO`, `HOUSING_STARTS`, `UMICH_SENT`. **Global extension** (non-US rates/FX, ECB/BoJ)
+is additive via the `country`/`currency` columns once a non-US book exists.
+
+> **Commodity series note.** Stored as **spot / front-month** (the canonical level), flagged
+> `value_type=PRICE`. Roll-adjusted total-return commodity indices (GSCI/BCOM) are a later,
+> typically paid, refinement. Daily **copper** is paid (COMEX/Bloomberg); FRED carries a
+> monthly global copper price, so copper enters monthly-free now, daily-paid later.
 
 Representative typing (store raw + flag + transform-on-read):
 
@@ -157,6 +165,9 @@ Representative typing (store raw + flag + transform-on-read):
 | PAYEMS | ECON | LABOR | STOCK | LEVEL | no | thousands | DIFF @ POP (→ new jobs) |
 | GDP | ECON | GROWTH | FLOW | LEVEL | no | $bn | LOG_DIFF @ POP, ANNUALIZE |
 | ISM_MFG | ECON | ACTIVITY | — | DIFFUSION | yes | index | NONE |
+| WTI | MARKET | COMMODITY | STOCK | PRICE | no | USD/bbl | LOG_DIFF @ POP |
+| GOLD | MARKET | COMMODITY | STOCK | PRICE | no | USD/oz | LOG_DIFF @ POP |
+| GBPUSD | MARKET | FX | STOCK | PRICE | no | px | LOG_DIFF @ POP |
 
 ## 7. Data sources
 
@@ -169,9 +180,12 @@ Representative typing (store raw + flag + transform-on-read):
 | Paid | ICE / Bloomberg / Refinitiv / Haver | CDX levels, MOVE, intraday, global-with-vintages | varies |
 
 **Class → source:** MARKET/rates → Treasury + FRED/H.15; MARKET/credit → FRED ICE BofA
-OAS; MARKET/breakevens·VIX·FX·commodities → FRED. ECON latest → FRED (or BLS/BEA direct);
-**ECON vintages → ALFRED** (canonical), Haver as paid fallback. All Phase-1 core is
-obtainable **free** via FRED + ALFRED + Treasury + BLS/BEA.
+OAS; MARKET/breakevens·VIX → FRED; **MARKET/commodities → FRED** (`DCOILWTICO` WTI,
+`DCOILBRENTEU` Brent, Henry Hub natural gas, LBMA gold; daily copper is paid, monthly copper
+free on FRED); **MARKET/FX → FRED H.10** (daily USD pairs). ECON latest → FRED (or BLS/BEA
+direct); **ECON vintages → ALFRED** (canonical), Haver as paid fallback. All Phase-1 core is
+obtainable **free** via FRED + ALFRED + Treasury + BLS/BEA (daily copper + TR commodity
+indices are the only Phase-1-adjacent paid items, both deferred).
 
 ## 8. Open / future (non-blocking)
 
