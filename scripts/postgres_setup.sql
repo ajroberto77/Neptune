@@ -13,6 +13,7 @@ CREATE ROLE neptune WITH LOGIN PASSWORD 'change-me-neptune';
 -- 2) Neptune's own databases. Read/write; tables created by the app on boot.
 CREATE DATABASE neptune_portfolios OWNER neptune;
 CREATE DATABASE neptune_securities OWNER neptune;
+CREATE DATABASE neptune_macro OWNER neptune;
 
 -- 3) A SELECT-only role for the shared universe. Neptune must NEVER write to
 --    cato_securities (read-only invariant, CLAUDE.md §1); the role is the enforcement,
