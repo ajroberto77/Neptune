@@ -276,6 +276,29 @@ def test_ingest_skips_series_without_free_code(macro_session):
     seed_catalog(macro_session)
     # ISM PMI has source 'ISM' and no source_code → nothing to pull.
     assert ingest_series(macro_session, repo.get_series(macro_session, "ISM_MFG"), _FakeProvider()) == 0
+    # SHORT_RATE is derived (source='derived') → never ingested.
+    assert ingest_series(macro_session, repo.get_series(macro_session, "SHORT_RATE"), _FakeProvider()) == 0
+
+
+def test_ff_target_merges_two_fred_codes_with_later_winning(macro_session):
+    from neptune.macro.ingest import ingest_series
+    from neptune.macro.providers import ObservationPoint
+
+    seed_catalog(macro_session)
+    # FF_TARGET source_code = "DFEDTAR,DFEDTARU": pre-2008 single target then range upper.
+    prov = _FakeProvider(obs={
+        "DFEDTAR": [ObservationPoint(date(2007, 1, 1), 5.25),
+                    ObservationPoint(date(2008, 12, 16), 1.00)],   # last single-target day
+        "DFEDTARU": [ObservationPoint(date(2008, 12, 16), 0.25),    # range begins — wins on overlap
+                     ObservationPoint(date(2009, 1, 1), 0.25)],
+    })
+    n = ingest_series(macro_session, repo.get_series(macro_session, "FF_TARGET"), prov)
+    macro_session.commit()
+    assert n == 3  # 2007-01-01, 2008-12-16 (deduped), 2009-01-01
+    obs = dict(repo.observations(macro_session, "FF_TARGET"))
+    assert obs[date(2007, 1, 1)] == 5.25
+    assert obs[date(2008, 12, 16)] == 0.25  # the later code (DFEDTARU) wins at the boundary
+    assert obs[date(2009, 1, 1)] == 0.25
 
 
 def test_ingest_catalog_only_subset_is_idempotent(macro_session):
@@ -328,6 +351,36 @@ def test_fred_provider_parses_and_skips_missing():
     # api_key + file_type were injected into the query.
     _url, params = sess.calls[0]
     assert params["api_key"] == "KEY" and params["file_type"] == "json"
+
+
+def test_short_rate_splice_is_spread_adjusted():
+    from neptune.risk.macro_derive import splice
+
+    effr = [(date(2018, 1, 1), 1.40), (date(2018, 3, 1), 1.50), (date(2018, 5, 1), 1.70)]
+    sofr = [(date(2018, 4, 2), 1.75), (date(2018, 5, 1), 1.74)]
+    # Overlap = 2018-05-01 → spread = 1.74 − 1.70 = 0.04; pre-join EFFR shifted +0.04.
+    out = dict(splice(effr, sofr, join=date(2018, 4, 2)))
+    assert out[date(2018, 1, 1)] == pytest.approx(1.44)
+    assert out[date(2018, 3, 1)] == pytest.approx(1.54)
+    assert out[date(2018, 4, 2)] == 1.75            # from SOFR
+    assert out[date(2018, 5, 1)] == 1.74            # SOFR, not the EFFR 1.70
+    # Plain concatenation (no adjustment) leaves the level step.
+    raw = dict(splice(effr, sofr, join=date(2018, 4, 2), spread_adjust=False))
+    assert raw[date(2018, 1, 1)] == 1.40
+
+
+def test_short_rate_reads_from_the_macro_db(macro_session):
+    from neptune.risk.macro_derive import short_rate
+
+    seed_catalog(macro_session)
+    for d, v in [(date(2018, 1, 1), 1.40), (date(2018, 5, 1), 1.70)]:
+        repo.record_observation(macro_session, "FEDFUNDS", d, v)
+    for d, v in [(date(2018, 4, 2), 1.75), (date(2018, 5, 1), 1.74)]:
+        repo.record_observation(macro_session, "SOFR", d, v)
+    macro_session.commit()
+    out = dict(short_rate(macro_session))
+    assert out[date(2018, 1, 1)] == pytest.approx(1.44)  # EFFR + 0.04 overlap spread
+    assert out[date(2018, 5, 1)] == 1.74                 # SOFR takes over from the join
 
 
 def test_fred_provider_maps_realtime_start_to_vintage_date():

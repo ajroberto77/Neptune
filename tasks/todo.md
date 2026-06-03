@@ -331,6 +331,11 @@ first vertical slice · 🔵 LATER = deferred.
       needed. Tests: fake-provider ingest + FRED/ALFRED JSON parsing + endpoint guard.
       **BLOCKED for a live run:** this env's network policy denies `api.stlouisfed.org`
       ("Host not in allowlist") — allowlist it (and run) here, or run where network is open.
+- [x] 🟢 **Short-rate continuity.** `FF_TARGET` (policy target) ingested via an ordered
+      multi-code `source_code` (`DFEDTAR,DFEDTARU`, merged by date, later code wins) — the
+      ingest now supports comma-separated provider codes. `SHORT_RATE` (continuous EFFR→SOFR
+      funding rate) is a spread-adjusted splice derived on read in `risk/macro_derive.py`
+      (not ingested). Tests: splice spread-adjustment, DB-backed short_rate, FF_TARGET 2-code merge.
 - [ ] 🔵 **Phase 1d-follow — scheduling.** EOD daily MARKET pull (live bar excluded) +
       event-driven ECON-release pull on a Celery schedule (manual `/macro/ingest` works now).
 - [ ] 🔵 Global (non-US) rates/FX; paid feeds (CDX/MOVE/intraday) if budgeted.

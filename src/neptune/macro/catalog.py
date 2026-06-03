@@ -50,6 +50,26 @@ PHASE1_CATALOG: dict[str, dict] = {
                      frequency=F.DAILY, units="percent", value_type=V.RATE,
                      observation_type=O.STOCK, stationarity=St.STATIONARY,
                      source="FRED", source_code="DFF"),
+    # Policy TARGET (administered) — the cleanest monetary-regime marker (steps at FOMC dates).
+    # Spliced from two FRED codes (same concept, code changed in 2008 when the single target
+    # became a range): DFEDTAR (single, to 2008) then DFEDTARU (range upper, 2008→). Ingest
+    # merges the ordered codes; later codes win at the boundary. No spread adjustment needed.
+    "FF_TARGET": dict(series_class=C.MARKET, category="MONETARY",
+                      name="Fed funds target (upper bound; pre-2008 single target)",
+                      frequency=F.DAILY, units="percent", value_type=V.RATE,
+                      observation_type=O.STOCK, stationarity=St.STATIONARY,
+                      source="FRED", source_code="DFEDTAR,DFEDTARU",
+                      description="Policy target: DFEDTAR (single→2008) spliced to DFEDTARU (range upper)"),
+    # DERIVED continuous funding rate (NOT ingested): a spread-adjusted splice of FEDFUNDS
+    # (EFFR, pre-2018-04) and SOFR (2018-04→), built on read by neptune.risk.macro_derive.
+    # EFFR (unsecured) and SOFR (secured repo) are different rates, so the blend is a transparent
+    # model choice — kept as a risk-layer derivation, not stored data.
+    "SHORT_RATE": dict(series_class=C.MARKET, category="MONETARY",
+                       name="Short-term funding rate (EFFR→SOFR splice, derived)",
+                       frequency=F.DAILY, units="percent", value_type=V.RATE,
+                       observation_type=O.STOCK, stationarity=St.STATIONARY,
+                       source="derived", source_code=None,
+                       description="Derived: spread-adjusted splice of FEDFUNDS (EFFR) + SOFR; not ingested"),
     # --- MARKET: credit ----------------------------------------------------------
     "IG_OAS": dict(series_class=C.MARKET, category="CREDIT", name="ICE BofA IG OAS",
                    frequency=F.DAILY, units="bp", value_type=V.SPREAD,

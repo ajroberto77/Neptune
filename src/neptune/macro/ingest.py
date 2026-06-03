@@ -23,6 +23,13 @@ DEFAULT_START = date(2000, 1, 1)  # backfill depth (locked decision: to 2000)
 _FRED_SOURCES = {"FRED", "ALFRED"}  # series the FRED key can serve
 
 
+def _codes(series: MacroSeries) -> list[str]:
+    """The provider code(s) for a series. ``source_code`` is normally one code, but may be a
+    comma-separated ordered list for a series whose history spans multiple FRED codes (e.g.
+    FF_TARGET = DFEDTAR→DFEDTARU). Later codes win where dates overlap."""
+    return [c.strip() for c in (series.source_code or "").split(",") if c.strip()]
+
+
 def build_fred_provider(portfolio_session: Session) -> FredProvider:
     """A configured FRED client, keyed from the credentials store (UI-stored > env). Raises if
     no key is configured — surfaced as a 400 by the endpoint."""
@@ -38,23 +45,32 @@ def ingest_series(
     macro_sess: Session, series: MacroSeries, provider: FredProvider, *, start: date = DEFAULT_START
 ) -> int:
     """Pull and store one series. Returns the number of points written."""
-    if not series.source_code or (series.source or "").upper() not in _FRED_SOURCES:
-        return 0  # e.g. ISM (licensed; no free code)
+    codes = _codes(series)
+    if not codes or (series.source or "").upper() not in _FRED_SOURCES:
+        return 0  # e.g. ISM (no free code) or SHORT_RATE (derived, source='derived')
     if series.series_class == SeriesClass.MARKET:
-        points = provider.observations(series.source_code, start=start)
-        for p in points:
+        # Merge the ordered codes by date; a later code overwrites an earlier one at the splice
+        # boundary (DFEDTAR's last day → DFEDTARU's first day).
+        merged: dict[date, float] = {}
+        for code in codes:
+            for p in provider.observations(code, start=start):
+                merged[p.obs_date] = p.value
+        for obs_date in sorted(merged):
             repo.record_observation(
-                macro_sess, series.series_id, p.obs_date, p.value, source=series.source or "FRED"
+                macro_sess, series.series_id, obs_date, merged[obs_date],
+                source=series.source or "FRED",
             )
-        return len(points)
-    # ECON → vintages (ALFRED)
-    vpoints = provider.vintage_observations(series.source_code, start=start)
-    for vp in vpoints:
-        repo.record_vintage(
-            macro_sess, series.series_id, vp.reference_date, vp.vintage_date, vp.value,
-            source=series.source or "ALFRED",
-        )
-    return len(vpoints)
+        return len(merged)
+    # ECON → vintages (ALFRED), across each code's history.
+    n = 0
+    for code in codes:
+        for vp in provider.vintage_observations(code, start=start):
+            repo.record_vintage(
+                macro_sess, series.series_id, vp.reference_date, vp.vintage_date, vp.value,
+                source=series.source or "ALFRED",
+            )
+            n += 1
+    return n
 
 
 def ingest_catalog(
@@ -70,7 +86,7 @@ def ingest_catalog(
     for series in repo.list_series(macro_sess):
         if only is not None and series.series_id not in only:
             continue
-        if not series.source_code or (series.source or "").upper() not in _FRED_SOURCES:
+        if not _codes(series) or (series.source or "").upper() not in _FRED_SOURCES:
             continue
         counts[series.series_id] = ingest_series(macro_sess, series, provider, start=start)
     macro_sess.commit()

@@ -138,8 +138,23 @@ Operational rules:
 ## 6. Indicator catalog
 
 **Phase-1 core — MARKET (daily):** UST `3M/2Y/10Y/30Y` + `2s10s` slope; `SOFR`,
-`FEDFUNDS`; `IG_OAS`, `HY_OAS`; `BREAKEVEN_10Y`; `VIX`; **commodities `WTI`, `BRENT`,
-`GOLD`, `NATGAS`**; **FX `DXY`, `EURUSD`, `USDJPY`, `GBPUSD`**.
+`FEDFUNDS` (EFFR), `FF_TARGET` (policy target), `SHORT_RATE` (derived funding splice);
+`IG_OAS`, `HY_OAS`; `BREAKEVEN_10Y`; `VIX`; **commodities `WTI`, `BRENT`, `GOLD`, `NATGAS`**;
+**FX `DXY`, `EURUSD`, `USDJPY`, `GBPUSD`**.
+
+> **Short-rate continuity (spliced & derived series).** SOFR only exists from 2018-04, but
+> the backfill runs to 2000, so the short end needs continuity handling:
+> - **`FF_TARGET`** (policy target, *ingested*) — the same concept across a FRED code change:
+>   `DFEDTAR` (single target → 2008) then `DFEDTARU` (range upper, 2008→). The registry's
+>   `source_code` holds an **ordered, comma-separated code list** (`"DFEDTAR,DFEDTARU"`); ingest
+>   merges them by date, later code winning at the boundary. No spread adjustment — it's one
+>   real series assembled from two codes.
+> - **`SHORT_RATE`** (continuous funding rate, *derived*, NOT ingested) — a **spread-adjusted
+>   splice** of `FEDFUNDS` (EFFR, pre-2018-04) and `SOFR` (2018-04→), built on read in
+>   `risk/macro_derive.py`. EFFR (unsecured) and SOFR (secured repo) are *different* rates, so a
+>   naïve concatenation injects an artificial step at the join; we shift pre-join EFFR by the
+>   mean overlap spread. Kept as a transparent risk-layer derivation, not stored data
+>   (`source="derived"`, no `source_code`).
 **Phase-1 core — ECON (vintaged):** `CPI_HEADLINE`, `CPI_CORE`, `PCE_CORE`, `UNRATE`,
 `PAYEMS` (level; DIFF→new jobs), `GDP`, `ISM_MFG`, `ICSA` (claims).
 
