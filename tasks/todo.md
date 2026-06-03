@@ -289,3 +289,29 @@ first vertical slice · 🔵 LATER = deferred.
       Interface) so the hedge never silently degrades to beta-only.
 - [ ] 🔵 Loading-window decision: decouple the style-loading window from the 252-day market beta
       (research flagged 60 daily obs as thin for 6 slopes); consider shrinkage on the loadings.
+
+## Macro-data database (PM, 2026-06-03) — see [`docs/macro_data.md`](../docs/macro_data.md)
+
+> New **Neptune-owned** macro DB (rates/credit + economic data). Data-layer input only; the
+> pure engine never imports it; human-facing regime/scenario context only (§1/§5). Decisions
+> locked: backfill to 2000, full ALFRED vintage depth, transforms in the risk layer (raw stays
+> canonical), enriched analytical type flags, EOD-only (CDX/MOVE deferred to a paid phase).
+
+- [ ] **Phase 1a — schema + engine wiring (no network; fully testable).** `MacroBase` /
+      `macro_engine` / `MacroSession` / `init_macro_db` in `db/base.py`; `macro_database_url`
+      + `macro_url` + `MACRO_DATABASE_URL` alias in `config.py`; `MACRO` `ConnectionRole`.
+      `src/neptune/macro/models.py`: `macro_series` registry (all §2 type flags),
+      `macro_observations` (MARKET, flat), `macro_vintages` (ECON, point-in-time),
+      `macro_release_calendar`. Mirror securities idioms (`BigIntPK`, source-tagged uniqueness).
+- [ ] **Phase 1b — repository (revision logic; fully testable).** `macro/repository.py`:
+      append-only insert (revision = new vintage row; benchmark restatement = bulk same
+      `vintage_date`), MARKET upsert, and the three reads — `latest`, `first_print`, `as_of(d)`.
+      Tests: as-of/latest/first-print correctness, look-ahead safety, layer purity (no `quant`
+      imports). Build-vintages-by-diffing a latest-only source.
+- [ ] **Phase 1c — Phase-1 indicator registry seed** (the §6 core catalog as data) +
+      risk-layer transform helpers (YoY / DIFF→"new jobs" / annualized), guarded by the
+      `value_type`/`stationarity` flags.
+- [ ] 🔵 **Phase 1d — ingest (needs network + FRED/ALFRED keys).** FRED + ALFRED + Treasury
+      clients; EOD daily MARKET pull (live bar excluded) + event-driven ECON-release pull;
+      Celery schedule. Backfill to 2000.
+- [ ] 🔵 Global (non-US) rates/FX; paid feeds (CDX/MOVE/intraday) if budgeted.
