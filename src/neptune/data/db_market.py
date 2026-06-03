@@ -177,8 +177,12 @@ class DbMarketData:
             factors.update(style)
         # PROMOTED monitor factors join the neutralized model. Pre-basket dates (NaN in the raw
         # neptune series) are filled with 0.0 — a long-short factor with no basket yet earns no
-        # return — so the cumsum-based rolling loadings regression isn't NaN-poisoned; the recent
-        # window the optimizer uses is all real.
+        # return — so the cumsum-based rolling loadings regression isn't NaN-poisoned. WARM-UP
+        # caveat: until a freshly-promoted factor has >= the loadings/cov window of REAL history,
+        # that window still overlaps the zero-filled region, so its loadings and its diagonal in F
+        # are damped toward 0. This never breaks neutrality (the hard factor constraint still
+        # binds) — it only weakens the min-variance SHAPING for that factor until history accrues.
+        # (A future refinement: gate promotion on sufficient real observations.)
         if self.promoted_factors:
             promoted = self.neptune_factor_returns()
             for f in self.promoted_factors:

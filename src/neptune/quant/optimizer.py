@@ -382,6 +382,11 @@ def _solve_qp(
         # long-only term is dropped). There is NO expected-return term, so this is pure RISK
         # reduction of the long book, never a market view (CLAUDE.md §5). Hard neutrality is
         # unchanged: market variance dominates F, so minimizing it also drives net β toward 0.
+        k = 1 + len(hedge_factors)
+        if np.shape(factor_cov) != (k, k):
+            raise ValueError(
+                f"factor_cov must be {k}x{k} for [MKT, *hedge_factors]; got {np.shape(factor_cov)}"
+            )
         idio = np.array([
             max((c.idio_var if c.idio_var is not None else c.variance) or 0.0, 1e-12)
             for c in cands

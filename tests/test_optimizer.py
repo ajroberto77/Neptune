@@ -7,7 +7,7 @@ import pytest
 
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_candidates, golden_positions
 from neptune.domain.models import Portfolio
-from neptune.quant.factors import FACTORS, MARKET_FACTOR
+from neptune.quant.factors import FACTORS
 from neptune.quant.optimizer import (
     HEDGE_FACTORS,
     Candidate,
