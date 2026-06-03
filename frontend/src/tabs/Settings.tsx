@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import type { BetaDiagnostics, ConnectionRow } from "../types";
+import type { BetaDiagnostics, ConnectionRow, CredentialRow } from "../types";
 import type { SecuritiesHealth } from "../api/client";
 import {
   fetchBetaDiagnostics,
   fetchConnections,
+  fetchCredentials,
   fetchSecuritiesHealth,
   ingestFactors,
   ingestPrices,
   saveConnection,
+  saveCredential,
   syncUniverse,
   testConnection,
 } from "../api/client";
@@ -15,7 +17,12 @@ import {
 const ROLE_LABELS: Record<string, string> = {
   PORTFOLIO: "Portfolio DB (app)",
   SECURITIES: "Securities DB (market data)",
+  MACRO: "Macro DB (rates/credit + economic data)",
   UNIVERSE: "Universe DB (cato_securities, read-only)",
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  FRED: "FRED / ALFRED — macro data (rates, credit, economic; one key serves both)",
 };
 
 type Form = {
@@ -57,6 +64,9 @@ export function Settings() {
   const [oneTicker, setOneTicker] = useState("");
   const [years, setYears] = useState(7); // backfill depth (more = deeper backtest history)
   const [betaDiag, setBetaDiag] = useState<BetaDiagnostics | null>(null);
+  const [creds, setCreds] = useState<CredentialRow[]>([]);
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [keyStatus, setKeyStatus] = useState<Record<string, string>>({});
 
   function load() {
     fetchConnections()
@@ -69,7 +79,28 @@ export function Settings() {
       .catch((e) => setError(String(e)));
   }
 
-  useEffect(load, []);
+  function loadCreds() {
+    fetchCredentials()
+      .then(setCreds)
+      .catch((e) => setError(String(e)));
+  }
+
+  useEffect(() => {
+    load();
+    loadCreds();
+  }, []);
+
+  async function handleSaveKey(provider: string) {
+    setError(null);
+    try {
+      const st = await saveCredential(provider, { api_key: keyInputs[provider] ?? "" });
+      setKeyStatus((s) => ({ ...s, [provider]: st.has_key ? "Key saved" : "Key cleared" }));
+      setKeyInputs((s) => ({ ...s, [provider]: "" })); // never keep the secret in component state
+      loadCreds();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   function update(role: string, patch: Partial<Form>) {
     setForms((prev) => ({ ...prev, [role]: { ...prev[role], ...patch } }));
@@ -180,6 +211,58 @@ export function Settings() {
       )}
 
       <DataHealth />
+
+      <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+        <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
+          Data provider API keys
+        </h3>
+        <p className="mb-3 text-xs text-ocean-muted">
+          Keys for external data feeds. FRED powers the macro database (rates, credit, economic
+          data); the same free key serves ALFRED (point-in-time vintages). Get one at{" "}
+          <a
+            href="https://fredaccount.stlouisfed.org/apikeys"
+            target="_blank"
+            rel="noreferrer"
+            className="text-ocean-accent hover:underline"
+          >
+            fredaccount.stlouisfed.org/apikeys
+          </a>
+          . Keys are write-only — leave blank to keep the stored secret.
+        </p>
+        <div className="space-y-3">
+          {creds.map((c) => (
+            <div key={c.provider} className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[18rem] flex-1">
+                <Field
+                  label={`${PROVIDER_LABELS[c.provider] ?? c.provider} ${
+                    c.has_key ? `· set (${c.source})` : "· not set"
+                  }`}
+                >
+                  <input
+                    className="np-input"
+                    type="password"
+                    aria-label={`${c.provider}-api-key`}
+                    placeholder={c.has_key ? "•••••• (stored)" : "paste API key"}
+                    value={keyInputs[c.provider] ?? ""}
+                    onChange={(e) =>
+                      setKeyInputs((s) => ({ ...s, [c.provider]: e.target.value }))
+                    }
+                  />
+                </Field>
+              </div>
+              <button
+                onClick={() => handleSaveKey(c.provider)}
+                className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80"
+              >
+                Save key
+              </button>
+              {keyStatus[c.provider] && (
+                <span className="text-sm text-ocean-muted">{keyStatus[c.provider]}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {rows.map((row) => {
         const f = forms[row.role] ?? EMPTY;

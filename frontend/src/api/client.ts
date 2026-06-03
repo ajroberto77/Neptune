@@ -141,6 +141,8 @@ export function setPriceRefresh(minutes: number): Promise<{ minutes: number }> {
 import type {
   ConnectionRow,
   ConnectionInput,
+  CredentialRow,
+  ApiKeyInput,
   SyncResult,
   IngestResult,
   FactorIngestResult,
@@ -169,6 +171,23 @@ export function testConnection(
   role: string,
 ): Promise<{ role: string; ok: boolean; error?: string }> {
   return getJSON(`/settings/connections/${role}/test`, { method: "POST" });
+}
+
+// --- Settings: data-provider API keys (write-only secrets) ---
+
+export function fetchCredentials(): Promise<CredentialRow[]> {
+  return getJSON<CredentialRow[]>(`/settings/credentials`);
+}
+
+export function saveCredential(
+  provider: string,
+  body: ApiKeyInput,
+): Promise<CredentialRow> {
+  return getJSON<CredentialRow>(`/settings/credentials/${provider}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export function syncUniverse(): Promise<SyncResult> {

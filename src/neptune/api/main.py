@@ -64,6 +64,7 @@ from neptune.stress import STANDARD_SCENARIOS, Scenario
 from neptune.positions.service import ConflictError, PositionService
 from neptune.settings_store import ConnectionRole
 from neptune.settings_store.service import ConnectionSettingsService
+from neptune.settings_store.credentials import CredentialsService
 from neptune.securities.ingest import ingest_ticker
 from neptune.securities.factor_ingest import ingest_factors
 from neptune.securities.factor_providers import KenFrenchProvider
@@ -1245,6 +1246,28 @@ class ConnectionIn(BaseModel):
     password: str | None = None
     sslmode: str | None = None
     driver: str | None = None
+
+
+class ApiKeyIn(BaseModel):
+    """A data-provider API key. Write-only: "" clears the stored key."""
+
+    api_key: str
+
+
+@app.get("/settings/credentials")
+def list_credentials(session: Session = Depends(get_session)):
+    """External data-provider API-key status — masked (never the key itself). ``source``
+    tells whether it resolves from the UI-stored value, an env fallback, or is unset."""
+    return CredentialsService(session).list_status()
+
+
+@app.put("/settings/credentials/{provider}")
+def set_credential(provider: str, body: ApiKeyIn, session: Session = Depends(get_session)):
+    """Store (or clear) a provider's API key. Returns masked status; the key is never echoed."""
+    try:
+        return CredentialsService(session).set_key(provider, body.api_key)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown provider {provider}") from None
 
 
 class PriceRefreshIn(BaseModel):

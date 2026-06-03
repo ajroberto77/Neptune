@@ -315,7 +315,12 @@ first vertical slice · 🔵 LATER = deferred.
       DIFF/PCT_CHANGE/LOG_DIFF/ZSCORE over POP/YOY + `annualize`), `validate_transform` refuses
       invalid ops (pct-change a rate; re-transform a RATE_OF_CHANGE/DIFFUSION). 14 tests green;
       full suite 237 green.
-- [ ] 🔵 **Phase 1d — ingest (needs network + FRED/ALFRED keys).** FRED + ALFRED + Treasury
-      clients; EOD daily MARKET pull (live bar excluded) + event-driven ECON-release pull;
-      Celery schedule. Backfill to 2000.
+- [x] 🟢 **API-key plumbing (for 1d).** Write-only provider credentials store
+      (`provider_credentials` table, `settings_store/credentials.py`) with env/.env fallback
+      (`NEPTUNE_FRED_API_KEY`/bare `FRED_API_KEY`); `GET/PUT /settings/credentials` (masked,
+      never echoes the key); a "Data provider API keys" panel on the Settings tab with the
+      FRED how-to-get-one link. One FRED key serves ALFRED. (`test_settings.py`, `Settings.test.tsx`.)
+- [ ] 🔵 **Phase 1d — ingest (needs network + a FRED key).** FRED + ALFRED + Treasury clients
+      reading the key via `CredentialsService.resolve_key("FRED")`; EOD daily MARKET pull (live
+      bar excluded) + event-driven ECON-release pull; Celery schedule. Backfill to 2000.
 - [ ] 🔵 Global (non-US) rates/FX; paid feeds (CDX/MOVE/intraday) if budgeted.

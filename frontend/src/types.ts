@@ -162,6 +162,17 @@ export interface ConnectionInput {
   driver?: string | null;
 }
 
+/** Masked status of an external data-provider API key — never the key itself. */
+export interface CredentialRow {
+  provider: string;
+  has_key: boolean;
+  source: "stored" | "env" | "none";
+}
+
+export interface ApiKeyInput {
+  api_key: string;
+}
+
 export interface SyncResult {
   synced: number;
   source: string;

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Neptune-owned macro-data DB (rates/credit + economic series); see docs/macro_data.md.
     # Falls back to database_url like the others.
     macro_database_url: str | None = None
+
+    # External data-provider API keys (env/.env fallback; the UI-stored key in
+    # provider_credentials takes precedence — see settings_store.credentials). The same FRED
+    # key serves ALFRED (vintages). Get one free at https://fredaccount.stlouisfed.org/apikeys
+    fred_api_key: str | None = None
     # Read-only link to the shared securities universe. None = not configured (the
     # synthetic CATALOG/universe is used instead, e.g. tests and offline dev).
     universe_database_url: str | None = None
@@ -137,6 +142,12 @@ _URL_ENV = {
     "universe_database_url": "UNIVERSE_DATABASE_URL",
 }
 
+# Bare (un-prefixed) env names for provider secrets, read the same way as the URLs above so a
+# deployment can set FRED_API_KEY without the NEPTUNE_ prefix.
+_SECRET_ENV = {
+    "fred_api_key": "FRED_API_KEY",
+}
+
 
 def _dotenv_values(path: str = ".env") -> dict[str, str]:
     """Minimal ``.env`` parser for the bare connection names. pydantic-settings only reads
@@ -162,7 +173,7 @@ def get_settings() -> Settings:
     Shell-first keeps tests (which set ``DATABASE_URL`` in ``os.environ``) authoritative."""
     dotenv = _dotenv_values()
     overrides: dict[str, str] = {}
-    for field, env in _URL_ENV.items():
+    for field, env in {**_URL_ENV, **_SECRET_ENV}.items():
         if env in os.environ:
             overrides[field] = os.environ[env]
         elif env in dotenv:

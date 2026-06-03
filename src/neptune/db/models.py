@@ -201,3 +201,14 @@ class AppSettingORM(Base):
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class ProviderCredentialORM(Base):
+    """A stored API key for an external data provider (e.g. FRED). One row per provider; lives
+    in the portfolio DB. The ``api_key`` is **write-only** — NEVER returned by the API; reads
+    expose only whether a key is set. Same secret discipline as ``DbConnectionORM.password``."""
+
+    __tablename__ = "provider_credentials"
+
+    provider: Mapped[str] = mapped_column(String, primary_key=True)  # 'FRED'
+    api_key: Mapped[str | None] = mapped_column(String, nullable=True)  # write-only

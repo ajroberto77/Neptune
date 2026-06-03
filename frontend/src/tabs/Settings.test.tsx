@@ -29,9 +29,18 @@ const ingestFactors = vi.fn(async () => ({
   end: "2026-05-31",
   counts: { SMB: 252, HML: 252, MOM: 252 },
 }));
+const saveCredential = vi.fn(async (_provider: string, _body: { api_key: string }) => ({
+  provider: "FRED",
+  has_key: true,
+  source: "stored" as const,
+}));
 
 vi.mock("../api/client", () => ({
   fetchConnections: () => Promise.resolve(rows),
+  fetchCredentials: () =>
+    Promise.resolve([{ provider: "FRED", has_key: false, source: "none" }]),
+  saveCredential: (provider: string, body: { api_key: string }) =>
+    saveCredential(provider, body),
   fetchSecuritiesHealth: () =>
     Promise.resolve({
       benchmark: "SPY",
@@ -57,6 +66,7 @@ describe("Settings", () => {
     syncUniverse.mockClear();
     ingestPrices.mockClear();
     ingestFactors.mockClear();
+    saveCredential.mockClear();
   });
 
   it("renders all three connection roles and flags the bootstrap DB", async () => {
@@ -109,5 +119,20 @@ describe("Settings", () => {
     expect(
       await screen.findByText(/Ingested 756 factor observations/),
     ).toBeInTheDocument();
+  });
+
+  it("saves a FRED API key (write-only) and links to where to get one", async () => {
+    render(<Settings />);
+    await screen.findByText(/Data provider API keys/);
+    // The how-to-get-one link is surfaced.
+    expect(screen.getByText(/fredaccount.stlouisfed.org\/apikeys/)).toBeInTheDocument();
+    const input = screen.getByLabelText("FRED-api-key");
+    fireEvent.change(input, { target: { value: "mysecretkey" } });
+    fireEvent.click(screen.getByText("Save key"));
+    await waitFor(() => expect(saveCredential).toHaveBeenCalledOnce());
+    const [provider, body] = saveCredential.mock.calls[0];
+    expect(provider).toBe("FRED");
+    expect(body.api_key).toBe("mysecretkey");
+    expect(await screen.findByText(/Key saved/)).toBeInTheDocument();
   });
 });

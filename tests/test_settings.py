@@ -43,6 +43,39 @@ def test_connections_list_reports_all_roles(client):
     assert portfolio["bootstrap"] is True
 
 
+def test_credentials_status_starts_unset(client):
+    rows = client.get("/settings/credentials").json()
+    fred = next(r for r in rows if r["provider"] == "FRED")
+    assert fred == {"provider": "FRED", "has_key": False, "source": "none"}
+
+
+def test_set_credential_is_write_only_and_resolves(client):
+    # Storing a key never echoes it back; status flips to stored.
+    body = client.put("/settings/credentials/FRED", json={"api_key": "abc123secret"}).json()
+    assert body == {"provider": "FRED", "has_key": True, "source": "stored"}
+    assert "api_key" not in body and "abc123secret" not in str(body)
+    # And it isn't exposed by the list endpoint either.
+    listed = client.get("/settings/credentials").json()
+    assert "abc123secret" not in str(listed)
+    fred = next(r for r in listed if r["provider"] == "FRED")
+    assert fred["has_key"] is True
+
+    # The service resolves the actual key for the ingest layer (never serialized).
+    from neptune.db.base import SessionLocal
+    from neptune.settings_store.credentials import CredentialsService
+    with SessionLocal() as s:
+        assert CredentialsService(s).resolve_key("FRED") == "abc123secret"
+
+    # Empty string clears it.
+    cleared = client.put("/settings/credentials/FRED", json={"api_key": ""}).json()
+    assert cleared["has_key"] is False
+
+
+def test_set_credential_unknown_provider_404(client):
+    r = client.put("/settings/credentials/BLOOMBERG", json={"api_key": "x"})
+    assert r.status_code == 404
+
+
 def test_upsert_connection_never_returns_password(client):
     r = client.put(
         "/settings/connections/UNIVERSE",
