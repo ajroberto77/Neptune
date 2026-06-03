@@ -42,6 +42,11 @@ class SecuritiesBase(DeclarativeBase):
     """Declarative base for the securities database (prices/dividends/corp actions)."""
 
 
+class MacroBase(DeclarativeBase):
+    """Declarative base for the macro database (rates/credit + economic series).
+    See ``docs/macro_data.md``."""
+
+
 # Backward-compatible alias: the original slice imported ``Base`` for portfolio models.
 Base = PortfolioBase
 
@@ -74,6 +79,10 @@ SessionLocal = PortfolioSession
 securities_engine = make_engine(settings.securities_url)
 SecuritiesSession = sessionmaker(bind=securities_engine, expire_on_commit=False, future=True)
 
+# --- Macro database (rates/credit + economic series) -----------------------------
+macro_engine = make_engine(settings.macro_url)
+MacroSession = sessionmaker(bind=macro_engine, expire_on_commit=False, future=True)
+
 
 def init_db(target_engine=engine) -> None:
     """Create the **portfolio** tables. For the slice we use ``create_all``; production
@@ -96,6 +105,16 @@ def init_securities_db(target_engine=securities_engine) -> None:
     # No Alembic yet: `create_all` won't add columns to an EXISTING table. Bridge that for
     # additive columns so a deployed securities DB picks up new fields without a manual migration.
     _ensure_columns(target_engine, "securities", {"sector": "VARCHAR"})
+
+
+def init_macro_db(target_engine=macro_engine) -> None:
+    """Create the **macro** tables (series registry + observations + vintages + release
+    calendar). Like the securities DB, ``create_all`` yields a working relational schema
+    everywhere; on Postgres the observation/vintage fact tables are TimescaleDB-hypertable
+    candidates via a later guarded migration."""
+    from neptune.macro import models  # noqa: F401  (register macro mappers)
+
+    MacroBase.metadata.create_all(bind=target_engine)
 
 
 def _ensure_columns(target_engine, table: str, columns: dict[str, str]) -> None:

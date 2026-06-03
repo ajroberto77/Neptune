@@ -30,6 +30,7 @@ def _to_config(row: DbConnectionORM) -> ConnectionConfig:
 _ENV_URL = {
     ConnectionRole.PORTFOLIO: lambda: settings.portfolio_url,
     ConnectionRole.SECURITIES: lambda: settings.securities_url,
+    ConnectionRole.MACRO: lambda: settings.macro_url,
     ConnectionRole.UNIVERSE: lambda: settings.universe_database_url,
 }
 

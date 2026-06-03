@@ -34,10 +34,10 @@ def test_url_encodes_special_characters():
     assert m["has_password"] is True
 
 
-def test_connections_list_reports_all_three_roles(client):
+def test_connections_list_reports_all_roles(client):
     rows = client.get("/settings/connections").json()
     roles = {r["role"] for r in rows}
-    assert roles == {"PORTFOLIO", "SECURITIES", "UNIVERSE"}
+    assert roles == {"PORTFOLIO", "SECURITIES", "MACRO", "UNIVERSE"}
     # The portfolio DB is flagged as the env-driven bootstrap.
     portfolio = next(r for r in rows if r["role"] == "PORTFOLIO")
     assert portfolio["bootstrap"] is True

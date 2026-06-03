@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+pysqlite:///:memory:"
     portfolio_database_url: str | None = None
     securities_database_url: str | None = None
+    # Neptune-owned macro-data DB (rates/credit + economic series); see docs/macro_data.md.
+    # Falls back to database_url like the others.
+    macro_database_url: str | None = None
     # Read-only link to the shared securities universe. None = not configured (the
     # synthetic CATALOG/universe is used instead, e.g. tests and offline dev).
     universe_database_url: str | None = None
@@ -117,6 +120,11 @@ class Settings(BaseSettings):
         """Resolved URL for Neptune's market-data database (falls back to ``database_url``)."""
         return self.securities_database_url or self.database_url
 
+    @property
+    def macro_url(self) -> str:
+        """Resolved URL for Neptune's macro-data database (falls back to ``database_url``)."""
+        return self.macro_database_url or self.database_url
+
 
 # Read the bare (un-prefixed) connection env vars for convenience/compat, so deployments
 # can set DATABASE_URL / PORTFOLIO_DATABASE_URL / SECURITIES_DATABASE_URL /
@@ -125,6 +133,7 @@ _URL_ENV = {
     "database_url": "DATABASE_URL",
     "portfolio_database_url": "PORTFOLIO_DATABASE_URL",
     "securities_database_url": "SECURITIES_DATABASE_URL",
+    "macro_database_url": "MACRO_DATABASE_URL",
     "universe_database_url": "UNIVERSE_DATABASE_URL",
 }
 

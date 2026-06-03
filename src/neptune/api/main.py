@@ -33,7 +33,13 @@ from neptune.data.db_market import DbMarketData, TickerNotFound
 from neptune.scheduling import scheduler as price_scheduler
 from neptune.scheduling.scheduler import shutdown_scheduler, start_scheduler
 from neptune.settings_store.app_settings import AppSettingsService
-from neptune.db.base import SessionLocal, init_db, init_securities_db, make_engine
+from neptune.db.base import (
+    SessionLocal,
+    init_db,
+    init_macro_db,
+    init_securities_db,
+    make_engine,
+)
 from neptune.db.models import PositionORM
 from neptune.db.runtime import securities_session
 from neptune.domain.models import (
@@ -249,6 +255,7 @@ def remove_demo_positions(session: Session) -> int:
 async def lifespan(app: FastAPI):
     init_db()
     init_securities_db()  # create the market-data schema too (idempotent)
+    init_macro_db()       # create the macro-data schema too (idempotent)
     with SessionLocal() as session:
         seed_golden(session, with_demo_positions=settings.seed_demo_positions)
         if not settings.seed_demo_positions:
@@ -1265,7 +1272,7 @@ def list_connections(session: Session = Depends(get_session)):
     """All configured DB connections, password-masked. Roles with no row fall back to env."""
     svc = ConnectionSettingsService(session)
     stored = {c.role: c.masked() for c in svc.list_all()}
-    # Always report all three roles so the UI can render a complete form.
+    # Always report every role so the UI can render a complete form.
     out = []
     for role in ConnectionRole:
         entry = stored.get(role, {"role": role.value, "configured": False})
