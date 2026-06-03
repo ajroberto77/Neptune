@@ -5,6 +5,44 @@ don't repeat the mistake. Newest first.
 
 ---
 
+---
+
+## 2026-06-03 — Factors are an extensible POOL (data), not a fixed `STYLE_FACTORS` constant — and we don't hedge all of them
+
+**Correction (PM, direction-setting — design deferred, captured so we resume cleanly):** I built
+the factor program as a hardcoded `STYLE_FACTORS` tuple (FF5+MOM) as the single source of truth,
+with monitor factors (IVOL/BAB/AMIHUD/SECTOR_*) bolted on and a config-gated *binary promotion*
+flag to move one into the neutralized set. That's the wrong mental model. The intended shape:
+
+1. **Factors-as-data, not code.** A first-class, extensible **registry** holding BOTH accepted/
+   academic factors (FF5, MOM) AND ones the firm **discovers** in-house, each with a lifecycle
+   (candidate → validated → accepted → deprecated). Generalize the existing `FactorDefinition`
+   registry + `FactorReturn` store; retire the `STYLE_FACTORS` constant as the source of truth.
+2. **Don't neutralize the whole pool.** The production risk model is a **selected subset** of the
+   registry — "hedge everything we can compute" is wrong.
+3. **A factor optimizer over the pool** chooses which factors enter the risk model / get
+   neutralized, replacing the fixed tuple + binary promote flag.
+
+**Invariant §5 framing to hold:** "don't hedge all factors" ⇒ we deliberately RETAIN exposure to
+some. Retained factor exposure is a factor *bet*, and §5 says the systematic short book is ONLY a
+hedge of unrewarded risk, never alpha/a view. So the clean split is: the **PM's long book** owns
+the rewarded bets (discretionary/fundamental); the **factor optimizer identifies the *unrewarded*
+risk in the pool and neutralizes only that.** Do NOT let "factor optimizer from the pool" drift
+into a factor-*investing* / tilt-picking engine — that's a different mandate and brushes §5/§2.
+
+**Open decisions (PM is revisiting — do not assume):**
+- What the factor optimizer decides: risk-model *selection* (parsimonious non-collinear spanning
+  set) vs hedge/keep *partition* (neutralize unrewarded vs retain intended) vs both (staged).
+- Who owns the neutralize-vs-retain call: math-proposes/human-approves vs data-driven default
+  (premium significance) vs human-tagged registry policy.
+
+**Pattern:** When a domain has a growing catalog the firm extends over time (factors, scenarios,
+signals), model it as a registry of data with a lifecycle + a selection layer — not a hardcoded
+constant that every module imports. And keep the §5 line sharp: the hedge neutralizes *unrewarded*
+risk; intended exposures are the PM's, never the optimizer's.
+
+---
+
 ## 2026-06-01 — "Book" = portfolio; long/short is a position attribute; trade ticket is Buy/Sell
 
 **Correction (PM):** The trade/position model was wrong from a desk perspective. The fixes:
