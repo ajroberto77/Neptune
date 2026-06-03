@@ -1029,6 +1029,11 @@ def propose_hedge(
             status_code=422,
             detail="Long-only books are not hedged (shorting is disallowed by mandate).",
         )
+    if portfolio.long_aum <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="No long positions — add long positions before proposing a hedge.",
+        )
     long_tickers = {p.ticker for p in portfolio.longs}
     try:
         with market_data_for(session, portfolio) as md:

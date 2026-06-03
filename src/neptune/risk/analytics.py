@@ -133,6 +133,8 @@ def net_metrics(
 ) -> tuple[float, dict[str, float]]:
     """Net beta and net factor exposures across the WHOLE book (normalized by long AUM).
     ``factors`` is the known factor set (pass the promoted-extended set when factors are promoted)."""
+    if portfolio.long_aum <= 0:
+        return 0.0, {f: 0.0 for f in factors}
     inputs = [
         (p.signed_notional, metrics[p.ticker].beta, metrics[p.ticker].loadings)
         for p in portfolio.positions
@@ -168,6 +170,8 @@ def residual_metrics(
     """Residual beta/factors the systematic short book must neutralize: long book +
     discretionary shorts only (systematic shorts are what the optimizer re-proposes).
     ``factors`` is the known factor set (pass the promoted-extended set when factors are promoted)."""
+    if portfolio.long_aum <= 0:
+        return 0.0, {f: 0.0 for f in factors}
     inputs = [
         (p.signed_notional, metrics[p.ticker].beta, metrics[p.ticker].loadings)
         for p in portfolio.positions
