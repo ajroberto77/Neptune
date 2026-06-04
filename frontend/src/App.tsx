@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import {
   approveHedge,
+  bookHedgeLegs,
   fetchFrontier,
   fetchPortfolios,
   fetchPositions,
@@ -21,7 +22,7 @@ import {
   setPriceRefresh,
 } from "./api/client";
 import type { PortfolioMeta } from "./api/client";
-import type { TransactionInput } from "./types";
+import type { TradeAction, TransactionInput } from "./types";
 import { Portfolio } from "./tabs/Portfolio";
 import { Trade } from "./tabs/Trade";
 import { RiskDashboard } from "./tabs/RiskDashboard";
@@ -89,20 +90,58 @@ export default function App() {
   // An approved-but-not-yet-booked hedge, handed to the Trade tab for review + booking.
   const [pendingHedge, setPendingHedge] = useState<PendingHedge | null>(null);
 
-  // Approve the WHOLE basket → hand it to the Trade tab (it shows there for review/booking).
-  function handleApproveHedge() {
+  // Approve the basket → reconcile it against the LIVE systematic book into delta legs (cover
+  // the names being dropped/reduced, sell the names being added/increased, skip unchanged), then
+  // hand those to the Trade tab for review/booking. So when a hedge is already on, you see the
+  // buy-to-covers — not a misleading wall of sells.
+  async function handleApproveHedge() {
     if (!proposal) return;
-    const shorts = proposal.proposed_shorts
-      .filter((s) => s.shares && s.price)
-      .map((s) => ({
-        ticker: s.ticker,
-        shares: s.shares as number,
-        price: s.price as number,
-        sector: s.sector ?? null,
-        beta: s.beta,
-        notional: s.notional,
-      }));
-    setPendingHedge({ portfolioId: hedgePortfolioId, shorts });
+    // Current systematic shorts for the hedge book (cover price = the live mark).
+    let current: Record<string, { shares: number; price: number }> = {};
+    try {
+      const pos = await fetchPositions(hedgePortfolioId);
+      current = Object.fromEntries(
+        pos
+          .filter((p) => p.side === "SHORT" && p.short_type === "SYSTEMATIC" && p.notional !== 0)
+          .map((p) => [
+            p.ticker,
+            { shares: p.quantity, price: p.price ?? (p.quantity ? p.notional / p.quantity : 0) },
+          ]),
+      );
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
+    const target = new Map(
+      proposal.proposed_shorts
+        .filter((s) => s.shares && s.price)
+        .map((s) => [s.ticker, s]),
+    );
+    const tickers = new Set<string>([...Object.keys(current), ...target.keys()]);
+    const legs: PendingHedge["shorts"] = [];
+    for (const ticker of tickers) {
+      const cur = current[ticker]?.shares ?? 0;
+      const t = target.get(ticker);
+      const tgt = (t?.shares as number) ?? 0;
+      const delta = tgt - cur;
+      if (Math.abs(delta) < 1) continue; // unchanged (sub-share) — no trade, no churn
+      if (delta > 0) {
+        // open or increase the short
+        legs.push({
+          ticker, action: "SELL", shares: delta, price: t!.price as number,
+          sector: t!.sector ?? null, beta: t!.beta, notional: t!.notional,
+          kind: cur > 0 ? "increase" : "open",
+        });
+      } else {
+        // buy-to-cover the names dropped/reduced, at the live mark
+        legs.push({
+          ticker, action: "BUY", shares: -delta, price: current[ticker].price,
+          sector: t?.sector ?? null, beta: t?.beta ?? 0, notional: t?.notional ?? 0,
+          kind: tgt > 0 ? "reduce" : "cover",
+        });
+      }
+    }
+    setPendingHedge({ portfolioId: hedgePortfolioId, shorts: legs });
     setProposal(null);
     setTab("Trade");
   }
@@ -171,15 +210,16 @@ export default function App() {
     }
   }
 
-  // Book a whole approved hedge basket atomically: ONE call that REPLACES the systematic short
-  // book (clears the old hedge, books the new basket), so re-approving never stacks/doubles it.
+  // Book the delta-reconciliation legs exactly as shown in the grid: BUY = buy-to-cover a
+  // systematic short (books realized P&L), SELL = open/increase one. WYSIWYG — what the desk
+  // reviewed is what gets booked. Discretionary shorts are never touched (I-03/I-04).
   async function submitHedgeBatch(
     targetId: string,
-    shorts: { ticker: string; shares: number; price: number }[],
+    legs: { ticker: string; action: TradeAction; shares: number; price: number }[],
   ) {
     setTrading(true);
     try {
-      await approveHedge(targetId, shorts);
+      await bookHedgeLegs(targetId, legs);
     } finally {
       setTrading(false);
     }

@@ -227,6 +227,54 @@ class PositionService:
                 opened += 1
         return {"covered": covered, "opened": opened, "realized_pnl": realized_total}
 
+    def apply_hedge_legs(
+        self,
+        portfolio_id: str,
+        legs: list[tuple[str, TradeAction, float, float]],
+        trade_date: date,
+    ) -> dict:
+        """Book an EXPLICIT list of hedge legs (what-you-see-is-what-gets-booked), each
+        ``(ticker, action, shares, price)``: a SELL opens/increases the systematic short; a
+        BUY covers/reduces it (booking realized P&L at ``price``, the cover mark). Used by the
+        delta-aware Trade grid, where the rows already represent the reconciliation against the
+        live hedge. Only the systematic book is touched (I-03/I-04); nothing is routed (§2)."""
+        current = {
+            p.ticker: p
+            for p in self.repo.list_positions(portfolio_id)
+            if p.side is Side.SHORT and p.short_type is ShortType.SYSTEMATIC and p.quantity > 0
+        }
+        covered = opened = 0
+        realized_total = 0.0
+        for ticker, action, shares, price in legs:
+            if shares <= 0:
+                continue
+            if action is TradeAction.SELL:  # open / increase the systematic short
+                self.record_trade(
+                    portfolio_id, ticker, Side.SHORT, ShortType.SYSTEMATIC,
+                    shares, price, trade_date,
+                )
+                self._record_tx(
+                    portfolio_id, ticker, TradeAction.SELL, shares, price, trade_date,
+                    short_type=ShortType.SYSTEMATIC, origin=TradeOrigin.HEDGE,
+                    effect="Sell short (hedge)" if ticker not in current else "Increase systematic",
+                )
+                opened += 1
+            else:  # BUY = cover / reduce the systematic short
+                pos = current.get(ticker)
+                if pos is None:
+                    continue  # nothing live to cover (already flat) — skip silently
+                cover_qty = min(shares, pos.quantity)
+                realized = self.reduce_position(pos.id, cover_qty, price, as_of=trade_date)
+                realized_total += realized
+                self._record_tx(
+                    portfolio_id, ticker, TradeAction.BUY, cover_qty, price, trade_date,
+                    short_type=ShortType.SYSTEMATIC, origin=TradeOrigin.HEDGE,
+                    realized_pnl=realized,
+                    effect="Cover systematic" if cover_qty >= pos.quantity - 1e-9 else "Reduce systematic",
+                )
+                covered += 1
+        return {"covered": covered, "opened": opened, "realized_pnl": realized_total}
+
     def book_trade(
         self,
         portfolio_id: str,

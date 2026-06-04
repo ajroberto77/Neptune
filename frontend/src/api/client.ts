@@ -5,6 +5,7 @@ import type {
   PositionRow,
   RiskSummary,
   StressReport,
+  TradeAction,
   TransactionRow,
 } from "../types";
 
@@ -117,6 +118,18 @@ export function approveHedge(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ shorts }),
+  });
+}
+
+/** Book the explicit delta legs from the delta-aware Trade grid (BUY = cover, SELL = open). */
+export function bookHedgeLegs(
+  portfolioId: string,
+  legs: { ticker: string; action: TradeAction; shares: number; price: number }[],
+): Promise<{ booked: number; opened: number; covered: number; realized_pnl: number }> {
+  return getJSON(`/portfolios/${portfolioId}/hedge/legs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ legs }),
   });
 }
 

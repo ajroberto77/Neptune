@@ -99,6 +99,41 @@ def test_apply_systematic_hedge_books_covers_and_shorts_as_trades(session):
     assert any(t.ticker == "NEWN" and t.action.value == "SELL" for t in hedge)
 
 
+def test_apply_hedge_legs_books_exactly_what_is_shown(session):
+    """The delta-aware grid submits explicit legs: a SELL opens/increases a systematic short, a
+    BUY covers/reduces it (WYSIWYG). A BUY books realized P&L at the cover price; a name not in
+    the legs is left untouched."""
+    from datetime import date
+    from neptune.domain.models import TradeAction, TradeOrigin
+
+    service = PositionService(session)
+    service.create_portfolio("PL", "Legs Book")
+    service.add_position("PL", Position("LONGX", Side.LONG, 5_000_000))
+    # Seed a live hedge: STALE 100 @100, KEEP 200 @50.
+    service.apply_hedge_legs(
+        "PL",
+        legs=[("STALE", TradeAction.SELL, 100, 100.0), ("KEEP", TradeAction.SELL, 200, 50.0)],
+        trade_date=date(2026, 1, 2),
+    )
+    # Now cover STALE @90 (realized +$1000) and open NEWN; KEEP gets no leg → untouched.
+    out = service.apply_hedge_legs(
+        "PL",
+        legs=[("STALE", TradeAction.BUY, 100, 90.0), ("NEWN", TradeAction.SELL, 300, 20.0)],
+        trade_date=date(2026, 2, 2),
+    )
+    assert out["covered"] == 1 and out["opened"] == 1
+    assert out["realized_pnl"] == pytest.approx(1000.0)
+
+    live = {p.ticker: p for p in service.list_positions("PL") if p.notional > 0}
+    assert "STALE" not in live                     # fully covered
+    assert set(live) == {"LONGX", "KEEP", "NEWN"}
+    assert sum(l.quantity for l in live["KEEP"].lots) == 200  # untouched
+
+    hedge = [t for t in service.transactions("PL") if t.origin is TradeOrigin.HEDGE]
+    cover = next(t for t in hedge if t.ticker == "STALE" and t.action is TradeAction.BUY)
+    assert cover.realized_pnl == pytest.approx(1000.0)
+
+
 def test_manual_trade_writes_a_blotter_row(session):
     """A manual Buy/Sell appends one ledger row with the netting effect and realized P&L."""
     from datetime import date

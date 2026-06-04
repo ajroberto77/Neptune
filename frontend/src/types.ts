@@ -85,13 +85,17 @@ export interface ProposedShort {
 /** An approved-but-not-yet-booked hedge basket, handed to the Trade tab for review + booking. */
 export interface PendingHedge {
   portfolioId: string;
+  // Delta-reconciliation legs vs. the live systematic book: SELL opens/increases a short,
+  // BUY covers/reduces one. Unchanged names are omitted (no churn).
   shorts: {
     ticker: string;
+    action: TradeAction;
     shares: number;
     price: number;
     sector: string | null;
     beta: number;
     notional: number;
+    kind: "open" | "increase" | "reduce" | "cover";
   }[];
 }
 

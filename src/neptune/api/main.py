@@ -1211,6 +1211,45 @@ def approve_hedge(portfolio_id: str, body: HedgeApproveIn,
     }
 
 
+class HedgeLegIn(BaseModel):
+    """One explicit reconciliation leg from the delta-aware Trade grid: a SELL opens/increases a
+    systematic short, a BUY covers/reduces it."""
+
+    ticker: str
+    action: TradeAction
+    shares: float = Field(gt=0)
+    price: float = Field(gt=0)
+
+
+class HedgeLegsIn(BaseModel):
+    legs: list[HedgeLegIn]
+
+
+@app.post("/portfolios/{portfolio_id}/hedge/legs", status_code=201)
+def book_hedge_legs(portfolio_id: str, body: HedgeLegsIn,
+                    session: Session = Depends(get_session)):
+    """Book the EXACT hedge legs shown in the delta-aware Trade grid: BUY = buy-to-cover a
+    systematic short (books realized P&L), SELL = open/increase one. Unlike ``/hedge/approve``
+    (which takes a target basket and derives the deltas itself), this honors what the desk sees
+    row-for-row. Only the systematic book is touched (I-03/I-04); nothing is routed (§2)."""
+    service = PositionService(session)
+    book = _require_portfolio(service, portfolio_id)  # real book only (rejects roll-ups)
+    if book.mandate is Mandate.LONG_ONLY:
+        raise HTTPException(
+            status_code=422,
+            detail="Long-only books cannot book a systematic hedge (shorting disallowed).",
+        )
+    legs = [(l.ticker, l.action, l.shares, l.price) for l in body.legs]
+    summary = service.apply_hedge_legs(portfolio_id, legs, date.today())
+    return {
+        "portfolio_id": portfolio_id,
+        "booked": summary["opened"] + summary["covered"],
+        "opened": summary["opened"],
+        "covered": summary["covered"],
+        "realized_pnl": round(summary["realized_pnl"], 2),
+    }
+
+
 @app.post("/portfolios/{portfolio_id}/hedge/frontier")
 def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
     """Complexity-quality frontier: capped runs (N<=10/20/50) showing the trade-off

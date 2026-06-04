@@ -49,7 +49,7 @@ export function Trade({
   onSubmit: (portfolioId: string, t: TransactionInput, systematic?: boolean) => Promise<void>;
   onSubmitHedge?: (
     portfolioId: string,
-    shorts: { ticker: string; shares: number; price: number }[],
+    legs: { ticker: string; action: TradeAction; shares: number; price: number }[],
   ) => Promise<void>;
   onAfterBatch: () => Promise<void>;
   busy: boolean;
@@ -80,14 +80,17 @@ export function Trade({
   const [msg, setMsg] = useState<string | null>(null);
   const [blotterKey, setBlotterKey] = useState(0); // bump to refetch the blotter after a batch
 
-  // An approved hedge inserts its shorts as systematic rows at the TOP of this same grid.
+  // An approved hedge inserts its reconciliation legs as systematic rows at the TOP of this grid:
+  // BUY = buy-to-cover a name being dropped/reduced, SELL = open/increase one. Per-row action is
+  // preserved (so you SEE the covers), and any PRIOR systematic rows are replaced — re-accepting a
+  // proposal swaps the preview rather than stacking a second copy.
   useEffect(() => {
     if (!pendingHedge) return;
     const hedgeRows: Row[] = pendingHedge.shorts.map((s) => ({
       key: newKey(),
       portfolioId: pendingHedge.portfolioId,
       ticker: s.ticker,
-      action: "SELL",
+      action: s.action,
       quantity: s.shares,
       price: s.price,
       fees: 0,
@@ -95,7 +98,8 @@ export function Trade({
       systematic: true,
     }));
     setRows((rs) => {
-      const kept = rs.filter((r) => r.ticker.trim() || r.quantity || r.price);
+      // Drop prior hedge-preview rows (fixes the duplicate-on-re-accept bug); keep manual rows.
+      const kept = rs.filter((r) => !r.systematic && (r.ticker.trim() || r.quantity || r.price));
       return [...hedgeRows, ...kept];
     });
     onConsumeHedge();
@@ -151,6 +155,7 @@ export function Trade({
           target,
           rs.map((r) => ({
             ticker: r.ticker.trim().toUpperCase(),
+            action: r.action,
             shares: r.quantity,
             price: r.price,
           })),
