@@ -570,6 +570,15 @@ def _safe_price(md, ticker: str) -> float | None:
         return None
 
 
+def _safe_prev_close(md, ticker: str) -> float | None:
+    """The prior completed close, or None when unavailable — the denominator for the day's
+    % move (so the UI can show day return without re-deriving it from notional)."""
+    try:
+        return round(md.prev_close(ticker), 2)
+    except TickerNotFound:
+        return None
+
+
 class PortfolioIn(BaseModel):
     """Create a portfolio (book). id is a short slug; the rest are optional ownership links."""
 
@@ -694,6 +703,7 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
                 "notional": p.notional,
                 "quantity": p.quantity,
                 "price": _safe_price(md, p.ticker),
+                "prev_close": _safe_prev_close(md, p.ticker),
                 "beta": round(metrics[p.ticker].beta, 4),
                 "beta_method": metrics[p.ticker].beta_method,
                 "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,

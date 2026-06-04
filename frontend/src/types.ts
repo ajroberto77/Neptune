@@ -34,6 +34,7 @@ export interface PositionRow {
   notional: number;
   quantity: number;
   price: number | null; // null when the name isn't priced yet
+  prev_close?: number | null; // prior completed close — denominator for the day's % move
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
   cost_basis_method?: string;
