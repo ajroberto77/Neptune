@@ -290,11 +290,18 @@ export function Settings() {
               <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
                 {ROLE_LABELS[row.role] ?? row.role}
               </h3>
-              {row.bootstrap && (
-                <span className="rounded bg-ocean-accent/20 px-2 py-0.5 text-xs text-ocean-accent">
-                  bootstrap · applies on restart
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {row.source === "env" && (
+                  <span className="rounded bg-ocean-border/40 px-2 py-0.5 text-xs text-ocean-muted">
+                    from .env
+                  </span>
+                )}
+                {row.bootstrap && (
+                  <span className="rounded bg-ocean-accent/20 px-2 py-0.5 text-xs text-ocean-accent">
+                    bootstrap · applies on restart
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">

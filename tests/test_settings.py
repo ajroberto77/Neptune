@@ -43,6 +43,25 @@ def test_connections_list_reports_all_roles(client):
     assert portfolio["bootstrap"] is True
 
 
+def test_env_url_prefills_the_form_without_exposing_the_password():
+    """With no stored row, a role's host/port/database/username come from the env/.env URL
+    (so the Settings form pre-fills what the app is actually using) — but the password is
+    only ever a presence flag, never returned."""
+    from neptune.settings_store.service import _url_to_masked
+
+    masked = _url_to_masked(
+        ConnectionRole.SECURITIES,
+        "postgresql+psycopg://postgres:cato@localhost:5434/neptune_securities",
+    )
+    assert masked["host"] == "localhost"
+    assert masked["port"] == 5434
+    assert masked["database"] == "neptune_securities"
+    assert masked["username"] == "postgres"
+    assert masked["driver"] == "postgresql+psycopg"
+    assert masked["has_password"] is True
+    assert "password" not in masked  # the secret itself is never serialized
+
+
 def test_credentials_status_starts_unset(client):
     rows = client.get("/settings/credentials").json()
     fred = next(r for r in rows if r["provider"] == "FRED")

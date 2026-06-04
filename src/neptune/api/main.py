@@ -1328,14 +1328,14 @@ def set_price_refresh(body: PriceRefreshIn, session: Session = Depends(get_sessi
 
 @app.get("/settings/connections")
 def list_connections(session: Session = Depends(get_session)):
-    """All configured DB connections, password-masked. Roles with no row fall back to env."""
+    """All configured DB connections, password-masked. Each role reflects the EFFECTIVE
+    connection: a stored row if present, else the host/port/database/username parsed from the
+    env/.env URL so the form pre-fills what the app is actually using. The password is never
+    returned (only a presence flag)."""
     svc = ConnectionSettingsService(session)
-    stored = {c.role: c.masked() for c in svc.list_all()}
-    # Always report every role so the UI can render a complete form.
     out = []
     for role in ConnectionRole:
-        entry = stored.get(role, {"role": role.value, "configured": False})
-        entry.setdefault("configured", True)
+        entry = svc.describe(role)
         # The portfolio DB is the env-driven bootstrap; flag it so the UI marks it
         # restart-only.
         entry["bootstrap"] = role is ConnectionRole.PORTFOLIO

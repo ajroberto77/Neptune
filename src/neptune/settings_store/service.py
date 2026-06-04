@@ -6,6 +6,7 @@ environment fallback in ``config.settings``.
 """
 from __future__ import annotations
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from neptune.config import settings
@@ -24,6 +25,23 @@ def _to_config(row: DbConnectionORM) -> ConnectionConfig:
         sslmode=row.sslmode,
         driver=row.driver,
     )
+
+
+def _url_to_masked(role: ConnectionRole, url: str) -> dict:
+    """Parse a SQLAlchemy URL into the same masked dict shape as ``ConnectionConfig.masked()``
+    — host/port/database/username/driver, with the password reduced to a presence flag. Used
+    to pre-fill the Settings form from the env/.env URL when no row is stored."""
+    u = make_url(url)
+    return {
+        "role": role.value,
+        "host": u.host or "",
+        "port": u.port or 5432,
+        "database": u.database or "",
+        "username": u.username or "",
+        "sslmode": (u.query.get("sslmode") if u.query else None),
+        "driver": u.drivername,
+        "has_password": bool(u.password),
+    }
 
 
 # Env fallback per role, used when no row is stored.
@@ -84,3 +102,16 @@ class ConnectionSettingsService:
         if cfg is not None:
             return cfg.url()
         return _ENV_URL[role]()
+
+    def describe(self, role: ConnectionRole) -> dict:
+        """A masked, form-ready view of the EFFECTIVE connection for a role: the stored row
+        if present, else the host/port/database/username parsed from the env/.env URL so the
+        Settings form pre-fills what the app is actually using. The password is never
+        exposed; ``source`` ∈ {stored, env, none}."""
+        cfg = self.get(role)
+        if cfg is not None:
+            return {**cfg.masked(), "configured": True, "source": "stored"}
+        url = _ENV_URL[role]()
+        if not url:
+            return {"role": role.value, "configured": False, "source": "none"}
+        return {**_url_to_masked(role, url), "configured": True, "source": "env"}

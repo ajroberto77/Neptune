@@ -150,6 +150,7 @@ export interface ConnectionRow {
   has_password?: boolean;
   configured: boolean;
   bootstrap?: boolean;
+  source?: "stored" | "env" | "none";
 }
 
 export interface ConnectionInput {
