@@ -5,6 +5,7 @@ import type {
   PositionRow,
   RiskSummary,
   StressReport,
+  TransactionRow,
 } from "../types";
 
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
@@ -22,6 +23,15 @@ export function fetchRisk(portfolioId: string): Promise<RiskSummary> {
 
 export function fetchPositions(portfolioId: string): Promise<PositionRow[]> {
   return getJSON<PositionRow[]>(`/portfolios/${portfolioId}/positions`);
+}
+
+export function fetchTransactions(
+  portfolioId: string,
+  limit = 200,
+): Promise<TransactionRow[]> {
+  return getJSON<TransactionRow[]>(
+    `/portfolios/${portfolioId}/transactions?limit=${limit}`,
+  );
 }
 
 export function fetchFactorMonitor(portfolioId: string): Promise<FactorMonitor> {

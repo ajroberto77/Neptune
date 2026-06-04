@@ -43,6 +43,20 @@ export interface PositionRow {
 
 export type TradeAction = "BUY" | "SELL";
 
+export interface TransactionRow {
+  id: number | null;
+  portfolio_id: string | null;
+  ticker: string;
+  action: TradeAction;
+  quantity: number;
+  price: number;
+  trade_date: string;
+  short_type: string; // SYSTEMATIC / DISCRETIONARY / NA
+  origin: "MANUAL" | "HEDGE";
+  realized_pnl: number;
+  effect: string;
+}
+
 export interface TransactionInput {
   ticker: string;
   action: TradeAction; // direction; side & open/close/cover are derived by netting
