@@ -12,8 +12,17 @@ from neptune.db.models import (
     PersonORM,
     PortfolioORM,
     PositionORM,
+    TransactionORM,
 )
-from neptune.domain.models import LotEntry, Mandate, Portfolio, Position, Side, ShortType
+from neptune.domain.models import (
+    LotEntry,
+    Mandate,
+    Portfolio,
+    Position,
+    Side,
+    ShortType,
+    Transaction,
+)
 from neptune.domain.org import InvestorEntity, ManagementFirm, Person, PersonRole
 from neptune.pnl import CostBasisMethod
 
@@ -176,6 +185,68 @@ class PositionRepository:
         self.session.delete(row)
         self.session.commit()
         return True
+
+
+def _to_domain_transaction(row: TransactionORM) -> Transaction:
+    return Transaction(
+        ticker=row.ticker,
+        action=row.action,
+        quantity=row.quantity,
+        price=row.price,
+        trade_date=row.trade_date,
+        short_type=row.short_type,
+        origin=row.origin,
+        realized_pnl=row.realized_pnl,
+        effect=row.effect,
+        fee_per_share=row.fee_per_share,
+        portfolio_id=row.portfolio_id,
+        executed_at=row.executed_at,
+        id=row.id,
+    )
+
+
+class TransactionRepository:
+    """Append-only ledger of executed trades (the blotter). Records what was booked; never
+    routes anything to a venue (CLAUDE.md §2)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, tx: Transaction) -> int:
+        row = TransactionORM(
+            portfolio_id=tx.portfolio_id,
+            ticker=tx.ticker,
+            action=tx.action,
+            quantity=tx.quantity,
+            price=tx.price,
+            fee_per_share=tx.fee_per_share,
+            trade_date=tx.trade_date,
+            short_type=tx.short_type,
+            origin=tx.origin,
+            realized_pnl=tx.realized_pnl,
+            effect=tx.effect,
+        )
+        self.session.add(row)
+        self.session.commit()
+        return row.id
+
+    def list_for(self, portfolio_id: str, *, limit: int | None = None) -> list[Transaction]:
+        return self._query([portfolio_id], limit=limit)
+
+    def list_many(self, portfolio_ids: list[str], *, limit: int | None = None) -> list[Transaction]:
+        """The ledger across several books (e.g. the consolidated roll-up), newest first."""
+        return self._query(portfolio_ids, limit=limit)
+
+    def _query(self, portfolio_ids: list[str], *, limit: int | None) -> list[Transaction]:
+        stmt = (
+            select(TransactionORM)
+            .where(TransactionORM.portfolio_id.in_(portfolio_ids))
+            # Newest first: by trade date, then insertion order (executed_at can tie on the same day).
+            .order_by(TransactionORM.trade_date.desc(), TransactionORM.id.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [_to_domain_transaction(r) for r in self.session.execute(stmt).scalars()]
 
 
 class OrgRepository:

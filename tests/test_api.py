@@ -369,3 +369,30 @@ def test_hedge_approve_books_systematic_shorts(client):
     # Consolidated is read-only — can't approve into it.
     assert client.post("/portfolios/__consolidated__/hedge/approve",
                        json={"shorts": []}).status_code == 409
+
+
+def test_hedge_reapprove_covers_stale_shorts_into_the_blotter(client):
+    """Re-approving a different hedge buys-to-cover the dropped name and sell-shorts the new one,
+    and both legs land in the blotter as HEDGE-origin trades (the close is a real cover, not a
+    silent delete)."""
+    client.post(f"/portfolios/{PID}/hedge/approve", json={
+        "shorts": [{"ticker": "HDGX", "shares": 1000, "price": 50.0}],
+    })
+    r = client.post(f"/portfolios/{PID}/hedge/approve", json={
+        "shorts": [{"ticker": "NEWX", "shares": 500, "price": 80.0}],
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert body["covered"] == 1 and body["opened"] == 1  # HDGX covered, NEWX opened
+
+    # HDGX is gone from the live book; NEWX is the systematic short now.
+    live = {p["ticker"]: p for p in client.get(f"/portfolios/{PID}/positions").json()
+            if p["notional"] != 0}
+    assert "HDGX" not in live
+    assert live["NEWX"]["short_type"] == "SYSTEMATIC"
+
+    # The blotter shows the cover (BUY) and the new short (SELL), both HEDGE-origin.
+    txs = client.get(f"/portfolios/{PID}/transactions").json()
+    hedge = [t for t in txs if t["origin"] == "HEDGE"]
+    assert any(t["ticker"] == "HDGX" and t["action"] == "BUY" for t in hedge)
+    assert any(t["ticker"] == "NEWX" and t["action"] == "SELL" for t in hedge)

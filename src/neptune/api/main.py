@@ -44,6 +44,7 @@ from neptune.db.models import PositionORM
 from neptune.db.runtime import macro_session, securities_session
 from neptune.domain.models import (
     BookType, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
+    TradeOrigin,
 )
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
@@ -716,6 +717,43 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
         ]
 
 
+def _tx_dict(t) -> dict:
+    return {
+        "id": t.id,
+        "portfolio_id": t.portfolio_id,
+        "ticker": t.ticker,
+        "action": t.action.value,
+        "quantity": t.quantity,
+        "price": t.price,
+        "trade_date": t.trade_date.isoformat(),
+        "short_type": t.short_type.value,
+        "origin": t.origin.value,
+        "realized_pnl": round(t.realized_pnl, 2),
+        "effect": t.effect,
+    }
+
+
+@app.get("/portfolios/{portfolio_id}/transactions")
+def list_transactions(
+    portfolio_id: str,
+    limit: int = Query(default=200, ge=1, le=2000, description="Most recent N trades."),
+    session: Session = Depends(get_session),
+):
+    """The executed-trade ledger (blotter), newest first — desk Buy/Sells and hedge-approval
+    cover/short legs. A roll-up id returns the ledger across its constituent books. The system
+    records trades but never routes them (CLAUDE.md §2)."""
+    service = PositionService(session)
+    if portfolio_id in ROLLUP_IDS:
+        rollup = _rollup_portfolio(service, portfolio_id)
+        ids = sorted({b.id for b in service.list_portfolios()
+                      if portfolio_id == CONSOLIDATED_ID or b.mandate is rollup.mandate})
+        txs = service.transactions_many(ids, limit=limit)
+    else:
+        _require_portfolio(service, portfolio_id)  # 404 if the book doesn't exist
+        txs = service.transactions(portfolio_id, limit=limit)
+    return [_tx_dict(t) for t in txs]
+
+
 @app.post("/portfolios/{portfolio_id}/positions/{position_id}/reduce")
 def reduce_position(
     portfolio_id: str,
@@ -737,6 +775,16 @@ def reduce_position(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Blotter row: closing a long is a SELL; covering a short is a BUY.
+    is_short = position.side is Side.SHORT
+    service._record_tx(
+        portfolio_id, position.ticker,
+        TradeAction.BUY if is_short else TradeAction.SELL,
+        body.quantity, body.exit_price, body.as_of or date.today(),
+        short_type=position.short_type if is_short else ShortType.NA,
+        origin=TradeOrigin.MANUAL, realized_pnl=realised,
+        effect="Cover short" if is_short else "Sell long",
+    )
     return {"position_id": position_id, "realized_pnl": realised}
 
 
@@ -1134,21 +1182,33 @@ def approve_hedge(portfolio_id: str, body: HedgeApproveIn,
             status_code=422,
             detail="Long-only books cannot book a systematic hedge (shorting disallowed).",
         )
-    # A hedge proposal is a FULL replacement for the systematic book (residual_metrics excludes
-    # systematic shorts, so the optimizer re-sizes the whole hedge against the long book). Clear
-    # the existing systematic shorts first, so approving REPLACES the hedge rather than stacking a
-    # second one on top — otherwise repeated propose→approve cycles double the short exposure.
-    replaced = service.clear_systematic_shorts(portfolio_id)
-    # Dedupe by ticker (last wins) so an accidental duplicate row can't aggregate into 2× a name.
-    by_ticker = {s.ticker: s for s in body.shorts}
-    booked = 0
-    for s in by_ticker.values():
-        service.record_trade(
-            portfolio_id, s.ticker, Side.SHORT, ShortType.SYSTEMATIC,
-            s.shares, s.price, date.today(),
-        )
-        booked += 1
-    return {"booked": booked, "replaced": replaced, "portfolio_id": portfolio_id}
+    # A hedge proposal is a full replacement for the systematic book (residual_metrics excludes
+    # systematic shorts, so the optimizer re-sizes the whole hedge against the long book). Rather
+    # than DELETE the old hedge, reconcile by BOOKING TRADES: buy-to-cover the names being dropped
+    # or reduced (booking realized P&L) and sell-short the names being added or increased. Approving
+    # therefore closes the stale hedge as real covers — visible in the blotter — and never stacks a
+    # second hedge on top. Discretionary shorts are never touched (I-03/I-04). Recording these
+    # executions is NOT auto-execution: nothing is routed to a venue (CLAUDE.md §2).
+    by_ticker = {s.ticker: s for s in body.shorts}  # dedupe by ticker (last wins)
+    targets = {t: (s.shares, s.price) for t, s in by_ticker.items()}
+    # Cover at the current mark where we have one, so the round-trip realized P&L is real.
+    with market_data_for(session, book) as md:
+        cover_prices = {
+            p.ticker: price
+            for p in book.systematic_shorts
+            if (price := _safe_price(md, p.ticker)) is not None
+        }
+    summary = service.apply_systematic_hedge(
+        portfolio_id, targets, cover_prices, date.today()
+    )
+    return {
+        "portfolio_id": portfolio_id,
+        # ``booked`` kept for back-compat (the count of names shorted this approve).
+        "booked": summary["opened"],
+        "opened": summary["opened"],
+        "covered": summary["covered"],
+        "realized_pnl": round(summary["realized_pnl"], 2),
+    }
 
 
 @app.post("/portfolios/{portfolio_id}/hedge/frontier")
