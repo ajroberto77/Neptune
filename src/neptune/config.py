@@ -154,13 +154,17 @@ def _dotenv_values(path: str = ".env") -> dict[str, str]:
     ``.env`` for the ``NEPTUNE_``-prefixed fields, so without this a ``.env`` copied from
     ``.env.example`` (which uses bare ``DATABASE_URL=…``) would be silently ignored and the
     app would keep using the in-memory SQLite default. No extra dependency — just the four
-    keys we care about."""
+    keys we care about.
+
+    Read as ``utf-8-sig`` so a BOM is stripped: PowerShell's ``Set-Content -Encoding UTF8``
+    writes a BOM, which would otherwise corrupt the FIRST key (e.g. ``\\ufeffPORTFOLIO_DATABASE_URL``)
+    and make that one var silently fall back to the SQLite default."""
     values: dict[str, str] = {}
     if not os.path.exists(path):
         return values
-    with open(path, encoding="utf-8") as fh:
+    with open(path, encoding="utf-8-sig") as fh:
         for raw in fh:
-            line = raw.strip()
+            line = raw.strip().lstrip("﻿")  # belt-and-suspenders: strip a stray BOM too
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, val = line.partition("=")
