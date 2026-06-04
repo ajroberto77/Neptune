@@ -11,6 +11,7 @@ export default defineConfig({
       "/portfolios": "http://localhost:8000",
       "/settings": "http://localhost:8000",
       "/securities": "http://localhost:8000",
+      "/macro": "http://localhost:8000",
       "/factors": "http://localhost:8000",
       "/people": "http://localhost:8000",
       "/health": "http://localhost:8000",
