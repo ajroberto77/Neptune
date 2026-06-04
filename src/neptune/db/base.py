@@ -88,11 +88,16 @@ def init_db(target_engine=engine) -> None:
     """Create the **portfolio** tables. For the slice we use ``create_all``; production
     uses Alembic. Default target is the portfolio engine; tests pass an explicit one."""
     from neptune.db import models  # noqa: F401  (register portfolio mappers)
+    from neptune.settings_store import ConnectionRole
 
     PortfolioBase.metadata.create_all(bind=target_engine)
     # Additive bridge until Alembic: a deployed portfolio DB picks up new columns.
     _ensure_columns(target_engine, "lots", {"fee_per_share": "FLOAT DEFAULT 0"})
     _ensure_columns(target_engine, "portfolios", {"mandate": "VARCHAR DEFAULT 'LONG_SHORT'"})
+    # A DB created before MACRO existed has a native Postgres enum lacking that label;
+    # create_all never adds values to an existing enum type, so querying the MACRO role
+    # would error. Backfill any missing labels (Postgres-only; no-op on SQLite).
+    _ensure_enum_values(target_engine, "connectionrole", [r.value for r in ConnectionRole])
 
 
 def init_securities_db(target_engine=securities_engine) -> None:
@@ -115,6 +120,27 @@ def init_macro_db(target_engine=macro_engine) -> None:
     from neptune.macro import models  # noqa: F401  (register macro mappers)
 
     MacroBase.metadata.create_all(bind=target_engine)
+
+
+def _ensure_enum_values(target_engine, type_name: str, values: list[str]) -> None:
+    """Lightweight additive migration for native Postgres ENUM types: ``ALTER TYPE ... ADD
+    VALUE IF NOT EXISTS`` for any label missing from an EXISTING enum type. Needed because
+    ``create_all`` never alters an enum type once it exists, so a DB created before a new
+    enum member was added (e.g. the MACRO connection role) would reject queries on that value.
+    Postgres-only and idempotent; a no-op on SQLite (which stores enums as plain text)."""
+    if target_engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+
+    # ADD VALUE cannot run inside a transaction block, so use an AUTOCOMMIT connection.
+    with target_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        exists = conn.execute(
+            text("SELECT 1 FROM pg_type WHERE typname = :n"), {"n": type_name}
+        ).first()
+        if not exists:
+            return  # fresh DB: create_all already built the type with every current label
+        for v in values:
+            conn.execute(text(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{v}'"))
 
 
 def _ensure_columns(target_engine, table: str, columns: dict[str, str]) -> None:
