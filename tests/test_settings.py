@@ -62,6 +62,22 @@ def test_env_url_prefills_the_form_without_exposing_the_password():
     assert "password" not in masked  # the secret itself is never serialized
 
 
+def test_macro_catalog_lists_series_with_coverage(client):
+    """The catalog endpoint surfaces the ingest 'menu' (seeded on first read) with per-series
+    coverage. Before any backfill, every series shows zero points; ingestable series carry a
+    real FRED/ALFRED code, derived/licensed ones don't."""
+    body = client.get("/macro/catalog").json()
+    assert body["total"] == len(body["series"]) > 0
+    by_id = {s["series_id"]: s for s in body["series"]}
+    # A core rates series is ingestable from FRED and starts empty.
+    assert by_id["UST_10Y"]["ingestable"] is True
+    assert by_id["UST_10Y"]["source_code"] == "DGS10"
+    assert by_id["UST_10Y"]["points"] == 0
+    assert by_id["UST_10Y"]["last_date"] is None
+    # The derived short-rate splice is NOT ingested (no source code → not on the FRED menu).
+    assert by_id["SHORT_RATE"]["ingestable"] is False
+
+
 def test_credentials_status_starts_unset(client):
     rows = client.get("/settings/credentials").json()
     fred = next(r for r in rows if r["provider"] == "FRED")

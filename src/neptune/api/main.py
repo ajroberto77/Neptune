@@ -1277,6 +1277,38 @@ def set_credential(provider: str, body: ApiKeyIn, session: Session = Depends(get
         raise HTTPException(status_code=404, detail=f"unknown provider {provider}") from None
 
 
+@app.get("/macro/catalog")
+def macro_catalog(session: Session = Depends(get_session)):
+    """The registered macro series (the ingest 'menu') plus per-series coverage so the UI can
+    show what's available and what's actually loaded. Seeds the registry on first read so the
+    catalog is visible even before any backfill. ``ingestable`` flags series that the backfill
+    pulls (a real FRED/ALFRED code, vs derived/licensed series)."""
+    from neptune.macro import repository as macro_repo
+
+    with macro_session(session) as mac:
+        seed_macro_catalog(mac)  # idempotent — ensures the menu exists pre-backfill
+        series = macro_repo.list_series(mac)
+        cov = macro_repo.coverage(mac)
+        rows = []
+        for s in series:
+            c = cov.get(s.series_id, {"points": 0, "last_date": None})
+            rows.append({
+                "series_id": s.series_id,
+                "name": s.name,
+                "category": s.category,
+                "series_class": s.series_class.value,
+                "frequency": s.frequency.value,
+                "units": s.units,
+                "source": s.source,
+                "source_code": s.source_code,
+                "description": s.description,
+                "ingestable": bool(s.source_code) and s.source in ("FRED", "ALFRED"),
+                "points": c["points"],
+                "last_date": c["last_date"],
+            })
+    return {"series": rows, "total": len(rows)}
+
+
 class MacroIngestIn(BaseModel):
     """Backfill the macro catalog from FRED/ALFRED. ``start_year`` bounds the history
     (default 2000); ``series`` optionally restricts to a subset of series ids."""

@@ -204,6 +204,25 @@ export function ingestMacro(startYear = 2000): Promise<MacroIngestResult> {
   });
 }
 
+export interface MacroCatalogRow {
+  series_id: string;
+  name: string;
+  category: string;
+  series_class: string;
+  frequency: string;
+  units: string;
+  source: string;
+  source_code: string | null;
+  description: string;
+  ingestable: boolean;
+  points: number;
+  last_date: string | null;
+}
+
+export function fetchMacroCatalog(): Promise<{ series: MacroCatalogRow[]; total: number }> {
+  return getJSON<{ series: MacroCatalogRow[]; total: number }>(`/macro/catalog`);
+}
+
 export function syncUniverse(): Promise<SyncResult> {
   return getJSON<SyncResult>(`/settings/universe/sync`, { method: "POST" });
 }

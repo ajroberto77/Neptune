@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from neptune.macro.models import (
@@ -104,6 +104,33 @@ def list_series(
     if category is not None:
         stmt = stmt.where(MacroSeries.category == category)
     return list(session.execute(stmt.order_by(MacroSeries.series_id)).scalars())
+
+
+def coverage(session: Session) -> dict[str, dict]:
+    """Per-series ingestion coverage: ``{series_id: {"points": int, "last_date": date|None}}``.
+    MARKET series count flat observations; ECON series count distinct reference_dates across
+    their vintages (the number of periods known, not the number of revisions). One aggregate
+    query per fact table — cheap regardless of catalog size."""
+    out: dict[str, dict] = {}
+    obs = session.execute(
+        select(
+            MacroObservation.series_id,
+            func.count(MacroObservation.id),
+            func.max(MacroObservation.obs_date),
+        ).group_by(MacroObservation.series_id)
+    ).all()
+    for sid, n, last in obs:
+        out[sid] = {"points": int(n), "last_date": last.isoformat() if last else None}
+    vint = session.execute(
+        select(
+            MacroVintage.series_id,
+            func.count(func.distinct(MacroVintage.reference_date)),
+            func.max(MacroVintage.reference_date),
+        ).group_by(MacroVintage.series_id)
+    ).all()
+    for sid, n, last in vint:
+        out[sid] = {"points": int(n), "last_date": last.isoformat() if last else None}
+    return out
 
 
 # --- MARKET observations (flat, not revised) -------------------------------------

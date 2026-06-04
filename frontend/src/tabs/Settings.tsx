@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import type { BetaDiagnostics, ConnectionRow, CredentialRow } from "../types";
-import type { SecuritiesHealth } from "../api/client";
+import type { MacroCatalogRow, SecuritiesHealth } from "../api/client";
 import {
   fetchBetaDiagnostics,
   fetchConnections,
   fetchCredentials,
+  fetchMacroCatalog,
   fetchSecuritiesHealth,
   ingestFactors,
   ingestMacro,
@@ -68,6 +69,7 @@ export function Settings() {
   const [creds, setCreds] = useState<CredentialRow[]>([]);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [keyStatus, setKeyStatus] = useState<Record<string, string>>({});
+  const [catalog, setCatalog] = useState<MacroCatalogRow[]>([]);
 
   function load() {
     fetchConnections()
@@ -86,9 +88,16 @@ export function Settings() {
       .catch((e) => setError(String(e)));
   }
 
+  function loadCatalog() {
+    fetchMacroCatalog()
+      .then((c) => setCatalog(c.series))
+      .catch(() => setCatalog([])); // catalog is informational — don't blank the page on failure
+  }
+
   useEffect(() => {
     load();
     loadCreds();
+    loadCatalog();
   }, []);
 
   async function handleSaveKey(provider: string) {
@@ -190,6 +199,7 @@ export function Settings() {
         MACRO: `Ingested ${r.total} points across ${r.series} macro series`,
       }));
       loadCreds();
+      loadCatalog(); // refresh coverage so the catalog table shows the new points/last-date
     } catch (e) {
       setStatus((s) => ({ ...s, MACRO: String(e) }));
     }
@@ -278,6 +288,61 @@ export function Settings() {
           ))}
         </div>
       </div>
+
+      {catalog.length > 0 && (
+        <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+          <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
+            Macro series catalog ({catalog.length})
+          </h3>
+          <p className="mb-3 text-xs text-ocean-muted">
+            Every series the macro backfill can pull (FRED for market/rates/credit, ALFRED for
+            point-in-time economic vintages). "Backfill macro" on the Macro DB card below loads
+            them since 2000. "Loaded" shows what's already in your macro DB.
+          </p>
+          <div className="max-h-96 overflow-auto rounded border border-ocean-border">
+            <table className="w-full text-left text-xs">
+              <thead className="sticky top-0 bg-ocean-bg text-ocean-muted">
+                <tr>
+                  <th className="px-3 py-2">Series</th>
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2">Freq</th>
+                  <th className="px-3 py-2">Source</th>
+                  <th className="px-3 py-2 text-right">Loaded</th>
+                  <th className="px-3 py-2">Last date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {catalog.map((s) => (
+                  <tr key={s.series_id} className="border-t border-ocean-border/50">
+                    <td className="px-3 py-1.5 font-mono text-ocean-text">{s.series_id}</td>
+                    <td className="px-3 py-1.5 text-ocean-muted">{s.name}</td>
+                    <td className="px-3 py-1.5 text-ocean-muted">{s.category}</td>
+                    <td className="px-3 py-1.5 text-ocean-muted">{s.frequency}</td>
+                    <td className="px-3 py-1.5 text-ocean-muted">
+                      {s.ingestable ? (
+                        <span className="font-mono">{s.source_code}</span>
+                      ) : (
+                        <span className="italic">{s.source} (not ingested)</span>
+                      )}
+                    </td>
+                    <td
+                      className={`px-3 py-1.5 text-right font-mono ${
+                        s.points > 0 ? "text-status-ok" : "text-ocean-muted"
+                      }`}
+                    >
+                      {s.points > 0 ? s.points.toLocaleString() : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-ocean-muted">
+                      {s.last_date ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {rows.map((row) => {
         const f = forms[row.role] ?? EMPTY;

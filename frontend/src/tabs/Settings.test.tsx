@@ -59,6 +59,26 @@ vi.mock("../api/client", () => ({
   ingestFactors: () => ingestFactors(),
   ingestMacro: (startYear?: number) =>
     Promise.resolve({ ingested: { UST_10Y: 100 }, total: 100, series: 1, startYear }),
+  fetchMacroCatalog: () =>
+    Promise.resolve({
+      series: [
+        {
+          series_id: "UST_10Y",
+          name: "UST 10Y CMT yield",
+          category: "RATES",
+          series_class: "MARKET",
+          frequency: "DAILY",
+          units: "percent",
+          source: "FRED",
+          source_code: "DGS10",
+          description: "",
+          ingestable: true,
+          points: 0,
+          last_date: null,
+        },
+      ],
+      total: 1,
+    }),
 }));
 
 describe("Settings", () => {
