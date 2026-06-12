@@ -17,6 +17,10 @@ import type {
 // cached after the first lookup.
 interface NeptuneBridge {
   getApiBaseUrl(): Promise<string>;
+  // Frameless-window controls (Electron only; absent in a plain browser).
+  minimizeWindow?(): Promise<void>;
+  toggleMaximizeWindow?(): Promise<boolean>;
+  closeWindow?(): Promise<void>;
 }
 declare global {
   interface Window {

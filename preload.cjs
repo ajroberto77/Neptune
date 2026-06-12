@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('neptune', {
     return () => ipcRenderer.removeListener('api:log', handler);
   },
 
+  // ── Window controls (frameless TitleBar) ─────────────────────────────────
+  minimizeWindow:       () => ipcRenderer.invoke('win:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('win:toggleMaximize'),
+  closeWindow:          () => ipcRenderer.invoke('win:close'),
+
   // ── Misc ────────────────────────────────────────────────────────────────
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   pickFile:     (options) => ipcRenderer.invoke('dialog:openFile', options),

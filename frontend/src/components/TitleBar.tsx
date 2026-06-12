@@ -42,7 +42,7 @@ function Gem() {
 export function TitleBar({
   status = "ready",
   statusText,
-  subtitle = "Iridium Capital Management",
+  subtitle = "Portfolio and Risk Management Platform",
   onSettings,
 }: Props) {
   const pill =
@@ -54,8 +54,14 @@ export function TitleBar({
         ? "border-status-ok/50 text-status-ok"
         : "border-ocean-border text-ocean-muted";
 
+  // Window controls only exist when running inside the Electron shell (frameless window).
+  const bridge = typeof window !== "undefined" ? window.neptune : undefined;
+  const hasWindowControls = Boolean(bridge?.closeWindow);
+  const ctrlBtn =
+    "app-no-drag flex h-8 w-11 items-center justify-center text-ocean-muted transition hover:bg-white/10 hover:text-white";
+
   return (
-    <div className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-ocean-border bg-ocean-panel px-4">
+    <div className="app-drag flex h-12 flex-shrink-0 items-center gap-3 border-b border-ocean-border bg-ocean-panel pl-4">
       <Gem />
       <span className="font-mono text-lg font-bold uppercase tracking-[0.2em] text-white">
         Neptune
@@ -64,7 +70,7 @@ export function TitleBar({
       <span className="font-display text-sm font-light text-ocean-muted">{subtitle}</span>
       <div className="flex-1" />
       <span
-        className={`rounded-full border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${pillCls}`}
+        className={`app-no-drag rounded-full border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${pillCls}`}
         aria-label="backend-status"
       >
         {pill}
@@ -73,10 +79,46 @@ export function TitleBar({
         onClick={onSettings}
         title="Settings"
         aria-label="open-settings"
-        className="flex h-8 w-8 items-center justify-center rounded text-lg text-ocean-muted transition hover:bg-white/10 hover:text-white"
+        className="app-no-drag mr-1 flex h-8 w-8 items-center justify-center rounded text-lg text-ocean-muted transition hover:bg-white/10 hover:text-white"
       >
         ⚙
       </button>
+
+      {hasWindowControls && (
+        <div className="flex items-center">
+          <button
+            onClick={() => bridge?.minimizeWindow?.()}
+            title="Minimize"
+            aria-label="window-minimize"
+            className={ctrlBtn}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+          <button
+            onClick={() => bridge?.toggleMaximizeWindow?.()}
+            title="Maximize"
+            aria-label="window-maximize"
+            className={ctrlBtn}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <rect x="1.2" y="1.2" width="7.6" height="7.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+          <button
+            onClick={() => bridge?.closeWindow?.()}
+            title="Close"
+            aria-label="window-close"
+            className="app-no-drag flex h-8 w-11 items-center justify-center text-ocean-muted transition hover:bg-status-breach hover:text-white"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

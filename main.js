@@ -188,6 +188,9 @@ function createWindow() {
     width: 1280,
     height: 860,
     backgroundColor: '#0e1b2a',
+    // Frameless: the app draws its own TitleBar (with window controls) like the rest of the
+    // Iridium suite. `-webkit-app-region: drag` on that bar moves the window.
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -254,6 +257,19 @@ function registerIpc() {
       });
     });
   });
+
+  // Window controls for the frameless TitleBar (the OS chrome is gone, so the app drives these).
+  ipcMain.handle('win:minimize', () => mainWindow?.minimize());
+  ipcMain.handle('win:toggleMaximize', () => {
+    if (!mainWindow) return false;
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+      return false;
+    }
+    mainWindow.maximize();
+    return true;
+  });
+  ipcMain.handle('win:close', () => mainWindow?.close());
 
   ipcMain.handle('shell:openExternal', (_evt, url) => shell.openExternal(url));
 

@@ -33,6 +33,7 @@ import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 import { TitleBar } from "./components/TitleBar";
 import { TabBar } from "./components/TabBar";
+import { PortfolioSidebar } from "./components/PortfolioSidebar";
 
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -293,6 +294,16 @@ export default function App() {
   const longShortBooks = portfolios.filter((p) => p.mandate === "LONG_SHORT");
   const longOnlyBooks = portfolios.filter((p) => p.mandate === "LONG_ONLY");
 
+  // Display name for the selected book/roll-up (shown atop the Portfolio holdings pane).
+  const selectedName =
+    portfolioId === CONSOLIDATED_ID
+      ? "Consolidated Positions"
+      : portfolioId === LONGSHORT_GROUP_ID
+        ? "Long / Short"
+        : portfolioId === LONGONLY_GROUP_ID
+          ? "Long Only"
+          : (portfolios.find((p) => p.id === portfolioId)?.name ?? portfolioId);
+
   // Tabs with a background job in flight get a pulsing dot; the title-bar pill summarizes state.
   const runningTabs = new Set<string>();
   if (proposing || frontierLoading) runningTabs.add("Hedge");
@@ -364,57 +375,34 @@ export default function App() {
               />
             )}
             {tab === "Portfolio" && (
-              <div className="space-y-6">
-                {/* The portfolio selector lives on the Portfolio page. The roll-ups (bold) are
-                    selectable views: Consolidated = every book; Long / Short and Long Only roll
-                    up their group. Individual books sit (indented) under their group with a
-                    (L/S) or (LO) tag. The choice persists across the other tabs. */}
-                <label className="flex items-center gap-2 text-xs text-ocean-muted">
-                  Portfolio
-                  <select
-                    className="np-input py-1"
-                    value={portfolioId}
-                    onChange={(e) => setPortfolioId(e.target.value)}
-                  >
-                    <option value={CONSOLIDATED_ID} style={{ fontWeight: 700 }}>
-                      Consolidated
-                    </option>
-                    {longShortBooks.length > 0 && (
-                      <>
-                        <option value={LONGSHORT_GROUP_ID} style={{ fontWeight: 700 }}>
-                          Long / Short
-                        </option>
-                        {longShortBooks.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {"  "}
-                            {p.name} (L/S)
-                          </option>
-                        ))}
-                      </>
-                    )}
-                    {longOnlyBooks.length > 0 && (
-                      <>
-                        <option value={LONGONLY_GROUP_ID} style={{ fontWeight: 700 }}>
-                          Long Only
-                        </option>
-                        {longOnlyBooks.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {"  "}
-                            {p.name} (LO)
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                </label>
-                <Portfolio
-                  positions={positions}
-                  refreshMins={refreshMins}
-                  onChangeMins={changeRefreshMins}
-                  onRefreshNow={handleRefreshPrices}
-                  lastPriced={lastPriced}
-                  pricing={pricing}
+              <div className="flex items-start gap-6">
+                {/* Left rail: pick the book/roll-up to view. Consolidated is pinned at the top;
+                    real books sit under their mandate roll-up. Selection persists across tabs. */}
+                <PortfolioSidebar
+                  longShortBooks={longShortBooks}
+                  longOnlyBooks={longOnlyBooks}
+                  selectedId={portfolioId}
+                  onSelect={setPortfolioId}
+                  consolidatedId={CONSOLIDATED_ID}
+                  longShortGroupId={LONGSHORT_GROUP_ID}
+                  longOnlyGroupId={LONGONLY_GROUP_ID}
                 />
+                <div className="min-w-0 flex-1 space-y-4">
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-white">{selectedName}</h2>
+                    <p className="text-xs text-ocean-muted">
+                      {positions.length} position{positions.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <Portfolio
+                    positions={positions}
+                    refreshMins={refreshMins}
+                    onChangeMins={changeRefreshMins}
+                    onRefreshNow={handleRefreshPrices}
+                    lastPriced={lastPriced}
+                    pricing={pricing}
+                  />
+                </div>
               </div>
             )}
             {tab === "Trade" && (

@@ -12,7 +12,7 @@ interface Props {
 
 export function TabBar({ tabs, active, onChange, running }: Props) {
   return (
-    <div className="flex flex-shrink-0 items-center overflow-x-auto border-b border-ocean-border bg-ocean-bg">
+    <div className="app-drag flex flex-shrink-0 items-center overflow-x-auto border-b border-ocean-border bg-ocean-bg">
       {tabs.map((tab) => {
         const isActive = tab === active;
         return (
@@ -20,7 +20,7 @@ export function TabBar({ tabs, active, onChange, running }: Props) {
             key={tab}
             onClick={() => onChange(tab)}
             aria-current={isActive ? "page" : undefined}
-            className={`flex h-9 flex-shrink-0 items-center gap-1.5 border-b-2 px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${
+            className={`app-no-drag flex h-9 flex-shrink-0 items-center gap-1.5 border-b-2 px-4 text-[11px] font-bold uppercase tracking-[0.12em] transition ${
               isActive
                 ? "border-ocean-accent text-ocean-accent"
                 : "border-transparent text-ocean-muted hover:text-slate-200"
