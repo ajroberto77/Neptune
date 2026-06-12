@@ -3,6 +3,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
+  // Relative asset paths so a production build loads correctly from a file:// origin when the
+  // Electron shell does loadFile(frontend/dist/index.html). Harmless for the dev server and the
+  // plain-browser deploy. (Without this, file:// requests /assets/* from the FS root → blank page.)
+  base: "./",
   plugins: [react()],
   server: {
     // Proxy API calls to the FastAPI backend during development. Every backend route

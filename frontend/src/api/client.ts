@@ -9,8 +9,37 @@ import type {
   TransactionRow,
 } from "../types";
 
+// ── Backend base URL resolution ───────────────────────────────────────────────
+// In a plain browser (dev), requests are relative and Vite's proxy forwards them to the
+// FastAPI backend on :8000 — so the base is "". Inside the Electron shell there is no proxy
+// (and a packaged build loads from a file:// origin), so we resolve an absolute base from the
+// preload bridge (window.neptune.getApiBaseUrl(), e.g. http://127.0.0.1:8433). The result is
+// cached after the first lookup.
+interface NeptuneBridge {
+  getApiBaseUrl(): Promise<string>;
+}
+declare global {
+  interface Window {
+    neptune?: NeptuneBridge;
+  }
+}
+
+let _base: string | null = null;
+
+async function apiBaseUrl(): Promise<string> {
+  if (_base !== null) return _base;
+  try {
+    const bridge = typeof window !== "undefined" ? window.neptune : undefined;
+    _base = bridge ? (await bridge.getApiBaseUrl()) || "" : "";
+  } catch {
+    _base = "";
+  }
+  return _base;
+}
+
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const base = await apiBaseUrl();
+  const res = await fetch(`${base}${url}`, init);
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${detail}`);

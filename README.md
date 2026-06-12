@@ -53,6 +53,31 @@ Press **Ctrl-C** once to stop both. Run it from your activated venv (so `uvicorn
 first run auto-installs the frontend deps if `frontend/node_modules` is missing (`npm`
 required). To run the pieces separately, use the quickstarts below.
 
+## Desktop app — Electron shell
+
+Neptune also runs as a desktop app inside the same Electron shell used by Iridium Backend /
+Mercury / CATO. The shell (`main.js` + `preload.cjs`) creates the window, **spawns the FastAPI
+backend as a Python sidecar** (`scripts/neptune_api.py` on `127.0.0.1:8433` — chosen so it
+coexists with Iridium Backend on 8432), and injects the database URLs from a settings file in
+the OS `userData` dir as env vars (`PORTFOLIO_/SECURITIES_/MACRO_/UNIVERSE_DATABASE_URL`,
+`FRED_API_KEY`). Like the other apps, it ships a **local `venv`** rather than a frozen binary —
+no PyInstaller.
+
+```bash
+# one-time: a venv next to the app, with Neptune installed (main.js auto-detects ./venv)
+python3 -m venv venv && ./venv/bin/python -m pip install -e ".[dev]"
+npm install            # root: Electron shell deps (frontend deps install on first dev run)
+
+npm run dev            # Vite (:5173) + Electron, hot-reload; the renderer talks to :8433
+# or a production-style window (built frontend, no dev server):
+npm run build && npm run electron
+```
+
+Neptune owns the **portfolio** database (read-write); securities/macro are **read-only** (Iridium
+Backend writes them). The renderer resolves the backend URL via the preload bridge
+(`window.neptune.getApiBaseUrl()`), so the same frontend also runs in a plain browser behind the
+Vite proxy (`python run.py`) unchanged.
+
 ## Backend — quickstart
 
 ```bash
