@@ -13,6 +13,7 @@ PENDING_APPROVAL proposal (invariant I-01).
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager, contextmanager
 
 import numpy as np
@@ -216,19 +217,33 @@ def _pnl_dict(p: PnL) -> dict:
 
 # --- lifespan: create tables + seed the golden portfolio -------------------------
 
-def seed_golden(session: Session, *, with_demo_positions: bool = True) -> None:
-    """Ensure the golden portfolio + ownership graph exist. Demo positions
-    (AAA/BBB/CCC/DDD) are seeded only when ``with_demo_positions`` — a real book starts empty
-    so a real benchmark can price every name (see ``market_data_for``)."""
+def seed_golden(
+    session: Session, *, with_demo_positions: bool = True, with_book: bool = True
+) -> None:
+    """Ensure the Iridium ownership scaffolding exists, and (optionally) the golden book.
+
+    The ownership graph (firm ``IRIDIUM`` + internal investor entity + one PM) is ALWAYS
+    seeded — idempotently — so the add-portfolio form's ownership pickers (firm / investor
+    entity / lead PM) have something to select even on a fresh, empty database.
+
+    ``with_book`` controls whether the golden ``IRIDIUM-CORE`` book itself is created:
+    production starts with **no book** (``with_book=False``) so the user is forced to add
+    their first portfolio; tests/demo seed the book. Demo positions (AAA/BBB/CCC/DDD) are
+    added only when ``with_demo_positions`` — a real book starts empty so a real benchmark can
+    price every name (see ``market_data_for``)."""
     service = PositionService(session)
+    # Ownership scaffolding — idempotent (only create it the first time).
+    if service.get_firm("IRIDIUM") is None:
+        service.create_firm("IRIDIUM", "Iridium Capital Management", is_internal=True)
+        service.create_person("pm-iridium", "IRIDIUM", "Lead PM", PersonRole.PM)
+        service.create_investor_entity("IRIDIUM-FUND", "IRIDIUM", "Iridium Master Fund")
+    if not with_book:
+        return  # empty start: the user adds the first book themselves
     pid = GOLDEN_PORTFOLIO["portfolio_id"]
     if service.get_portfolio(pid) is not None:
         return
     # The golden book belongs to Iridium (the internal management firm), runs for an
     # internal investor entity, and is led by one PM — exercising the ownership graph.
-    service.create_firm("IRIDIUM", "Iridium Capital Management", is_internal=True)
-    service.create_person("pm-iridium", "IRIDIUM", "Lead PM", PersonRole.PM)
-    service.create_investor_entity("IRIDIUM-FUND", "IRIDIUM", "Iridium Master Fund")
     service.create_portfolio(
         pid, GOLDEN_PORTFOLIO["name"],
         firm_id="IRIDIUM", investor_entity_id="IRIDIUM-FUND", lead_pm_ids=["pm-iridium"],
@@ -261,9 +276,16 @@ async def lifespan(app: FastAPI):
     init_securities_db()  # create the market-data schema too (idempotent)
     init_macro_db()       # create the macro-data schema too (idempotent)
     with SessionLocal() as session:
-        seed_golden(session, with_demo_positions=settings.seed_demo_positions)
+        # Production (seed_demo_positions=False) starts with the ownership scaffolding but NO
+        # book — the user is forced to add their first portfolio. Tests/demo seed the golden
+        # book (and its demo positions). An existing book in a real DB is left untouched.
+        seed_golden(
+            session,
+            with_demo_positions=settings.seed_demo_positions,
+            with_book=settings.seed_demo_positions,
+        )
         if not settings.seed_demo_positions:
-            removed = remove_demo_positions(session)  # clean an existing book
+            removed = remove_demo_positions(session)  # clean an existing legacy book
             if removed:
                 logging.getLogger(__name__).info("removed %d demo position(s)", removed)
     start_scheduler()  # always-on price refresh (no-op if apscheduler isn't installed)
@@ -581,14 +603,21 @@ def _safe_prev_close(md, ticker: str) -> float | None:
 
 
 class PortfolioIn(BaseModel):
-    """Create a portfolio (book). id is a short slug; the rest are optional ownership links."""
+    """Create a portfolio (book). ``id`` is a short slug — when omitted it's derived from the
+    name; the rest are optional ownership links."""
 
-    id: str
+    id: str | None = None
     name: str
     mandate: str = "LONG_SHORT"  # or "LONG_ONLY" (no shorting)
     firm_id: str | None = None
     investor_entity_id: str | None = None
     lead_pm_ids: list[str] = Field(default_factory=list)
+
+
+def _slugify(name: str) -> str:
+    """A short, stable book id from a display name (e.g. 'Iridium Core' → 'iridium-core')."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "book"
 
 
 @app.get("/portfolios")
@@ -606,15 +635,71 @@ def list_portfolios(session: Session = Depends(get_session)):
 @app.post("/portfolios", status_code=201)
 def create_portfolio(body: PortfolioIn, session: Session = Depends(get_session)):
     svc = PositionService(session)
-    if svc.get_portfolio(body.id) is not None:
-        raise HTTPException(status_code=409, detail=f"portfolio {body.id} already exists")
+    pid = body.id or _slugify(body.name)
+    if svc.get_portfolio(pid) is not None:
+        raise HTTPException(status_code=409, detail=f"portfolio {pid} already exists")
     mandate = Mandate(body.mandate) if body.mandate else Mandate.LONG_SHORT
     kwargs = {k: v for k, v in (
         ("firm_id", body.firm_id), ("investor_entity_id", body.investor_entity_id),
         ("lead_pm_ids", body.lead_pm_ids),
     ) if v}
-    p = svc.create_portfolio(body.id, body.name, mandate=mandate.value, **kwargs)
+    try:
+        p = svc.create_portfolio(pid, body.name, mandate=mandate.value, **kwargs)
+    except IntegrityError as exc:
+        # A bad ownership link (unknown firm / entity / PM id) violates a foreign key.
+        raise HTTPException(
+            status_code=422, detail="invalid ownership link (firm, entity, or PM id)"
+        ) from exc
     return {"id": p.id, "name": p.name, "mandate": p.mandate.value}
+
+
+@app.delete("/portfolios/{portfolio_id}")
+def delete_portfolio(portfolio_id: str, session: Session = Depends(get_session)):
+    """Remove a book. Roll-up views are virtual (nothing to delete); a book that still holds
+    open positions is refused (409) — flatten it first. Deleting a book is bookkeeping only;
+    it never routes or unwinds anything at a venue (CLAUDE.md §2)."""
+    svc = PositionService(session)
+    if portfolio_id in ROLLUP_IDS:
+        raise HTTPException(
+            status_code=409, detail="Roll-up views are virtual; there is nothing to delete."
+        )
+    if svc.get_portfolio(portfolio_id) is None:
+        raise HTTPException(status_code=404, detail=f"portfolio {portfolio_id} not found")
+    try:
+        svc.delete_portfolio(portfolio_id)
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"deleted": portfolio_id}
+
+
+@app.get("/firms")
+def list_firms(session: Session = Depends(get_session)):
+    """Management firms, to populate the add-portfolio ownership picker."""
+    svc = PositionService(session)
+    return [
+        {"id": f.id, "name": f.name, "is_internal": f.is_internal} for f in svc.list_firms()
+    ]
+
+
+@app.get("/people")
+def list_people(session: Session = Depends(get_session)):
+    """Firm staff (PM / analyst / CIO / admin), to populate the lead-PM picker."""
+    svc = PositionService(session)
+    return [
+        {"id": p.id, "firm_id": p.firm_id, "name": p.name, "role": p.role.value,
+         "email": p.email, "is_active": p.is_active}
+        for p in svc.list_people()
+    ]
+
+
+@app.get("/investor-entities")
+def list_investor_entities(session: Session = Depends(get_session)):
+    """Client/investor entities a book can belong to, for the ownership picker."""
+    svc = PositionService(session)
+    return [
+        {"id": e.id, "firm_id": e.firm_id, "name": e.name, "base_currency": e.base_currency}
+        for e in svc.list_investor_entities()
+    ]
 
 
 class PersonIn(BaseModel):

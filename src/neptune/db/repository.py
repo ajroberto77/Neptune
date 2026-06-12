@@ -186,6 +186,21 @@ class PositionRepository:
         self.session.commit()
         return True
 
+    def delete_portfolio(self, portfolio_id: str) -> bool:
+        """Delete a book and everything that hangs off it. Positions→lots and book_manager
+        links cascade via the ORM relationships; the blotter (``transactions``) references the
+        book by FK but is NOT an ORM relationship, so its rows don't cascade — delete them
+        explicitly first. Returns False if the book doesn't exist."""
+        row = self.session.get(PortfolioORM, portfolio_id)
+        if row is None:
+            return False
+        self.session.query(TransactionORM).filter(
+            TransactionORM.portfolio_id == portfolio_id
+        ).delete(synchronize_session=False)
+        self.session.delete(row)  # positions→lots and book_managers cascade
+        self.session.commit()
+        return True
+
 
 def _to_domain_transaction(row: TransactionORM) -> Transaction:
     return Transaction(
@@ -254,6 +269,29 @@ class OrgRepository:
 
     def __init__(self, session: Session):
         self.session = session
+
+    def get_firm(self, firm_id: str) -> ManagementFirm | None:
+        row = self.session.get(ManagementFirmORM, firm_id)
+        return (
+            ManagementFirm(row.id, row.name, row.is_internal, row.subscription_tier)
+            if row else None
+        )
+
+    def list_firms(self) -> list[ManagementFirm]:
+        rows = self.session.scalars(
+            select(ManagementFirmORM).order_by(ManagementFirmORM.id)
+        ).all()
+        return [ManagementFirm(r.id, r.name, r.is_internal, r.subscription_tier) for r in rows]
+
+    def list_people(self) -> list[Person]:
+        rows = self.session.scalars(select(PersonORM).order_by(PersonORM.id)).all()
+        return [Person(r.id, r.firm_id, r.name, r.role, r.email, r.is_active) for r in rows]
+
+    def list_investor_entities(self) -> list[InvestorEntity]:
+        rows = self.session.scalars(
+            select(InvestorEntityORM).order_by(InvestorEntityORM.id)
+        ).all()
+        return [InvestorEntity(r.id, r.firm_id, r.name, r.base_currency) for r in rows]
 
     def create_firm(
         self, firm_id: str, name: str, is_internal: bool = False,

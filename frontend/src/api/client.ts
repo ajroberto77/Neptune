@@ -104,10 +104,65 @@ export interface PortfolioMeta {
   id: string;
   name: string;
   mandate: "LONG_SHORT" | "LONG_ONLY";
+  firm_id?: string | null;
+  investor_entity_id?: string | null;
+  lead_pm_ids?: string[];
 }
 
 export function fetchPortfolios(): Promise<PortfolioMeta[]> {
   return getJSON<PortfolioMeta[]>("/portfolios");
+}
+
+export interface PortfolioInput {
+  name: string;
+  mandate: "LONG_SHORT" | "LONG_ONLY";
+  firm_id?: string | null;
+  investor_entity_id?: string | null;
+  lead_pm_ids?: string[];
+}
+
+/** Create a book. The id is derived server-side from the name when omitted. */
+export function createPortfolio(body: PortfolioInput): Promise<PortfolioMeta> {
+  return getJSON<PortfolioMeta>("/portfolios", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Remove a book. The server refuses (409) a book that still holds open positions. */
+export function deletePortfolio(id: string): Promise<{ deleted: string }> {
+  return getJSON(`/portfolios/${id}`, { method: "DELETE" });
+}
+
+export interface FirmRow {
+  id: string;
+  name: string;
+  is_internal: boolean;
+}
+export interface PersonRow {
+  id: string;
+  firm_id: string;
+  name: string;
+  role: string;
+  email: string | null;
+  is_active: boolean;
+}
+export interface EntityRow {
+  id: string;
+  firm_id: string;
+  name: string;
+  base_currency: string;
+}
+
+export function fetchFirms(): Promise<FirmRow[]> {
+  return getJSON<FirmRow[]>("/firms");
+}
+export function fetchPeople(): Promise<PersonRow[]> {
+  return getJSON<PersonRow[]>("/people");
+}
+export function fetchEntities(): Promise<EntityRow[]> {
+  return getJSON<EntityRow[]>("/investor-entities");
 }
 
 export function approveHedge(

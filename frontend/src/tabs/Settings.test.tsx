@@ -35,7 +35,27 @@ const saveCredential = vi.fn(async (_provider: string, _body: { api_key: string 
   source: "stored" as const,
 }));
 
+const createPortfolio = vi.fn(
+  async (body: { name: string; mandate?: string; lead_pm_ids?: string[] }) => ({
+    id: "new-book",
+    name: body.name,
+    mandate: "LONG_SHORT" as const,
+  }),
+);
+const deletePortfolio = vi.fn(async (id: string) => ({ deleted: id }));
+let portfolioList: { id: string; name: string; mandate: "LONG_SHORT" | "LONG_ONLY"; lead_pm_ids?: string[] }[] = [];
+
 vi.mock("../api/client", () => ({
+  createPortfolio: (body: { name: string }) => createPortfolio(body),
+  deletePortfolio: (id: string) => deletePortfolio(id),
+  fetchPortfolios: () => Promise.resolve(portfolioList),
+  fetchFirms: () => Promise.resolve([{ id: "IRIDIUM", name: "Iridium", is_internal: true }]),
+  fetchPeople: () =>
+    Promise.resolve([
+      { id: "pm-iridium", firm_id: "IRIDIUM", name: "Lead PM", role: "PM", email: null, is_active: true },
+    ]),
+  fetchEntities: () =>
+    Promise.resolve([{ id: "IRIDIUM-FUND", firm_id: "IRIDIUM", name: "Iridium Fund", base_currency: "USD" }]),
   fetchConnections: () => Promise.resolve(rows),
   fetchCredentials: () =>
     Promise.resolve([{ provider: "FRED", has_key: false, source: "none" }]),
@@ -89,6 +109,9 @@ describe("Settings", () => {
     ingestPrices.mockClear();
     ingestFactors.mockClear();
     saveCredential.mockClear();
+    createPortfolio.mockClear();
+    deletePortfolio.mockClear();
+    portfolioList = [];
   });
 
   it("renders all three connection roles and flags the bootstrap DB", async () => {
@@ -141,6 +164,37 @@ describe("Settings", () => {
     expect(
       await screen.findByText(/Ingested 756 factor observations/),
     ).toBeInTheDocument();
+  });
+
+  it("shows an empty-state and adds a portfolio with ownership fields", async () => {
+    const onChanged = vi.fn();
+    render(<Settings onPortfoliosChanged={onChanged} />);
+    expect(await screen.findByText(/No portfolios yet/)).toBeInTheDocument();
+    // Fill the full-ownership add form and submit.
+    fireEvent.change(screen.getByLabelText("new-portfolio-name"), {
+      target: { value: "Macro Alpha" },
+    });
+    fireEvent.change(screen.getByLabelText("new-portfolio-pm"), {
+      target: { value: "pm-iridium" },
+    });
+    fireEvent.click(screen.getByText("Add portfolio"));
+    await waitFor(() => expect(createPortfolio).toHaveBeenCalledOnce());
+    const body = createPortfolio.mock.calls[0][0];
+    expect(body.name).toBe("Macro Alpha");
+    expect(body.lead_pm_ids).toEqual(["pm-iridium"]);
+    expect(onChanged).toHaveBeenCalled(); // the app refreshes its switcher
+  });
+
+  it("lists a book and removes it after confirmation", async () => {
+    portfolioList = [
+      { id: "macro-alpha", name: "Macro Alpha", mandate: "LONG_SHORT", lead_pm_ids: ["pm-iridium"] },
+    ];
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<Settings />);
+    expect(await screen.findByText("Macro Alpha")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Remove"));
+    await waitFor(() => expect(deletePortfolio).toHaveBeenCalledWith("macro-alpha"));
+    confirmSpy.mockRestore();
   });
 
   it("saves a FRED API key (write-only) and links to where to get one", async () => {

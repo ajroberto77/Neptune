@@ -62,9 +62,9 @@ export default function App() {
   const [pricing, setPricing] = useState(false);
   const [lastPriced, setLastPriced] = useState<string | null>(null);
 
-  // Load the portfolio list (for the switcher) + the server refresh interval, once.
-  useEffect(() => {
-    fetchPortfolios()
+  // Load the portfolio list (for the switcher). Reused after a book is added/removed in Settings.
+  function reloadPortfolios() {
+    return fetchPortfolios()
       .then((ps) => {
         setPortfolios(ps); // keep the Consolidated default; the user picks a book explicitly
         // The hedge book defaults to a real LONG/SHORT book (roll-ups and long-only can't be hedged).
@@ -72,6 +72,11 @@ export default function App() {
         if (firstLS) setHedgePortfolioId((cur) => cur || firstLS.id);
       })
       .catch((e) => setError(String(e)));
+  }
+
+  // Load the portfolio list + the server refresh interval, once.
+  useEffect(() => {
+    reloadPortfolios();
     getPriceRefresh()
       .then(({ minutes }) => setRefreshMins(minutes))
       .catch(() => {});
@@ -299,10 +304,26 @@ export default function App() {
           </div>
         )}
 
+        {/* Forced first portfolio: a fresh database has no books. Send the user to Settings to
+            add one before the analytics tabs are meaningful. */}
+        {portfolios.length === 0 && tab !== "Settings" && (
+          <div className="mb-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
+            <p className="text-sm text-slate-200">
+              No portfolios yet. Add your first book to start tracking risk and building the hedge.
+            </p>
+            <button
+              onClick={() => setTab("Settings")}
+              className="mt-3 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80"
+            >
+              Add a portfolio
+            </button>
+          </div>
+        )}
+
         {/* Settings never depends on portfolio data — it's how you fix a bad DB target,
             so it must render even while the rest is still loading. */}
         {tab === "Settings" ? (
-          <Settings />
+          <Settings onPortfoliosChanged={reloadPortfolios} />
         ) : !summary ? (
           <p className="text-ocean-muted">Loading…</p>
         ) : (

@@ -72,7 +72,10 @@ The API seeds a golden demo portfolio on startup. Key endpoints:
 ### Persistence
 
 Postgres is the canonical database (`DATABASE_URL`-driven); SQLite in-memory is the
-test/dev fallback behind the same SQLAlchemy interface.
+test/dev fallback behind the same SQLAlchemy interface. See
+[`docs/database_interactions.md`](docs/database_interactions.md) for the full map of which
+database each part of Neptune reads and writes (and how that narrows once data ingestion moves
+to Iridium Backend).
 
 ```bash
 docker compose up -d         # postgres:16 + redis

@@ -77,6 +77,51 @@ def test_mandate_rollups_and_long_only_guards(client):
     assert client.post("/portfolios/LO-1/hedge/propose").status_code == 422
 
 
+def test_org_pickers_are_populated(client):
+    # The add-portfolio ownership pickers read these lists; the Iridium scaffolding is always
+    # seeded, so a fresh DB still has a firm, an investor entity, and a PM to choose.
+    firms = {f["id"] for f in client.get("/firms").json()}
+    people = {p["id"] for p in client.get("/people").json()}
+    entities = {e["id"] for e in client.get("/investor-entities").json()}
+    assert "IRIDIUM" in firms
+    assert "pm-iridium" in people
+    assert "IRIDIUM-FUND" in entities
+
+
+def test_create_portfolio_with_ownership_then_delete(client):
+    # Create a book with full ownership fields; id is derived from the name when omitted.
+    r = client.post("/portfolios", json={
+        "name": "Macro Alpha", "mandate": "LONG_SHORT",
+        "firm_id": "IRIDIUM", "investor_entity_id": "IRIDIUM-FUND",
+        "lead_pm_ids": ["pm-iridium"],
+    })
+    assert r.status_code == 201
+    pid = r.json()["id"]
+    assert pid == "macro-alpha"  # slugified from the name
+    meta = {p["id"]: p for p in client.get("/portfolios").json()}[pid]
+    assert meta["firm_id"] == "IRIDIUM" and meta["lead_pm_ids"] == ["pm-iridium"]
+
+    # An empty book deletes cleanly and disappears from the switcher.
+    assert client.delete(f"/portfolios/{pid}").status_code == 200
+    assert pid not in {p["id"] for p in client.get("/portfolios").json()}
+
+
+def test_delete_portfolio_blocked_when_not_empty(client):
+    client.post("/portfolios", json={"id": "DEL-X", "name": "Del X"})
+    client.post("/portfolios/DEL-X/positions", json={
+        "ticker": "HELD", "side": "LONG", "notional": 50_000.0,
+    })
+    # A book that still holds exposure can't be deleted — flatten it first.
+    r = client.delete("/portfolios/DEL-X")
+    assert r.status_code == 409
+    assert "DEL-X" in {p["id"] for p in client.get("/portfolios").json()}
+
+
+def test_delete_rollup_and_missing_book(client):
+    assert client.delete("/portfolios/__consolidated__").status_code == 409
+    assert client.delete("/portfolios/does-not-exist").status_code == 404
+
+
 def test_consolidated_uses_firm_beta_tolerance(client):
     # The Consolidated roll-up is a firm-level view → tighter ±0.030 limit; a single book → 0.05.
     cons = client.get("/portfolios/__consolidated__/risk").json()

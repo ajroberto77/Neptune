@@ -52,9 +52,33 @@ class PositionService:
     def create_portfolio(self, portfolio_id: str, name: str, **kwargs) -> Portfolio:
         return self.repo.create_portfolio(portfolio_id, name, **kwargs)
 
+    def delete_portfolio(self, portfolio_id: str) -> bool:
+        """Delete a book. Refuses a book that still HOLDS exposure — every open position must
+        be flattened first (flat/closed positions and pure trade history are fine to remove).
+        This guards against wiping a live book by accident; deleting a book never routes or
+        unwinds anything at a venue (CLAUDE.md §2)."""
+        if any(abs(p.notional) > 1e-9 for p in self.repo.list_positions(portfolio_id)):
+            raise ConflictError(
+                f"{portfolio_id!r} still holds open positions — flatten the book before "
+                f"deleting it."
+            )
+        return self.repo.delete_portfolio(portfolio_id)
+
     # --- Organization / ownership -------------------------------------------------
     def create_firm(self, firm_id: str, name: str, **kwargs):
         return self.org.create_firm(firm_id, name, **kwargs)
+
+    def get_firm(self, firm_id: str):
+        return self.org.get_firm(firm_id)
+
+    def list_firms(self):
+        return self.org.list_firms()
+
+    def list_people(self):
+        return self.org.list_people()
+
+    def list_investor_entities(self):
+        return self.org.list_investor_entities()
 
     def create_person(self, person_id: str, firm_id: str, name: str, role: PersonRole, **kwargs):
         return self.org.create_person(person_id, firm_id, name, role, **kwargs)

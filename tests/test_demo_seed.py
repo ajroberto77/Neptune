@@ -17,6 +17,28 @@ def test_seed_without_demo_creates_structure_but_no_positions(session):
     assert len(portfolio.positions) == 0  # ...but no demo names
 
 
+def test_seed_without_book_creates_only_org_scaffolding(session):
+    # Production start: no book at all (the user is forced to add one), but the ownership
+    # scaffolding IS seeded so the add-portfolio pickers have a firm/entity/PM to choose.
+    seed_golden(session, with_demo_positions=False, with_book=False)
+    svc = PositionService(session)
+    assert svc.get_portfolio(PID) is None  # no book seeded
+    assert svc.list_portfolios() == []
+    assert svc.get_firm("IRIDIUM") is not None
+    assert {p.id for p in svc.list_people()} == {"pm-iridium"}
+    assert {e.id for e in svc.list_investor_entities()} == {"IRIDIUM-FUND"}
+
+
+def test_seed_scaffolding_is_idempotent(session):
+    # Re-running the bookless seed (every startup) must not double-insert the firm/PM/entity.
+    seed_golden(session, with_demo_positions=False, with_book=False)
+    seed_golden(session, with_demo_positions=False, with_book=False)
+    svc = PositionService(session)
+    assert len(svc.list_firms()) == 1
+    assert len(svc.list_people()) == 1
+    assert len(svc.list_investor_entities()) == 1
+
+
 def test_remove_demo_positions_is_idempotent(session):
     seed_golden(session, with_demo_positions=True)
     svc = PositionService(session)
