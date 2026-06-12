@@ -47,6 +47,16 @@ async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface HealthResponse {
+  status: string;
+  beta_tol: number;
+}
+
+/** Backend liveness — drives the TitleBar status pill. */
+export function fetchHealth(): Promise<HealthResponse> {
+  return getJSON<HealthResponse>("/health");
+}
+
 export function fetchRisk(portfolioId: string): Promise<RiskSummary> {
   return getJSON<RiskSummary>(`/portfolios/${portfolioId}/risk`);
 }

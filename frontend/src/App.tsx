@@ -11,6 +11,7 @@ import {
   approveHedge,
   bookHedgeLegs,
   fetchFrontier,
+  fetchHealth,
   fetchPortfolios,
   fetchPositions,
   fetchRisk,
@@ -30,9 +31,13 @@ import { Hedge } from "./tabs/Hedge";
 import { BetaHistory } from "./tabs/BetaHistory";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
+import { TitleBar } from "./components/TitleBar";
+import { TabBar } from "./components/TabBar";
 
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
+// Settings lives behind the title-bar gear (suite convention), so it's excluded from the tab row.
+const NAV_TABS = TABS.filter((t) => t !== "Settings");
 
 // Virtual roll-up views; the backend resolves these ids to the right slice of books.
 const CONSOLIDATED_ID = "__consolidated__"; // every book
@@ -61,6 +66,8 @@ export default function App() {
   const [refreshMins, setRefreshMins] = useState<number>(10);
   const [pricing, setPricing] = useState(false);
   const [lastPriced, setLastPriced] = useState<string | null>(null);
+  // Backend liveness for the title-bar status pill (polled).
+  const [healthy, setHealthy] = useState(true);
 
   // Load the portfolio list (for the switcher). Reused after a book is added/removed in Settings.
   function reloadPortfolios() {
@@ -80,6 +87,21 @@ export default function App() {
     getPriceRefresh()
       .then(({ minutes }) => setRefreshMins(minutes))
       .catch(() => {});
+  }, []);
+
+  // Poll backend health so the title-bar pill reflects whether the API/DB is reachable.
+  useEffect(() => {
+    let alive = true;
+    const check = () =>
+      fetchHealth()
+        .then(() => alive && setHealthy(true))
+        .catch(() => alive && setHealthy(false));
+    check();
+    const id = setInterval(check, 20_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, []);
 
   // (Re)load the selected book whenever it changes.
@@ -271,33 +293,25 @@ export default function App() {
   const longShortBooks = portfolios.filter((p) => p.mandate === "LONG_SHORT");
   const longOnlyBooks = portfolios.filter((p) => p.mandate === "LONG_ONLY");
 
-  return (
-    <div className="min-h-screen">
-      <header className="border-b border-ocean-border bg-ocean-panel/60">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <h1 className="font-display text-xl font-semibold text-white">Neptune</h1>
-            <p className="text-xs text-ocean-muted">Iridium Capital Management</p>
-          </div>
-          <nav className="flex gap-1">
-            {TABS.map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`rounded px-3 py-1.5 text-sm font-medium transition ${
-                  tab === t
-                    ? "bg-ocean-accent text-white"
-                    : "text-ocean-muted hover:text-slate-200"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </nav>
-        </div>
-      </header>
+  // Tabs with a background job in flight get a pulsing dot; the title-bar pill summarizes state.
+  const runningTabs = new Set<string>();
+  if (proposing || frontierLoading) runningTabs.add("Hedge");
+  if (stressLoading) runningTabs.add("Stress");
+  if (pricing) runningTabs.add("Portfolio");
+  if (trading) runningTabs.add("Trade");
+  const status: "ready" | "running" | "error" = !healthy
+    ? "error"
+    : runningTabs.size > 0
+      ? "running"
+      : "ready";
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <TitleBar status={status} onSettings={() => setTab("Settings")} />
+      <TabBar tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
+
+      <main className="flex-1 overflow-auto px-6 py-6">
+        <div className="mx-auto w-full max-w-screen-2xl">
         {error && (
           <div className="mb-4 rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">
             {error}
@@ -421,6 +435,7 @@ export default function App() {
             )}
           </>
         )}
+        </div>
       </main>
     </div>
   );

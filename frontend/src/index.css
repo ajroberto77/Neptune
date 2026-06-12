@@ -3,8 +3,31 @@
 @tailwind utilities;
 
 @layer base {
+  /* App-shell frame: the window never page-scrolls; the content panel scrolls inside a fixed
+     full-height frame (TitleBar + TabBar + panel), matching the Iridium desktop suite. */
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
   body {
-    @apply bg-ocean-bg text-slate-200 font-body antialiased;
+    @apply overflow-hidden bg-ocean-bg text-slate-200 font-body antialiased;
+  }
+
+  /* Thin scrollbars, suite-style. */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded bg-ocean-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ocean-muted;
   }
 }
 
