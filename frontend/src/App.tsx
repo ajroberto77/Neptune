@@ -35,7 +35,7 @@ import { TitleBar } from "./components/TitleBar";
 import { TabBar } from "./components/TabBar";
 import { PortfolioSidebar } from "./components/PortfolioSidebar";
 
-const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
+const TABS = ["Positions", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 // Settings lives behind the title-bar gear (suite convention), so it's excluded from the tab row.
 const NAV_TABS = TABS.filter((t) => t !== "Settings");
@@ -46,7 +46,7 @@ const LONGSHORT_GROUP_ID = "__long_short__"; // hedged (long/short) books only
 const LONGONLY_GROUP_ID = "__long_only__"; // long-only books only
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("Portfolio");
+  const [tab, setTab] = useState<Tab>("Positions");
   // The selected portfolio. Defaults to the Consolidated roll-up across every book.
   const [portfolioId, setPortfolioId] = useState<string>(CONSOLIDATED_ID);
   const [portfolios, setPortfolios] = useState<PortfolioMeta[]>([]);
@@ -358,7 +358,7 @@ export default function App() {
   const runningTabs = new Set<string>();
   if (proposing || frontierLoading) runningTabs.add("Hedge");
   if (stressLoading) runningTabs.add("Stress");
-  if (pricing) runningTabs.add("Portfolio");
+  if (pricing) runningTabs.add("Positions");
   if (trading) runningTabs.add("Trade");
   const status: "ready" | "running" | "error" = !healthy
     ? "error"
@@ -465,7 +465,7 @@ export default function App() {
                 frontierLoading={frontierLoading}
               />
             )}
-            {tab === "Portfolio" && (
+            {tab === "Positions" && (
               <div className="space-y-4">
                 <div>
                   <h2 className="font-display text-lg font-semibold text-white">{selectedName}</h2>
