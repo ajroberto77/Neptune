@@ -349,11 +349,18 @@ export default function App() {
             so it must render even while the rest is still loading. */}
         {tab === "Settings" ? (
           <Settings onPortfoliosChanged={reloadPortfolios} />
-        ) : !summary ? (
-          <p className="text-ocean-muted">Loading…</p>
         ) : (
           <>
-            {tab === "Risk" && <RiskDashboard summary={summary} portfolioId={portfolioId} />}
+            {/* Only the Risk tab needs the loaded risk summary; every other tab renders its own
+                content (and its own empty/error states). Gating just Risk — not the whole view —
+                means switching tabs always changes the page even when the summary is still
+                loading or the backend is erroring. */}
+            {tab === "Risk" &&
+              (summary ? (
+                <RiskDashboard summary={summary} portfolioId={portfolioId} />
+              ) : (
+                <p className="text-ocean-muted">Loading risk summary…</p>
+              ))}
             {tab === "Hedge" && (
               <Hedge
                 proposal={proposal}
