@@ -49,8 +49,8 @@ export function PortfolioSidebar({
   };
 
   return (
-    <aside className="w-60 flex-shrink-0 self-start space-y-0.5 border-r border-ocean-border pr-3">
-      <p className="px-3 pb-1 pt-1 font-display text-[10px] uppercase tracking-[0.14em] text-ocean-muted">
+    <aside className="flex w-56 flex-shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-ocean-border bg-ocean-panel/40 px-2 py-3">
+      <p className="px-3 pb-1 pt-1 font-display text-[10px] uppercase tracking-[0.16em] text-ocean-muted">
         Portfolios
       </p>
 

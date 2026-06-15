@@ -32,7 +32,7 @@ import { BetaHistory } from "./tabs/BetaHistory";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 import { TitleBar } from "./components/TitleBar";
-import { SideNav } from "./components/SideNav";
+import { TabBar } from "./components/TabBar";
 import { PortfolioSidebar } from "./components/PortfolioSidebar";
 
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
@@ -373,8 +373,25 @@ export default function App() {
         testMode={inTestMode}
         onSettings={() => setTab("Settings")}
       />
+      <TabBar tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
       <div className="flex min-h-0 flex-1">
-        <SideNav tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
+        {/* Persistent portfolios sidebar on every data tab. Selecting a book sets the global
+            selection used by all tabs; it also points the Hedge tab at it when it's a real L/S
+            book (roll-ups can't be hedged). Hidden on Settings (config, not a book view). */}
+        {tab !== "Settings" && (
+          <PortfolioSidebar
+            longShortBooks={longShortBooks}
+            longOnlyBooks={longOnlyBooks}
+            selectedId={portfolioId}
+            onSelect={(id) => {
+              setPortfolioId(id);
+              if (longShortBooks.some((p) => p.id === id)) setHedgePortfolioId(id);
+            }}
+            consolidatedId={CONSOLIDATED_ID}
+            longShortGroupId={LONGSHORT_GROUP_ID}
+            longOnlyGroupId={LONGONLY_GROUP_ID}
+          />
+        )}
 
         <main className="min-w-0 flex-1 overflow-auto px-6 py-6">
         {error && (
@@ -444,34 +461,21 @@ export default function App() {
               />
             )}
             {tab === "Portfolio" && (
-              <div className="flex items-start gap-6">
-                {/* Left rail: pick the book/roll-up to view. Consolidated is pinned at the top;
-                    real books sit under their mandate roll-up. Selection persists across tabs. */}
-                <PortfolioSidebar
-                  longShortBooks={longShortBooks}
-                  longOnlyBooks={longOnlyBooks}
-                  selectedId={portfolioId}
-                  onSelect={setPortfolioId}
-                  consolidatedId={CONSOLIDATED_ID}
-                  longShortGroupId={LONGSHORT_GROUP_ID}
-                  longOnlyGroupId={LONGONLY_GROUP_ID}
-                />
-                <div className="min-w-0 flex-1 space-y-4">
-                  <div>
-                    <h2 className="font-display text-lg font-semibold text-white">{selectedName}</h2>
-                    <p className="text-xs text-ocean-muted">
-                      {positions.length} position{positions.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                  <Portfolio
-                    positions={positions}
-                    refreshMins={refreshMins}
-                    onChangeMins={changeRefreshMins}
-                    onRefreshNow={handleRefreshPrices}
-                    lastPriced={lastPriced}
-                    pricing={pricing}
-                  />
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-display text-lg font-semibold text-white">{selectedName}</h2>
+                  <p className="text-xs text-ocean-muted">
+                    {positions.length} position{positions.length === 1 ? "" : "s"}
+                  </p>
                 </div>
+                <Portfolio
+                  positions={positions}
+                  refreshMins={refreshMins}
+                  onChangeMins={changeRefreshMins}
+                  onRefreshNow={handleRefreshPrices}
+                  lastPriced={lastPriced}
+                  pricing={pricing}
+                />
               </div>
             )}
             {tab === "Trade" && (
