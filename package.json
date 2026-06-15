@@ -6,9 +6,7 @@
   "main": "main.js",
   "type": "module",
   "scripts": {
-    "dev:web": "npm --prefix frontend run dev",
-    "dev:app": "cross-env NODE_ENV=development electron .",
-    "dev": "concurrently --kill-others --names web,app --prefix-colors blue,magenta \"npm:dev:web\" \"npm:dev:app\"",
+    "dev": "concurrently --kill-others --names vite,app --prefix-colors gray,cyan \"npm --prefix frontend run dev\" \"cross-env NODE_ENV=development electron .\"",
     "build": "npm --prefix frontend run build",
     "electron": "electron .",
     "start": "npm run build && electron ."

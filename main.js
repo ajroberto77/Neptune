@@ -224,7 +224,14 @@ function createWindow() {
   });
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    // Single `npm run dev` starts Vite and Electron together; Electron can win the race, so
+    // retry the dev-server URL until it answers instead of showing a failed-load page.
+    const DEV_URL = 'http://localhost:5173';
+    const loadDev = () => mainWindow && mainWindow.loadURL(DEV_URL).catch(() => {});
+    mainWindow.webContents.on('did-fail-load', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) setTimeout(loadDev, 500);
+    });
+    loadDev();
     if (process.env.NEPTUNE_DEVTOOLS === '1') {
       mainWindow.webContents.openDevTools();
     }
