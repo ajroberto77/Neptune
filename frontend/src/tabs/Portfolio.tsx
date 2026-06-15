@@ -172,21 +172,7 @@ const wtdBetaOf = (t: Totals) => (t.notional ? t.betaNotional / t.notional : NaN
  *  layout so they read top-to-bottom. The Shorts table is split into Systematic and (if any)
  *  Discretionary subgroups, each with its own subtotal, then the grand Total Short — so the two
  *  books stay distinct (I-03) without per-row tags. Net beta-adj is ~0 when hedged to zero beta. */
-export function Portfolio({
-  positions,
-  refreshMins,
-  onChangeMins,
-  onRefreshNow,
-  lastPriced,
-  pricing,
-}: {
-  positions: PositionRow[];
-  refreshMins?: number;
-  onChangeMins?: (m: number) => void;
-  onRefreshNow?: () => void;
-  lastPriced?: string | null;
-  pricing?: boolean;
-}) {
+export function Portfolio({ positions }: { positions: PositionRow[] }) {
   const longs = positions.filter((p) => p.side === "LONG" && p.notional !== 0);
   const shorts = positions.filter((p) => p.side === "SHORT" && p.notional !== 0);
   const net = sumTotals([...longs, ...shorts]);
@@ -203,28 +189,6 @@ export function Portfolio({
 
   return (
     <div className="space-y-6">
-      {onRefreshNow && (
-        <div className="flex items-center justify-end gap-3 text-sm text-ocean-muted">
-          <span>Server price refresh: every</span>
-          <input
-            type="number"
-            min={0}
-            value={refreshMins ?? 0}
-            onChange={(e) => onChangeMins?.(Number(e.target.value))}
-            className="np-input w-16 text-right"
-          />
-          <span>min {refreshMins ? "" : "(off)"}</span>
-          <button
-            onClick={onRefreshNow}
-            disabled={pricing}
-            className="rounded border border-ocean-border px-3 py-1.5 hover:text-slate-200 disabled:opacity-50"
-          >
-            {pricing ? "Refreshing…" : "Refresh now"}
-          </button>
-          {lastPriced && <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>}
-        </div>
-      )}
-
       {/* Net Position on top — long − short. Net beta-adj ~0 means hedged to zero net beta. */}
       <div className="rounded-lg border border-ocean-accent/40 bg-ocean-panel p-5">
         <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-accent">

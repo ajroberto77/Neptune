@@ -79,6 +79,12 @@ interface SettingsProps {
   switchingMode?: boolean;
   onStartTestMode?: () => void;
   onStopTestMode?: () => void;
+  // Server price-refresh controls (moved here from the Portfolio tab).
+  refreshMins?: number;
+  onChangeMins?: (m: number) => void;
+  onRefreshNow?: () => void;
+  lastPriced?: string | null;
+  pricing?: boolean;
 }
 
 /** Settings tab: point Neptune at the right database instances. The password field is
@@ -92,6 +98,11 @@ export function Settings({
   switchingMode = false,
   onStartTestMode,
   onStopTestMode,
+  refreshMins,
+  onChangeMins,
+  onRefreshNow,
+  lastPriced,
+  pricing,
 }: SettingsProps = {}) {
   const [rows, setRows] = useState<ConnectionRow[]>([]);
   const [forms, setForms] = useState<Record<string, Form>>({});
@@ -308,6 +319,48 @@ export function Settings({
       )}
 
       <PortfoliosPanel onChanged={onPortfoliosChanged} />
+
+      {/* Server price refresh — how often the backend pulls fresh marks for the open books.
+          "Live" streaming arrives with the Bloomberg feed (disabled until then). */}
+      {onChangeMins && (
+        <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+          <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
+            Price refresh
+          </h3>
+          <p className="mb-3 text-xs text-ocean-muted">
+            How often the server re-prices the open books. Manual refresh re-prices the selected
+            book immediately.
+          </p>
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <select
+              value={String(refreshMins ?? 0)}
+              onChange={(e) => onChangeMins?.(Number(e.target.value))}
+              className="np-input w-auto"
+              aria-label="price-refresh-interval"
+            >
+              <option value="0">Off</option>
+              <option value="1">Every 1 min</option>
+              <option value="5">Every 5 min</option>
+              <option value="10">Every 10 min</option>
+              <option value="15">Every 15 min</option>
+              <option value="30">Every 30 min</option>
+              <option value="live" disabled>
+                Live (Bloomberg — coming soon)
+              </option>
+            </select>
+            <button
+              onClick={onRefreshNow}
+              disabled={pricing}
+              className="rounded border border-ocean-border px-3 py-1.5 text-ocean-muted transition hover:text-slate-200 disabled:opacity-50"
+            >
+              {pricing ? "Refreshing…" : "Refresh now"}
+            </button>
+            {lastPriced && (
+              <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>
+            )}
+          </div>
+        </div>
+      )}
 
       <DataHealth />
 

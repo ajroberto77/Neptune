@@ -427,6 +427,11 @@ export default function App() {
             switchingMode={switchingMode}
             onStartTestMode={() => switchMode(true)}
             onStopTestMode={() => switchMode(false)}
+            refreshMins={refreshMins}
+            onChangeMins={changeRefreshMins}
+            onRefreshNow={handleRefreshPrices}
+            lastPriced={lastPriced}
+            pricing={pricing}
           />
         ) : (
           <>
@@ -468,14 +473,7 @@ export default function App() {
                     {positions.length} position{positions.length === 1 ? "" : "s"}
                   </p>
                 </div>
-                <Portfolio
-                  positions={positions}
-                  refreshMins={refreshMins}
-                  onChangeMins={changeRefreshMins}
-                  onRefreshNow={handleRefreshPrices}
-                  lastPriced={lastPriced}
-                  pricing={pricing}
-                />
+                <Portfolio positions={positions} />
               </div>
             )}
             {tab === "Trade" && (
