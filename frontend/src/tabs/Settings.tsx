@@ -69,10 +69,30 @@ function rowToForm(row: ConnectionRow): Form {
   };
 }
 
+interface SettingsProps {
+  onPortfoliosChanged?: () => void;
+  /** Test Mode is only possible inside the Electron shell (it relaunches the backend). */
+  canTestMode?: boolean;
+  inTestMode?: boolean;
+  /** Whether the core data load succeeds: false = no reachable DB, null = not determined yet. */
+  dbReachable?: boolean | null;
+  switchingMode?: boolean;
+  onStartTestMode?: () => void;
+  onStopTestMode?: () => void;
+}
+
 /** Settings tab: point Neptune at the right database instances. The password field is
  *  write-only — left blank, it preserves the stored secret. ``onPortfoliosChanged`` lets the
  *  app refresh its book switcher after a book is added or removed here. */
-export function Settings({ onPortfoliosChanged }: { onPortfoliosChanged?: () => void } = {}) {
+export function Settings({
+  onPortfoliosChanged,
+  canTestMode = false,
+  inTestMode = false,
+  dbReachable = null,
+  switchingMode = false,
+  onStartTestMode,
+  onStopTestMode,
+}: SettingsProps = {}) {
   const [rows, setRows] = useState<ConnectionRow[]>([]);
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [status, setStatus] = useState<Record<string, string>>({});
@@ -236,6 +256,44 @@ export function Settings({ onPortfoliosChanged }: { onPortfoliosChanged?: () => 
 
   return (
     <div className="space-y-6">
+      {/* Test Mode — surfaces only in the Electron shell, and only when relevant: either no
+          database is reachable (offer it) or it's already active (offer a way out). It relaunches
+          the backend on a throwaway SQLite DB with a seeded demo book + synthetic market data. */}
+      {canTestMode && inTestMode ? (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-status-watch/40 bg-status-watch/10 p-4">
+          <div>
+            <p className="font-display text-sm font-semibold text-status-watch">Test Mode is active</p>
+            <p className="mt-1 text-xs text-slate-300">
+              Running on a throwaway local database with synthetic demo data — nothing here is real.
+            </p>
+          </div>
+          <button
+            onClick={onStopTestMode}
+            disabled={switchingMode}
+            className="shrink-0 rounded border border-ocean-border px-3 py-1.5 text-sm text-slate-200 transition hover:border-ocean-accent hover:text-white disabled:opacity-50"
+          >
+            {switchingMode ? "Switching…" : "Exit Test Mode"}
+          </button>
+        </div>
+      ) : canTestMode && dbReachable === false ? (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
+          <div>
+            <p className="font-display text-sm font-semibold text-white">No database connection found</p>
+            <p className="mt-1 text-xs text-slate-300">
+              Can&apos;t reach a database, so risk and positions won&apos;t load. Explore the app in
+              Test Mode — a throwaway local database seeded with a demo book and synthetic data.
+            </p>
+          </div>
+          <button
+            onClick={onStartTestMode}
+            disabled={switchingMode}
+            className="shrink-0 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-50"
+          >
+            {switchingMode ? "Starting…" : "Enable Test Mode"}
+          </button>
+        </div>
+      ) : null}
+
       <p className="text-sm text-ocean-muted">
         Point Neptune at the right database instances. A saved connection (host and port
         included) overrides the matching environment variable. The portfolio database is the

@@ -34,7 +34,6 @@ import { Settings } from "./tabs/Settings";
 import { TitleBar } from "./components/TitleBar";
 import { TabBar } from "./components/TabBar";
 import { PortfolioSidebar } from "./components/PortfolioSidebar";
-import { TestModeModal } from "./components/TestModeModal";
 
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -73,8 +72,6 @@ export default function App() {
   // Whether the core data load (risk + positions) is succeeding. null = not yet attempted.
   const [dataOk, setDataOk] = useState<boolean | null>(null);
   // Test Mode (Electron only): throwaway SQLite + seeded demo data when no real DB is reachable.
-  const [graceElapsed, setGraceElapsed] = useState(false); // 20s settle window before offering it
-  const [testDismissed, setTestDismissed] = useState(false);
   const [inTestMode, setInTestMode] = useState(false);
   const [switchingMode, setSwitchingMode] = useState(false);
 
@@ -113,23 +110,21 @@ export default function App() {
     };
   }, []);
 
-  // Test Mode plumbing (Electron shell only). Reflect the current mode, and after a 20s settle
-  // window offer Test Mode if the backend still can't load data (no real database reachable).
+  // Test Mode plumbing (Electron shell only): reflect the current mode on mount.
   useEffect(() => {
     window.neptune?.isTestMode?.().then(setInTestMode).catch(() => {});
-    const id = setTimeout(() => setGraceElapsed(true), 20_000);
-    return () => clearTimeout(id);
   }, []);
 
   const canTestMode = typeof window !== "undefined" && Boolean(window.neptune?.startTestMode);
-  const showTestPrompt =
-    canTestMode && graceElapsed && dataOk === false && !inTestMode && !testDismissed;
 
-  // Relaunch the backend on SQLite + seeded demo data, wait for it to come back, then reload.
-  async function handleUseTestMode() {
+  // Relaunch the backend on SQLite + seeded demo data (toTest=true) or back on the configured
+  // Postgres (false), wait for it to answer, then reload. Surfaced as a manual control in Settings
+  // that appears when no database is reachable.
+  async function switchMode(toTest: boolean) {
     setSwitchingMode(true);
     try {
-      await window.neptune?.startTestMode?.();
+      if (toTest) await window.neptune?.startTestMode?.();
+      else await window.neptune?.stopTestMode?.();
       // The sidecar restarts on the same port; wait for it to answer before reloading.
       for (let i = 0; i < 30; i++) {
         await new Promise((r) => setTimeout(r, 1000));
@@ -140,7 +135,7 @@ export default function App() {
           /* still restarting */
         }
       }
-      setInTestMode(true);
+      setInTestMode(toTest);
       setHealthy(true);
       await reloadPortfolios();
       await loadBook(portfolioId);
@@ -373,13 +368,6 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {showTestPrompt && (
-        <TestModeModal
-          onUseTestMode={handleUseTestMode}
-          onDismiss={() => setTestDismissed(true)}
-          switching={switchingMode}
-        />
-      )}
       <TitleBar
         status={status}
         testMode={inTestMode}
@@ -414,7 +402,15 @@ export default function App() {
         {/* Settings never depends on portfolio data — it's how you fix a bad DB target,
             so it must render even while the rest is still loading. */}
         {tab === "Settings" ? (
-          <Settings onPortfoliosChanged={reloadPortfolios} />
+          <Settings
+            onPortfoliosChanged={reloadPortfolios}
+            canTestMode={canTestMode}
+            inTestMode={inTestMode}
+            dbReachable={dataOk}
+            switchingMode={switchingMode}
+            onStartTestMode={() => switchMode(true)}
+            onStopTestMode={() => switchMode(false)}
+          />
         ) : (
           <>
             {/* Only the Risk tab needs the loaded risk summary; every other tab renders its own
