@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   Frontier,
   HedgeProposal,
@@ -34,6 +34,7 @@ import { Settings } from "./tabs/Settings";
 import { TitleBar } from "./components/TitleBar";
 import { TabBar } from "./components/TabBar";
 import { PortfolioSidebar } from "./components/PortfolioSidebar";
+import { TestModeModal } from "./components/TestModeModal";
 
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
 type Tab = (typeof TABS)[number];
@@ -69,6 +70,13 @@ export default function App() {
   const [lastPriced, setLastPriced] = useState<string | null>(null);
   // Backend liveness for the title-bar status pill (polled).
   const [healthy, setHealthy] = useState(true);
+  // Whether the core data load (risk + positions) is succeeding. null = not yet attempted.
+  const [dataOk, setDataOk] = useState<boolean | null>(null);
+  // Test Mode (Electron only): throwaway SQLite + seeded demo data when no real DB is reachable.
+  const [graceElapsed, setGraceElapsed] = useState(false); // 20s settle window before offering it
+  const [testDismissed, setTestDismissed] = useState(false);
+  const [inTestMode, setInTestMode] = useState(false);
+  const [switchingMode, setSwitchingMode] = useState(false);
 
   // Load the portfolio list (for the switcher). Reused after a book is added/removed in Settings.
   function reloadPortfolios() {
@@ -105,15 +113,62 @@ export default function App() {
     };
   }, []);
 
-  // (Re)load the selected book whenever it changes.
+  // Test Mode plumbing (Electron shell only). Reflect the current mode, and after a 20s settle
+  // window offer Test Mode if the backend still can't load data (no real database reachable).
   useEffect(() => {
-    Promise.all([fetchRisk(portfolioId), fetchPositions(portfolioId)])
+    window.neptune?.isTestMode?.().then(setInTestMode).catch(() => {});
+    const id = setTimeout(() => setGraceElapsed(true), 20_000);
+    return () => clearTimeout(id);
+  }, []);
+
+  const canTestMode = typeof window !== "undefined" && Boolean(window.neptune?.startTestMode);
+  const showTestPrompt =
+    canTestMode && graceElapsed && dataOk === false && !inTestMode && !testDismissed;
+
+  // Relaunch the backend on SQLite + seeded demo data, wait for it to come back, then reload.
+  async function handleUseTestMode() {
+    setSwitchingMode(true);
+    try {
+      await window.neptune?.startTestMode?.();
+      // The sidecar restarts on the same port; wait for it to answer before reloading.
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          await fetchHealth();
+          break;
+        } catch {
+          /* still restarting */
+        }
+      }
+      setInTestMode(true);
+      setHealthy(true);
+      await reloadPortfolios();
+      await loadBook(portfolioId);
+    } finally {
+      setSwitchingMode(false);
+    }
+  }
+
+  // Load a book's risk + positions. Tracks dataOk so the UI can tell "backend/DB is broken" from
+  // "backend is fine but this book is empty" (a failed fetch → dataOk false → offer Test Mode).
+  const loadBook = useCallback((id: string) => {
+    return Promise.all([fetchRisk(id), fetchPositions(id)])
       .then(([r, p]) => {
         setSummary(r);
         setPositions(p);
+        setError(null);
+        setDataOk(true);
       })
-      .catch((e) => setError(String(e)));
-  }, [portfolioId]);
+      .catch((e) => {
+        setError(String(e));
+        setDataOk(false);
+      });
+  }, []);
+
+  // (Re)load the selected book whenever it changes.
+  useEffect(() => {
+    loadBook(portfolioId);
+  }, [portfolioId, loadBook]);
 
   // An approved-but-not-yet-booked hedge, handed to the Trade tab for review + booking.
   const [pendingHedge, setPendingHedge] = useState<PendingHedge | null>(null);
@@ -318,7 +373,18 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <TitleBar status={status} onSettings={() => setTab("Settings")} />
+      {showTestPrompt && (
+        <TestModeModal
+          onUseTestMode={handleUseTestMode}
+          onDismiss={() => setTestDismissed(true)}
+          switching={switchingMode}
+        />
+      )}
+      <TitleBar
+        status={status}
+        testMode={inTestMode}
+        onSettings={() => setTab("Settings")}
+      />
       <TabBar tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
 
       <main className="flex-1 overflow-auto px-6 py-6">

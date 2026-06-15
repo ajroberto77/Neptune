@@ -29,6 +29,9 @@ const API_SCRIPT = path.join(__dirname, 'scripts', 'neptune_api.py');
 
 let mainWindow = null;
 let apiProcess = null;
+// When true, the backend is (re)launched on a throwaway SQLite DB with seeded demo data instead
+// of the configured Postgres — the "Test Mode" escape hatch when no real database is reachable.
+let testMode = false;
 
 // ── Config (local bootstrap; richer settings may later live in a settings DB) ──
 
@@ -127,7 +130,29 @@ function apiBaseUrl(cfg) {
 // The env the Python backend runs with: the database URLs + provider keys built from saved
 // settings. Optional URLs (universe) and the FRED key are only set when configured, so the
 // Python side cleanly reports "not configured" rather than seeing a junk value.
+//
+// Test Mode is the escape hatch when no real database is reachable: it forces the backend onto a
+// local SQLite file for EVERY role (DATABASE_URL is the per-role fallback), seeds the golden demo
+// book (NEPTUNE_SEED_DEMO_POSITIONS), and lets the synthetic market-data fallback kick in — so the
+// app is fully explorable with throwaway data and zero Postgres. It never touches real DBs.
 function backendEnv(cfg) {
+  if (testMode) {
+    const dbFile = path.join(app.getPath('userData'), 'neptune-test.db').replace(/\\/g, '/');
+    const env = {
+      ...process.env,
+      DATABASE_URL: `sqlite+pysqlite:///${dbFile}`,
+      NEPTUNE_SEED_DEMO_POSITIONS: '1',
+      NEPTUNE_API_HOST: cfg.api.host,
+      NEPTUNE_API_PORT: String(cfg.api.port),
+    };
+    // Make sure no real Postgres role URL leaks in from the parent environment.
+    delete env.PORTFOLIO_DATABASE_URL;
+    delete env.SECURITIES_DATABASE_URL;
+    delete env.MACRO_DATABASE_URL;
+    delete env.UNIVERSE_DATABASE_URL;
+    return env;
+  }
+
   const env = {
     ...process.env,
     PORTFOLIO_DATABASE_URL:  buildDbUrl(cfg.portfolioDb),
@@ -235,6 +260,15 @@ function registerIpc() {
   });
 
   ipcMain.handle('app:getApiBaseUrl', () => apiBaseUrl(loadConfig()));
+
+  // Test Mode: relaunch the backend on throwaway SQLite (+ seeded demo book) or back on the
+  // configured Postgres. Returns the resulting mode so the renderer can reflect it.
+  ipcMain.handle('app:isTestMode', () => testMode);
+  ipcMain.handle('app:setTestMode', (_evt, on) => {
+    testMode = Boolean(on);
+    startApi(loadConfig());
+    return testMode;
+  });
 
   // Test a database connection without saving it. Spawns a short-lived python that opens and
   // closes a connection using the provided settings.

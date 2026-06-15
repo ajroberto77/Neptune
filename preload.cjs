@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('neptune', {
   // ── Backend ─────────────────────────────────────────────────────────────
   getApiBaseUrl:   () => ipcRenderer.invoke('app:getApiBaseUrl'),
   testDbConnection: (db) => ipcRenderer.invoke('db:test', db),
+
+  // Test Mode: relaunch the backend on throwaway SQLite (+ seeded demo data), or back on Postgres.
+  isTestMode:    () => ipcRenderer.invoke('app:isTestMode'),
+  startTestMode: () => ipcRenderer.invoke('app:setTestMode', true),
+  stopTestMode:  () => ipcRenderer.invoke('app:setTestMode', false),
   onApiLog: (cb) => {
     const handler = (_evt, line) => cb(line);
     ipcRenderer.on('api:log', handler);

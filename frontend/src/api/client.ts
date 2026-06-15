@@ -21,6 +21,10 @@ interface NeptuneBridge {
   minimizeWindow?(): Promise<void>;
   toggleMaximizeWindow?(): Promise<boolean>;
   closeWindow?(): Promise<void>;
+  // Test Mode: relaunch the backend on throwaway SQLite (+ seeded demo data), or back on Postgres.
+  isTestMode?(): Promise<boolean>;
+  startTestMode?(): Promise<boolean>;
+  stopTestMode?(): Promise<boolean>;
 }
 declare global {
   interface Window {

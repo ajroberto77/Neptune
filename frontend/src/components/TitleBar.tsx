@@ -8,6 +8,8 @@ interface Props {
   /** Optional override for the pill label. */
   statusText?: string;
   subtitle?: string;
+  /** When true, the backend is running on throwaway SQLite + synthetic data — flag it loudly. */
+  testMode?: boolean;
   onSettings?: () => void;
 }
 
@@ -43,6 +45,7 @@ export function TitleBar({
   status = "ready",
   statusText,
   subtitle = "Portfolio and Risk Management Platform",
+  testMode = false,
   onSettings,
 }: Props) {
   const pill =
@@ -69,6 +72,14 @@ export function TitleBar({
       <span className="h-3.5 w-px bg-white/15" />
       <span className="font-display text-sm font-light text-ocean-muted">{subtitle}</span>
       <div className="flex-1" />
+      {testMode && (
+        <span
+          className="app-no-drag rounded-full border border-status-watch/50 bg-status-watch/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-status-watch"
+          aria-label="test-mode"
+        >
+          Test Mode · synthetic data
+        </span>
+      )}
       <span
         className={`app-no-drag rounded-full border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${pillCls}`}
         aria-label="backend-status"
