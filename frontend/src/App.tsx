@@ -32,7 +32,7 @@ import { BetaHistory } from "./tabs/BetaHistory";
 import { Stress } from "./tabs/Stress";
 import { Settings } from "./tabs/Settings";
 import { TitleBar } from "./components/TitleBar";
-import { TabBar } from "./components/TabBar";
+import { SideNav } from "./components/SideNav";
 import { PortfolioSidebar } from "./components/PortfolioSidebar";
 
 const TABS = ["Portfolio", "Trade", "Risk", "Hedge", "Beta", "Stress", "Settings"] as const;
@@ -373,10 +373,10 @@ export default function App() {
         testMode={inTestMode}
         onSettings={() => setTab("Settings")}
       />
-      <TabBar tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
+      <div className="flex min-h-0 flex-1">
+        <SideNav tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
 
-      <main className="flex-1 overflow-auto px-6 py-6">
-        <div className="mx-auto w-full max-w-screen-2xl">
+        <main className="min-w-0 flex-1 overflow-auto px-6 py-6">
         {error && (
           <div className="mb-4 rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">
             {error}
@@ -492,8 +492,8 @@ export default function App() {
             )}
           </>
         )}
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
