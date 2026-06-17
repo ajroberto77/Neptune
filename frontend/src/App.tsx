@@ -110,6 +110,12 @@ export default function App() {
     };
   }, []);
 
+  // A new hedge target invalidates any standing proposal/frontier from the previous book.
+  useEffect(() => {
+    setProposal(null);
+    setFrontier(null);
+  }, [hedgePortfolioId]);
+
   // Test Mode plumbing (Electron shell only): reflect the current mode on mount.
   useEffect(() => {
     window.neptune?.isTestMode?.().then(setInTestMode).catch(() => {});
@@ -354,6 +360,11 @@ export default function App() {
           ? "Long Only"
           : (portfolios.find((p) => p.id === portfolioId)?.name ?? portfolioId);
 
+  // The Hedge tab targets a single real Long/Short book — the last one selected (hedgePortfolioId).
+  // Roll-ups and long-only books can't be hedged.
+  const hedgeBook = longShortBooks.find((p) => p.id === hedgePortfolioId) ?? null;
+  const canHedge = hedgeBook !== null;
+
   // Tabs with a background job in flight get a pulsing dot; the title-bar pill summarizes state.
   const runningTabs = new Set<string>();
   if (proposing || frontierLoading) runningTabs.add("Hedge");
@@ -382,14 +393,29 @@ export default function App() {
           <PortfolioSidebar
             longShortBooks={longShortBooks}
             longOnlyBooks={longOnlyBooks}
-            selectedId={portfolioId}
+            // On Hedge the rail highlights the hedge target; elsewhere the global selection.
+            selectedId={tab === "Hedge" ? hedgePortfolioId : portfolioId}
             onSelect={(id) => {
+              // Selecting a real L/S book drives BOTH the global view and the hedge target;
+              // a roll-up / long-only selection only moves the global view (hedge target sticks).
               setPortfolioId(id);
               if (longShortBooks.some((p) => p.id === id)) setHedgePortfolioId(id);
             }}
             consolidatedId={CONSOLIDATED_ID}
             longShortGroupId={LONGSHORT_GROUP_ID}
             longOnlyGroupId={LONGONLY_GROUP_ID}
+            disabledReason={
+              tab === "Hedge"
+                ? (id) =>
+                    longShortBooks.some((p) => p.id === id)
+                      ? undefined
+                      : id === CONSOLIDATED_ID ||
+                          id === LONGSHORT_GROUP_ID ||
+                          id === LONGONLY_GROUP_ID
+                        ? "Roll-ups aren't a single tradeable book — pick a Long / Short book."
+                        : "Long-only books hold intentional market beta — nothing to hedge."
+                : undefined
+            }
           />
         )}
 
@@ -448,13 +474,8 @@ export default function App() {
             {tab === "Hedge" && (
               <Hedge
                 proposal={proposal}
-                portfolios={longShortBooks}
-                hedgePortfolioId={hedgePortfolioId}
-                onHedgePortfolio={(id) => {
-                  setHedgePortfolioId(id);
-                  setProposal(null);
-                  setFrontier(null);
-                }}
+                canHedge={canHedge}
+                portfolioName={hedgeBook?.name ?? null}
                 onPropose={handlePropose}
                 proposing={proposing}
                 onApprove={handleApproveHedge}

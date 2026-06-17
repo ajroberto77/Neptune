@@ -30,9 +30,8 @@ const frontier: Frontier = {
 };
 
 const base = {
-  portfolios: [{ id: "P-A", name: "Book A" }],
-  hedgePortfolioId: "P-A",
-  onHedgePortfolio: () => {},
+  canHedge: true,
+  portfolioName: "Book A",
   onPropose: () => {},
   proposing: false,
   onApprove: () => {},
@@ -68,6 +67,12 @@ describe("Hedge", () => {
     expect(screen.getByText("Complexity-Quality Frontier")).toBeInTheDocument();
     expect(screen.getByText(/≤ 10/)).toBeInTheDocument();
     expect(screen.getByText(/≤ 20/)).toBeInTheDocument();
+  });
+
+  it("shows a prompt and hides the propose controls when no L/S book is the hedge target", () => {
+    render(<Hedge {...base} canHedge={false} portfolioName={null} proposal={null} />);
+    expect(screen.getByText(/Select one from the sidebar/)).toBeInTheDocument();
+    expect(screen.queryByText("Propose hedge")).not.toBeInTheDocument();
   });
 
   it("shows the sector breakdown and feeds the header limit into Propose", () => {

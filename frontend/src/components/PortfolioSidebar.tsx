@@ -15,6 +15,8 @@ interface Props {
   consolidatedId: string;
   longShortGroupId: string;
   longOnlyGroupId: string;
+  /** Return a reason to render a row disabled (e.g. not hedgeable on the Hedge tab); falsy = live. */
+  disabledReason?: (id: string) => string | undefined;
 }
 
 type Tier = "consolidated" | "group" | "book";
@@ -27,9 +29,12 @@ export function PortfolioSidebar({
   consolidatedId,
   longShortGroupId,
   longOnlyGroupId,
+  disabledReason,
 }: Props) {
   const row = (id: string, label: string, tier: Tier) => {
     const active = id === selectedId;
+    const reason = disabledReason?.(id);
+    const disabled = Boolean(reason);
     // Resting styles carry the hierarchy; books are NOT indented — the format (case/size/weight)
     // is the differentiator, not an offset.
     const resting =
@@ -39,8 +44,9 @@ export function PortfolioSidebar({
           ? "mt-2 font-display text-[11px] font-semibold uppercase tracking-[0.12em]"
           : "text-sm font-normal";
     // Resting text colour per tier (kept separate from the active colour to avoid Tailwind clashes).
-    const restColor =
-      tier === "consolidated"
+    const restColor = disabled
+      ? "text-slate-600"
+      : tier === "consolidated"
         ? "text-slate-100"
         : tier === "group"
           ? "text-slate-400"
@@ -48,14 +54,19 @@ export function PortfolioSidebar({
     return (
       <button
         key={id}
-        onClick={() => onSelect(id)}
+        onClick={disabled ? undefined : () => onSelect(id)}
+        disabled={disabled}
+        aria-disabled={disabled || undefined}
         aria-current={active ? "true" : undefined}
+        title={reason}
         className={[
           "block w-full truncate rounded border-l-2 px-3 py-2 text-left transition",
           resting,
-          active
-            ? "border-ocean-accent bg-ocean-accent/15 text-blue-300"
-            : `border-transparent ${restColor} hover:bg-white/5`,
+          disabled
+            ? `border-transparent ${restColor} cursor-not-allowed opacity-50`
+            : active
+              ? "border-ocean-accent bg-ocean-accent/15 text-blue-300"
+              : `border-transparent ${restColor} hover:bg-white/5`,
         ].join(" ")}
       >
         {label}
