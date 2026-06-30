@@ -95,17 +95,38 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Poll backend health so the title-bar pill reflects whether the API/DB is reachable.
+  // Poll backend health; retry portfolio load whenever the sidecar comes back online.
+  // Fast initial probes at 3 s and 7 s catch the Python startup race (sidecar needs a few
+  // seconds to boot); the 20 s interval handles recoveries after "Save & restart backend".
   useEffect(() => {
     let alive = true;
+    // Start as "was down" so the very first successful health check retries the portfolio
+    // fetch — this covers the race where the mount-time load ran before the sidecar was ready.
+    let sidecarWasDown = true;
     const check = () =>
       fetchHealth()
-        .then(() => alive && setHealthy(true))
-        .catch(() => alive && setHealthy(false));
+        .then(() => {
+          if (!alive) return;
+          setHealthy(true);
+          if (sidecarWasDown) {
+            sidecarWasDown = false;
+            reloadPortfolios();
+          }
+        })
+        .catch(() => {
+          if (alive) {
+            sidecarWasDown = true;
+            setHealthy(false);
+          }
+        });
     check();
+    const t1 = setTimeout(check, 3_000);
+    const t2 = setTimeout(check, 7_000);
     const id = setInterval(check, 20_000);
     return () => {
       alive = false;
+      clearTimeout(t1);
+      clearTimeout(t2);
       clearInterval(id);
     };
   }, []);

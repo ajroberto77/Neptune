@@ -133,13 +133,13 @@ export function Settings({
         for (const r of rs) f[r.role] = r.configured ? rowToForm(r) : { ...EMPTY };
         setForms(f);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => { if (!isElectron) setError(String(e)); });
   }
 
   function loadCreds() {
     fetchCredentials()
       .then(setCreds)
-      .catch((e) => setError(String(e)));
+      .catch((e) => { if (!isElectron) setError(String(e)); });
   }
 
   function loadCatalog() {
@@ -387,6 +387,117 @@ export function Settings({
         </div>
       )}
 
+      {/* In Electron mode, DB connection cards appear here (top of page, before portfolios)
+          so they're immediately visible and work offline — no backend needed. */}
+      {isElectron && (
+        [
+          { role: "portfolio",  label: "Portfolio DB (app)",                       note: "applies on restart" },
+          { role: "securities", label: "Securities DB (market data)",               note: undefined },
+          { role: "macro",      label: "Macro DB (rates/credit + economic data)",   note: undefined },
+          { role: "universe",   label: "Universe DB (cato_securities, read-only)",  note: undefined },
+        ] as { role: string; label: string; note?: string }[]
+      ).map(({ role, label, note }) => {
+        const f = electronForms[role];
+        if (!f) return null;
+        return (
+          <div key={role} className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
+                {label}
+              </h3>
+              {note && (
+                <span className="rounded bg-ocean-accent/20 px-2 py-0.5 text-xs text-ocean-accent">
+                  {note}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <Field label="Host">
+                <input className="np-input" value={f.host}
+                  onChange={(e) => updateElectronForm(role, { host: e.target.value })} />
+              </Field>
+              <Field label="Port">
+                <input className="np-input" type="number" value={f.port}
+                  onChange={(e) => updateElectronForm(role, { port: Number(e.target.value) })} />
+              </Field>
+              <Field label="Database">
+                <input className="np-input" value={f.database}
+                  onChange={(e) => updateElectronForm(role, { database: e.target.value })} />
+              </Field>
+              <Field label="Username">
+                <input className="np-input" value={f.user}
+                  onChange={(e) => updateElectronForm(role, { user: e.target.value })} />
+              </Field>
+              <Field label="Password">
+                <input className="np-input" type="password" placeholder="(leave blank to clear)"
+                  value={f.password}
+                  onChange={(e) => updateElectronForm(role, { password: e.target.value })} />
+              </Field>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button onClick={() => handleElectronSave(role)}
+                className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80">
+                Save &amp; restart backend
+              </button>
+              <button onClick={() => handleElectronTest(role)}
+                className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
+                Test connection
+              </button>
+              {role === "universe" && (
+                <button onClick={handleSync}
+                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
+                  Sync universe
+                </button>
+              )}
+              {role === "macro" && (
+                <button onClick={handleMacroIngest}
+                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
+                  Backfill macro (FRED/ALFRED, since 2000)
+                </button>
+              )}
+              {role === "securities" && (
+                <>
+                  <label className="flex items-center gap-1 text-xs text-ocean-muted">
+                    <input type="number" min={1} max={25} value={years}
+                      aria-label="backfill-years"
+                      onChange={(e) => setYears(Math.max(1, Math.min(25, Number(e.target.value))))}
+                      className="np-input w-16" />
+                    yrs
+                  </label>
+                  <button onClick={() => handleIngest()}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
+                    Backfill prices
+                  </button>
+                  <button onClick={handleFactors}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
+                    Backfill factors
+                  </button>
+                  <input value={oneTicker}
+                    onChange={(e) => setOneTicker(e.target.value.toUpperCase())}
+                    placeholder="WEN" aria-label="backfill-one-ticker"
+                    className="np-input w-24" />
+                  <button onClick={() => handleIngest(parseTickers(oneTicker))}
+                    disabled={!oneTicker.trim()}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
+                    Backfill one
+                  </button>
+                  <button onClick={() => handleDiagnose(parseTickers(oneTicker))}
+                    disabled={!oneTicker.trim()}
+                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
+                    Diagnose beta
+                  </button>
+                </>
+              )}
+              {(electronDbStatus[role] || status[role === "universe" ? "UNIVERSE" : role === "macro" ? "MACRO" : role === "securities" ? "SECURITIES" : "PORTFOLIO"]) && (
+                <span className="text-sm text-ocean-muted">
+                  {electronDbStatus[role] || status[role === "universe" ? "UNIVERSE" : role === "macro" ? "MACRO" : role === "securities" ? "SECURITIES" : "PORTFOLIO"]}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
       <PortfoliosPanel onChanged={onPortfoliosChanged} />
 
       {/* Server price refresh — how often the backend pulls fresh marks for the open books.
@@ -540,119 +651,7 @@ export function Settings({
         </div>
       )}
 
-      {isElectron ? (
-        /* In Electron mode the DB config is the local neptune-config.json (userData); saving it
-           restarts the sidecar with the new URLs. This path works offline — no backend needed. */
-        (
-          [
-            { role: "portfolio",  label: "Portfolio DB (app)",                       note: "applies on restart" },
-            { role: "securities", label: "Securities DB (market data)",               note: undefined },
-            { role: "macro",      label: "Macro DB (rates/credit + economic data)",   note: undefined },
-            { role: "universe",   label: "Universe DB (cato_securities, read-only)",  note: undefined },
-          ] as { role: string; label: string; note?: string }[]
-        ).map(({ role, label, note }) => {
-          const f = electronForms[role];
-          if (!f) return null;
-          return (
-            <div key={role} className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-                  {label}
-                </h3>
-                {note && (
-                  <span className="rounded bg-ocean-accent/20 px-2 py-0.5 text-xs text-ocean-accent">
-                    {note}
-                  </span>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Field label="Host">
-                  <input className="np-input" value={f.host}
-                    onChange={(e) => updateElectronForm(role, { host: e.target.value })} />
-                </Field>
-                <Field label="Port">
-                  <input className="np-input" type="number" value={f.port}
-                    onChange={(e) => updateElectronForm(role, { port: Number(e.target.value) })} />
-                </Field>
-                <Field label="Database">
-                  <input className="np-input" value={f.database}
-                    onChange={(e) => updateElectronForm(role, { database: e.target.value })} />
-                </Field>
-                <Field label="Username">
-                  <input className="np-input" value={f.user}
-                    onChange={(e) => updateElectronForm(role, { user: e.target.value })} />
-                </Field>
-                <Field label="Password">
-                  <input className="np-input" type="password" placeholder="(leave blank to clear)"
-                    value={f.password}
-                    onChange={(e) => updateElectronForm(role, { password: e.target.value })} />
-                </Field>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button onClick={() => handleElectronSave(role)}
-                  className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80">
-                  Save &amp; restart backend
-                </button>
-                <button onClick={() => handleElectronTest(role)}
-                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                  Test connection
-                </button>
-                {role === "universe" && (
-                  <button onClick={handleSync}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                    Sync universe
-                  </button>
-                )}
-                {role === "macro" && (
-                  <button onClick={handleMacroIngest}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                    Backfill macro (FRED/ALFRED, since 2000)
-                  </button>
-                )}
-                {role === "securities" && (
-                  <>
-                    <label className="flex items-center gap-1 text-xs text-ocean-muted">
-                      <input type="number" min={1} max={25} value={years}
-                        aria-label="backfill-years"
-                        onChange={(e) => setYears(Math.max(1, Math.min(25, Number(e.target.value))))}
-                        className="np-input w-16" />
-                      yrs
-                    </label>
-                    <button onClick={() => handleIngest()}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                      Backfill prices
-                    </button>
-                    <button onClick={handleFactors}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                      Backfill factors
-                    </button>
-                    <input value={oneTicker}
-                      onChange={(e) => setOneTicker(e.target.value.toUpperCase())}
-                      placeholder="WEN" aria-label="backfill-one-ticker"
-                      className="np-input w-24" />
-                    <button onClick={() => handleIngest(parseTickers(oneTicker))}
-                      disabled={!oneTicker.trim()}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
-                      Backfill one
-                    </button>
-                    <button onClick={() => handleDiagnose(parseTickers(oneTicker))}
-                      disabled={!oneTicker.trim()}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
-                      Diagnose beta
-                    </button>
-                  </>
-                )}
-                {(electronDbStatus[role] || status[role === "universe" ? "UNIVERSE" : role === "macro" ? "MACRO" : role === "securities" ? "SECURITIES" : "PORTFOLIO"]) && (
-                  <span className="text-sm text-ocean-muted">
-                    {electronDbStatus[role] || status[role === "universe" ? "UNIVERSE" : role === "macro" ? "MACRO" : role === "securities" ? "SECURITIES" : "PORTFOLIO"]}
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })
-      ) : (
-        rows.map((row) => {
+      {!isElectron && rows.map((row) => {
           const f = forms[row.role] ?? EMPTY;
           return (
             <div
@@ -765,7 +764,7 @@ export function Settings({
             </div>
           );
         })
-      )}
+      }
 
       {betaDiag && <BetaDiagPanel diag={betaDiag} />}
     </div>

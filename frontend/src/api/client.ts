@@ -43,11 +43,16 @@ async function apiBaseUrl(): Promise<string> {
   if (_base !== null) return _base;
   try {
     const bridge = typeof window !== "undefined" ? window.neptune : undefined;
-    _base = bridge ? (await bridge.getApiBaseUrl()) || "" : "";
+    if (!bridge) {
+      _base = "";  // Browser mode: no bridge, use relative URLs permanently.
+      return _base;
+    }
+    const url = (await bridge.getApiBaseUrl()) || "";
+    if (url) _base = url;  // Only cache a real URL; a blank/failed IPC call retries next time.
+    return url;
   } catch {
-    _base = "";
+    return "";  // Transient IPC failure; don't cache so the next call retries.
   }
-  return _base;
 }
 
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
