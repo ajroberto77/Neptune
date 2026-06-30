@@ -59,7 +59,7 @@ const BARE_DEFAULTS = new Set(['', 'python', 'python3', 'python.exe']);
 function resolvePython(cfg) {
   const set = (cfg && cfg.python && cfg.python.executable || '').trim();
   if (set && !BARE_DEFAULTS.has(set)) return set;            // explicit override
-  return findVenvPython() || (process.platform === 'win32' ? 'python' : 'python3');
+  return findVenvPython() || (process.platform === 'win32' ? 'py' : 'python3');
 }
 
 function defaultConfig() {

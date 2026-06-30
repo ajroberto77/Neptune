@@ -17,6 +17,11 @@ import type {
 // cached after the first lookup.
 interface NeptuneBridge {
   getApiBaseUrl(): Promise<string>;
+  // Electron config (neptune-config.json in userData): the bootstrap that determines which DB the
+  // sidecar connects to. Works even when the backend is offline — no chicken-and-egg.
+  getConfig(): Promise<Record<string, unknown>>;
+  saveConfig(cfg: Record<string, unknown>): Promise<{ ok: boolean }>;
+  testDbConnection(db: { host: string; port: number; database: string; user: string; password: string }): Promise<{ ok: boolean; message: string }>;
   // Frameless-window controls (Electron only; absent in a plain browser).
   minimizeWindow?(): Promise<void>;
   toggleMaximizeWindow?(): Promise<boolean>;
