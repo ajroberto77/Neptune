@@ -18,6 +18,27 @@ first vertical slice · 🔵 LATER = deferred.
 - [ ] 🔵 Alembic migrations (Postgres dialect) for the full schema
 - [ ] 🔵 Tacitus / CATO / Mercury connectors
 
+### Modularity — Provider DI (Phase 1, done)
+
+> Goal: every place where a concrete external-data implementation was hardcoded in business
+> logic is now wired through a Protocol + factory, enabling provider swap without handler
+> changes (yfinance → Bloomberg B-PIPE in Phase 2+).
+
+- [x] Add `MacroProvider` Protocol + `RecordedMacroProvider` stub to `macro/providers.py`
+- [x] Create `neptune/providers.py` with shared factory functions (`build_price_provider`,
+      `build_factor_provider`, `build_macro_provider`) — single construction point for all
+      external-data providers; both FastAPI Depends layer and scheduler use these factories
+- [x] Add FastAPI `Depends` generators (`get_price_provider`, `get_factor_provider`,
+      `get_macro_provider`) in `api/main.py`; 400 surfaced from `get_macro_provider` when
+      no FRED key is configured (previously raised inside the handler body)
+- [x] Update five call sites in `api/main.py` to use injected providers:
+      `_try_backfill_prices`, `refresh_prices`, `ingest_prices`, `ingest_factor_panel`,
+      `ingest_macro`
+- [x] Remove `build_fred_provider` factory from `macro/ingest.py`; update `ingest_series`
+      and `ingest_catalog` type hints from `FredProvider` to `MacroProvider` (uses Protocol)
+- [x] Fix `scheduling/scheduler.py` to call `build_price_provider(session)` instead of
+      constructing `YFinanceProvider()` directly in the job body
+
 ### Unified identity & access (cross-platform) 🔵
 
 > **Decision (2026-06-01):** platform users, roles, and access are NOT built per-app. A
@@ -136,13 +157,17 @@ first vertical slice · 🔵 LATER = deferred.
       **Trade** tab: record-transaction form + per-position Close. Systematic-short executions
       recordable here (origination stays with the optimizer; book tag keeps I-03).
       `test_trade.py` + `Trade.test.tsx`.
+- [x] **DbMarketData flip — Stress endpoint** (`/portfolios/{id}/stress`): was using the
+      module-level `SyntheticMarketData()` singleton for scenarios and VaR. Now uses
+      `market_data_for(session, portfolio)` like every other risk endpoint — real prices when
+      the benchmark is ingested, synthetic only as a fallback (fresh DB / tests).
 - [~] **DbMarketData flip** (fix for nonsense P&L/price on real tickers): `market_data_for()`
       picks real `DbMarketData` when the benchmark + EVERY portfolio ticker have stored prices,
       else synthetic (all-or-nothing per book — a real benchmark can't price a synthetic name;
-      keeps the seeded demo + tests synthetic). Wired into `/positions`, `/risk`, `/pnl`.
+      keeps the seeded demo + tests synthetic). Wired into `/positions`, `/risk`, `/pnl`, `/stress`.
       Benchmark **SPY** ingestable via `create_if_missing` (negative instrument_id, outside the
       universe); `NEPTUNE_BENCHMARK` configurable. `test_market_flip.py`.
-      REMAINING: flip Stress; flip the hedge optimizer once a REAL shortable universe replaces
+      REMAINING: flip the hedge optimizer once a REAL shortable universe replaces
       the synthetic `live_universe` candidate set.
 - [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
       it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show

@@ -12,8 +12,8 @@ import logging
 
 from neptune.config import settings
 from neptune.db.base import SessionLocal
+from neptune.providers import build_price_provider
 from neptune.scheduling.prices import refresh_tracked_prices
-from neptune.securities.providers import YFinanceProvider
 from neptune.settings_store.app_settings import AppSettingsService
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def _run_refresh() -> None:
     try:
         with SessionLocal() as session:
             result = refresh_tracked_prices(
-                session, benchmark=settings.benchmark, provider=YFinanceProvider()
+                session, benchmark=settings.benchmark, provider=build_price_provider(session)
             )
         log.info("scheduled price refresh: %s", result)
     except Exception:  # noqa: BLE001 — keep the scheduler alive across failures

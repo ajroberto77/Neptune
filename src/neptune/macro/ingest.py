@@ -16,8 +16,7 @@ from sqlalchemy.orm import Session
 
 from neptune.macro import repository as repo
 from neptune.macro.models import MacroSeries, SeriesClass
-from neptune.macro.providers import FredProvider
-from neptune.settings_store.credentials import CredentialsService
+from neptune.macro.providers import MacroProvider
 
 DEFAULT_START = date(2000, 1, 1)  # backfill depth (locked decision: to 2000)
 _FRED_SOURCES = {"FRED", "ALFRED"}  # series the FRED key can serve
@@ -30,19 +29,8 @@ def _codes(series: MacroSeries) -> list[str]:
     return [c.strip() for c in (series.source_code or "").split(",") if c.strip()]
 
 
-def build_fred_provider(portfolio_session: Session) -> FredProvider:
-    """A configured FRED client, keyed from the credentials store (UI-stored > env). Raises if
-    no key is configured — surfaced as a 400 by the endpoint."""
-    key = CredentialsService(portfolio_session).resolve_key("FRED")
-    if not key:
-        raise RuntimeError(
-            "no FRED API key configured — set one in Settings → Data provider API keys"
-        )
-    return FredProvider(key)
-
-
 def ingest_series(
-    macro_sess: Session, series: MacroSeries, provider: FredProvider, *, start: date = DEFAULT_START
+    macro_sess: Session, series: MacroSeries, provider: MacroProvider, *, start: date = DEFAULT_START
 ) -> int:
     """Pull and store one series. Returns the number of points written."""
     codes = _codes(series)
@@ -75,7 +63,7 @@ def ingest_series(
 
 def ingest_catalog(
     macro_sess: Session,
-    provider: FredProvider,
+    provider: MacroProvider,
     *,
     start: date = DEFAULT_START,
     only: set[str] | None = None,

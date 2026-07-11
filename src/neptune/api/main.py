@@ -69,12 +69,14 @@ from neptune.settings_store.service import ConnectionSettingsService
 from neptune.settings_store.credentials import CredentialsService
 from neptune.macro import ingest as macro_ingest
 from neptune.macro.catalog import seed_catalog as seed_macro_catalog
+from neptune.macro.providers import MacroProvider
+from neptune.providers import build_factor_provider, build_macro_provider, build_price_provider
+from neptune.securities.factor_providers import FactorProvider
 from neptune.securities.ingest import ingest_ticker
 from neptune.securities.factor_ingest import ingest_factors
-from neptune.securities.factor_providers import KenFrenchProvider
 from neptune.securities.models import Price, Security
 from neptune.securities.models import FactorReturn
-from neptune.securities.providers import YFinanceProvider
+from neptune.securities.providers import PriceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
 # Synthetic market data — the fallback (and the candidate-universe source for hedging,
@@ -130,7 +132,7 @@ def _try_backfill_prices(session: Session, *tickers: str) -> None:
 
     end = date.today()
     start = end - timedelta(days=DEFAULT_BACKFILL_DAYS)
-    provider = YFinanceProvider()
+    provider = build_price_provider(session)
     try:
         with securities_session(session) as sec:
             for t in dict.fromkeys(tickers):
@@ -313,6 +315,21 @@ app.add_middleware(
 def get_session():
     with SessionLocal() as session:
         yield session
+
+
+def get_price_provider(session: Session = Depends(get_session)) -> PriceProvider:
+    return build_price_provider(session)
+
+
+def get_factor_provider() -> FactorProvider:
+    return build_factor_provider()
+
+
+def get_macro_provider(session: Session = Depends(get_session)) -> MacroProvider:
+    try:
+        return build_macro_provider(session)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # Read-only roll-up views (virtual portfolios). You cannot trade against a roll-up — pick a
@@ -902,7 +919,11 @@ def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
 
 
 @app.post("/portfolios/{portfolio_id}/refresh-prices")
-def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
+def refresh_prices(
+    portfolio_id: str,
+    session: Session = Depends(get_session),
+    provider: PriceProvider = Depends(get_price_provider),
+):
     """Re-pull the latest prices for this book's tickers + the benchmark (a recent window,
     so today's live bar is updated), so day P&L reflects current prices. Requires yfinance;
     returns 503 if it's unavailable. Per-ticker failures are collected, not fatal."""
@@ -911,7 +932,6 @@ def refresh_prices(portfolio_id: str, session: Session = Depends(get_session)):
     tickers = {p.ticker for p in portfolio.positions} | {settings.benchmark}
     end = date.today()
     start = end - timedelta(days=7)  # short window — just refresh the latest bars
-    provider = YFinanceProvider()
     updated, errors = 0, []
     with securities_session(session) as sec_session:
         for ticker in tickers:
@@ -1414,24 +1434,25 @@ def stress(
         Scenario(name=s.name, market_shock=s.market_shock, factor_shocks=s.factor_shocks)
         for s in body.scenarios
     ]
-    results = stress_engine.run_scenarios(portfolio, MARKET_DATA, scenarios)
+    with market_data_for(session, portfolio) as md:
+        results = stress_engine.run_scenarios(portfolio, md, scenarios)
 
-    def _var(method: str):
-        v = stress_engine.value_at_risk(
-            portfolio, MARKET_DATA, confidence=body.confidence,
-            horizon_days=body.horizon_days, method=method,
-        )
-        return {
-            "method": v.method,
-            "confidence": v.confidence,
-            "horizon_days": v.horizon_days,
-            "volatility": v.volatility,
-            "var": v.var,
-            "expected_shortfall": v.expected_shortfall,
-            "n_observations": v.n_observations,
-        }
+        def _var(method: str):
+            v = stress_engine.value_at_risk(
+                portfolio, md, confidence=body.confidence,
+                horizon_days=body.horizon_days, method=method,
+            )
+            return {
+                "method": v.method,
+                "confidence": v.confidence,
+                "horizon_days": v.horizon_days,
+                "volatility": v.volatility,
+                "var": v.var,
+                "expected_shortfall": v.expected_shortfall,
+                "n_observations": v.n_observations,
+            }
 
-    var_methods = [_var(m) for m in ("parametric", "historical", "monte_carlo")]
+        var_methods = [_var(m) for m in ("parametric", "historical", "monte_carlo")]
     return {
         "portfolio_id": portfolio_id,
         "scenarios": [
@@ -1526,14 +1547,14 @@ class MacroIngestIn(BaseModel):
 
 
 @app.post("/macro/ingest")
-def ingest_macro(body: MacroIngestIn, session: Session = Depends(get_session)):
+def ingest_macro(
+    body: MacroIngestIn,
+    session: Session = Depends(get_session),
+    provider: MacroProvider = Depends(get_macro_provider),
+):
     """Pull the registered macro series (rates/credit via FRED, economic via ALFRED vintages)
     into the macro DB. Requires a FRED key (Settings → Data provider API keys) and network —
     returns 400 without a key and 503 if the feed is unreachable, rather than failing opaquely."""
-    try:
-        provider = macro_ingest.build_fred_provider(session)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     only = set(body.series) if body.series else None
     try:
         with macro_session(session) as mac:
@@ -1653,14 +1674,17 @@ class IngestIn(BaseModel):
 
 
 @app.post("/securities/ingest")
-def ingest_prices(body: IngestIn, session: Session = Depends(get_session)):
+def ingest_prices(
+    body: IngestIn,
+    session: Session = Depends(get_session),
+    provider: PriceProvider = Depends(get_price_provider),
+):
     """Backfill OHLCV/dividends/splits from yfinance into the securities DB for the given
     tickers (or the whole projection). Requires network + the optional yfinance package, so
     it returns 503 when the feed is unavailable rather than failing opaquely."""
     end = body.end or date.today()
     days = round(body.years * 365) + 30 if body.years else DEFAULT_BACKFILL_DAYS
     start = body.start or (end - timedelta(days=days))
-    provider = YFinanceProvider()
     results = []
     with securities_session(session) as sec_session:
         tickers = body.tickers or [
@@ -1737,13 +1761,16 @@ class FactorIngestIn(BaseModel):
 
 
 @app.post("/factors/ingest")
-def ingest_factor_panel(body: FactorIngestIn, session: Session = Depends(get_session)):
+def ingest_factor_panel(
+    body: FactorIngestIn,
+    session: Session = Depends(get_session),
+    provider: FactorProvider = Depends(get_factor_provider),
+):
     """Backfill the Ken French daily factor panel (SMB/HML/MOM, plus Mkt-RF/RF) into the
     securities DB. Fetched from the Ken French Data Library's CSV zips over HTTPS, so it
     returns 503 when the feed is unreachable rather than failing opaquely."""
     end = body.end or date.today()
     start = body.start or (end - timedelta(days=DEFAULT_BACKFILL_DAYS))
-    provider = KenFrenchProvider()
     with securities_session(session) as sec_session:
         try:
             counts = ingest_factors(sec_session, provider, start, end)

@@ -7,6 +7,31 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-07-11 — Construct providers via factory, never inside route handlers or job bodies
+
+**Pattern (architecture audit):** When a `Protocol` exists for an external-data service
+(`PriceProvider`, `FactorProvider`, `MacroProvider`), never call `ConcreteImpl()` inside a
+route handler body or an APScheduler job. That hardwires the handler to one third-party
+library and makes tests require live network access — the Protocol is no longer doing its job.
+
+The correct pattern:
+1. A **shared factory function** (e.g. `build_price_provider(session)` in `neptune/providers.py`)
+   is the single construction point. It reads credentials if needed and returns the concrete impl.
+2. **FastAPI Depends generators** (`get_price_provider`, etc.) wrap the factory — handlers declare
+   `provider: PriceProvider = Depends(get_price_provider)` and never construct anything.
+3. **APScheduler jobs** can't use FastAPI Depends, so they call the factory directly inside the
+   job body (already receives a `Session`). Same factory; no duplication.
+4. When the swap comes (yfinance → Bloomberg B-PIPE), only the factory changes. No handler bodies
+   are touched.
+
+**Also applied:** The macro `build_fred_provider(session)` factory that lived in `macro/ingest.py`
+was a one-off deviation of this pattern — the route handler called it and caught the RuntimeError
+inline. After the fix: `get_macro_provider` Depends raises `HTTPException(400)` directly, which
+FastAPI surfaces with the correct status code; `macro/ingest.py` functions accept `MacroProvider`
+(the Protocol), making them independent of the concrete FRED implementation.
+
+---
+
 ## 2026-06-03 — Factors are an extensible POOL (data), not a fixed `STYLE_FACTORS` constant — and we don't hedge all of them
 
 **Correction (PM, direction-setting — design deferred, captured so we resume cleanly):** I built
