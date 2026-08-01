@@ -17,7 +17,16 @@ const rows: ConnectionRow[] = [
     username: "readonly", has_password: true, configured: true, bootstrap: false },
 ];
 
-const saveConnection = vi.fn(async (_role: string, _body: unknown) => rows[3]);
+// PORTFOLIO's response carries extra fields the other three roles' saves don't (see
+// api/main.py's PORTFOLIO branch) -- overridable per-test so the env_updated:false path
+// (repointed live, but couldn't persist to .env) can be exercised.
+let portfolioSaveExtra: { reconnected?: boolean; env_updated?: boolean } = {
+  reconnected: true, env_updated: true,
+};
+const saveConnection = vi.fn(async (role: string, _body: unknown) => {
+  const base = rows.find((r) => r.role === role) ?? rows[3];
+  return role === "PORTFOLIO" ? { ...base, ...portfolioSaveExtra } : base;
+});
 const testConnection = vi.fn(async (role: string) => ({ role, ok: true }));
 const syncUniverse = vi.fn(async () => ({ synced: 42, source: "cato_securities" }));
 const ingestPrices = vi.fn(async (_tickers?: string[], _years?: number) => ({
@@ -123,6 +132,7 @@ describe("Settings", () => {
     createPortfolio.mockClear();
     deletePortfolio.mockClear();
     portfolioList = [];
+    portfolioSaveExtra = { reconnected: true, env_updated: true };
   });
 
   it("groups the databases by family and flags the bootstrap DB", async () => {
@@ -136,8 +146,10 @@ describe("Settings", () => {
     expect(screen.getByText("Securities (market data)")).toBeInTheDocument();
     expect(screen.getByText("Macro (rates, credit, economic)")).toBeInTheDocument();
     expect(screen.getByText("Universe (cato_securities)")).toBeInTheDocument();
-    // The portfolio DB is marked restart-only.
-    expect(screen.getByText(/applies on restart/)).toBeInTheDocument();
+    // The portfolio DB is flagged as the bootstrap; on the web path (jsdom has no
+    // window.neptune) saving it now reconnects live rather than needing a restart.
+    expect(screen.getByText(/bootstrap/)).toBeInTheDocument();
+    expect(screen.getByText(/reconnects immediately/)).toBeInTheDocument();
   });
 
   it("navigates between sections from the rail", async () => {
@@ -191,6 +203,23 @@ describe("Settings", () => {
     expect(saved.MACRO.database).toBe("neptune_macro");
     // CATO is a different family and is untouched.
     expect(saved.UNIVERSE).toBeUndefined();
+  });
+
+  it("warns when the portfolio DB reconnects live but the .env write fails", async () => {
+    // The live swap already took effect (see api/main.py) even when env_updated is false —
+    // this is a durability warning, not a failure to save.
+    portfolioSaveExtra = { reconnected: true, env_updated: false };
+    render(<Settings />);
+    gotoSection("Databases");
+    await screen.findByText("Neptune databases");
+    fireEvent.change(screen.getByLabelText("neptune-shared-host"), {
+      target: { value: "pg-prod.internal" },
+    });
+    fireEvent.click(screen.getByLabelText("save-settings"));
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledTimes(3));
+    expect(
+      await screen.findByText(/couldn.t save to \.env — this will revert on the next restart/),
+    ).toBeInTheDocument();
   });
 
   it("disables Test connection on an edited row, since it tests the stored URL", async () => {

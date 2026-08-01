@@ -67,13 +67,48 @@ def make_engine(url: str | None = None):
     return eng
 
 
+class _RebindableSessionmaker:
+    """A sessionmaker whose target engine can be swapped in place.
+
+    Every existing ``from neptune.db.base import SessionLocal`` binds to THIS ONE OBJECT
+    at import time (api/main.py, scheduling/scheduler.py). Reassigning the module-level
+    ``SessionLocal`` name later would be invisible to those callers — Python copies the
+    reference at import time, so a later ``db.base.SessionLocal = x`` doesn't reach them.
+    Mutating this object's internal engine instead is visible everywhere immediately,
+    since every caller holds a reference to the same object. This is what lets the
+    portfolio DB be re-pointed live, from a request handler, with no process restart —
+    see ``db.runtime.repoint_portfolio``.
+    """
+
+    def __init__(self, engine):
+        self._engine = engine
+        self._factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+    def __call__(self, *args, **kwargs):
+        return self._factory(*args, **kwargs)
+
+    @property
+    def bind(self):
+        """The engine sessions are currently created against."""
+        return self._engine
+
+    def rebind(self, engine) -> None:
+        self._engine = engine
+        self._factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+
 # --- Portfolio database (the canonical app DB; default target) -------------------
 portfolio_engine = make_engine(settings.portfolio_url)
-PortfolioSession = sessionmaker(bind=portfolio_engine, expire_on_commit=False, future=True)
+SessionLocal = _RebindableSessionmaker(portfolio_engine)
 
-# Backward-compatible aliases.
+# Backward-compatible aliases. NOTE: ``engine`` is a snapshot taken at import time, not a
+# live reference — after ``repoint_portfolio`` swaps the session factory, ``engine`` here
+# still points at the ORIGINAL database. Nothing in this codebase queries it directly
+# (grep confirms only ``SessionLocal()`` is ever used to talk to the portfolio DB); it
+# exists purely as `init_db`'s default parameter, which a repoint always overrides
+# explicitly. Prefer ``SessionLocal.bind`` if you need the current engine.
 engine = portfolio_engine
-SessionLocal = PortfolioSession
+PortfolioSession = SessionLocal
 
 # --- Securities database (market data) -------------------------------------------
 securities_engine = make_engine(settings.securities_url)

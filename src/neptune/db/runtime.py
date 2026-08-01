@@ -16,12 +16,16 @@ automatically; no explicit cache invalidation needed.
 """
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from neptune.config import settings
 from neptune.db.base import (
+    SessionLocal,
+    init_db,
     init_macro_db,
     init_securities_db,
     macro_engine,
@@ -94,3 +98,43 @@ def macro_session(portfolio_session: Session):
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     with factory() as session:
         yield session
+
+
+# The portfolio DB is different from the other three roles: it physically holds the
+# db_connections table, so it can't resolve its OWN target by reading a row from itself.
+# It has therefore always been env-only, fixed at process start — repointing it required
+# editing .env and restarting. That's a real gap on the plain API path (Electron already
+# closes it: saving there rewrites its own config file and respawns the whole backend).
+# ``repoint_portfolio`` closes it without a restart: SessionLocal is one long-lived object
+# every existing caller already imported (see _RebindableSessionmaker's docstring), so
+# swapping its target engine takes effect for every future request immediately.
+_portfolio_lock = threading.Lock()
+
+
+def repoint_portfolio(url: str):
+    """Point the running app's portfolio-DB session factory at ``url``, live.
+
+    Test-connects first — a bad host/port/credential never partially swaps anything; the
+    old target keeps serving until a new one proves reachable. On success, ensures the
+    target's schema exists (a genuinely fresh database gets its tables the same way a
+    fresh install would) and swaps ``SessionLocal`` to it. Returns the new engine.
+
+    This does not migrate data — repointing to a different database is exactly that, a
+    different origin of truth, not a copy of the current one. Roles whose own connection
+    is stored IN the portfolio DB (SECURITIES/MACRO/UNIVERSE) fall back to their env
+    defaults on the new target unless re-saved there; the caller is responsible for any
+    higher-level bootstrapping (e.g. re-seeding ownership scaffolding) since that lives
+    alongside the other startup logic, not here.
+    """
+    new_engine = make_engine(url)
+    try:
+        with new_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        new_engine.dispose()
+        raise
+
+    with _portfolio_lock:
+        init_db(target_engine=new_engine)  # idempotent create_all + additive bridges
+        SessionLocal.rebind(new_engine)
+    return new_engine

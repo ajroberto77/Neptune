@@ -27,7 +27,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from neptune.config import settings
+from neptune.config import settings, write_env_var
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.data.db_market import DbMarketData, TickerNotFound
@@ -42,7 +42,7 @@ from neptune.db.base import (
     make_engine,
 )
 from neptune.db.models import PositionORM
-from neptune.db.runtime import macro_session, securities_session
+from neptune.db.runtime import macro_session, repoint_portfolio, securities_session
 from neptune.domain.models import (
     BookType, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
     TradeOrigin,
@@ -64,7 +64,7 @@ from neptune.risk import stress as stress_engine
 from neptune.risk.summary import summarize
 from neptune.stress import STANDARD_SCENARIOS, Scenario
 from neptune.positions.service import ConflictError, PositionService
-from neptune.settings_store import ConnectionRole
+from neptune.settings_store import ConnectionConfig, ConnectionRole, DEFAULT_DRIVER
 from neptune.settings_store.service import ConnectionSettingsService
 from neptune.settings_store.credentials import CredentialsService
 from neptune.macro import ingest as macro_ingest
@@ -1587,6 +1587,8 @@ def list_connections(session: Session = Depends(get_session)):
 def upsert_connection(
     role: ConnectionRole, body: ConnectionIn, session: Session = Depends(get_session)
 ):
+    if role is ConnectionRole.PORTFOLIO:
+        return _repoint_portfolio_connection(body)
     svc = ConnectionSettingsService(session)
     cfg = svc.upsert(
         role, host=body.host, port=body.port, database=body.database,
@@ -1594,6 +1596,53 @@ def upsert_connection(
         driver=body.driver,
     )
     return cfg.masked()
+
+
+def _repoint_portfolio_connection(body: ConnectionIn) -> dict:
+    """PORTFOLIO is the one role that can't resolve its own target from a stored row (the
+    row lives IN the database being pointed to) — every other role just calls
+    ``ConnectionSettingsService.upsert``. Live-repointing it is a bigger operation: test the
+    target, ensure its schema, re-seed ownership scaffolding if it's fresh (same idempotent
+    step ``lifespan`` runs at boot), swap every future request onto it, then best-effort
+    persist to ``.env`` so a later restart doesn't revert. A failed test-connect changes
+    nothing — the old target keeps serving until a new one proves reachable."""
+    cfg = ConnectionConfig(
+        role=ConnectionRole.PORTFOLIO, host=body.host, port=body.port, database=body.database,
+        username=body.username, password=body.password or None, sslmode=body.sslmode,
+        driver=body.driver or DEFAULT_DRIVER,
+    )
+    url = cfg.url()
+    try:
+        repoint_portfolio(url)
+    except Exception as exc:  # noqa: BLE001 — sanitized: never echo the URL/password
+        raise HTTPException(
+            status_code=400, detail=f"could not connect: {type(exc).__name__}"
+        ) from exc
+
+    # From here on SessionLocal() opens sessions against the NEW database — a fresh session,
+    # not the request's own `session` param, which is still bound to the database we just
+    # left. Re-seed the same idempotent ownership scaffolding a fresh boot would create, and
+    # record the connection there too, so Settings reflects it going forward (the OLD
+    # database's row, if it had one, is no longer read by anything).
+    with SessionLocal() as new_session:
+        seed_golden(
+            new_session,
+            with_demo_positions=settings.seed_demo_positions,
+            with_book=settings.seed_demo_positions,
+        )
+        ConnectionSettingsService(new_session).upsert(
+            ConnectionRole.PORTFOLIO, host=body.host, port=body.port, database=body.database,
+            username=body.username, password=body.password, sslmode=body.sslmode,
+            driver=body.driver,
+        )
+
+    env_updated = True
+    try:
+        write_env_var("PORTFOLIO_DATABASE_URL", url)
+    except OSError:
+        env_updated = False  # live swap still stands; just won't survive a restart
+
+    return {**cfg.masked(), "reconnected": True, "env_updated": env_updated}
 
 
 @app.post("/settings/connections/{role}/test")

@@ -170,6 +170,10 @@ export interface ConnectionRow {
   configured: boolean;
   bootstrap?: boolean;
   source?: "stored" | "env" | "none";
+  // PORTFOLIO only: present on the response to a save that actually repointed the running
+  // app (see api/main.py's PORTFOLIO branch) -- every other role's save doesn't set these.
+  reconnected?: boolean;
+  env_updated?: boolean;
 }
 
 export interface ConnectionInput {

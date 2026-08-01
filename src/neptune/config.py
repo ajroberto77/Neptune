@@ -172,6 +172,46 @@ def _dotenv_values(path: str = ".env") -> dict[str, str]:
     return values
 
 
+def write_env_var(env_name: str, value: str, path: str = ".env") -> None:
+    """Persist ``env_name=value`` into the ``.env`` file, so it survives a later restart.
+
+    Used after a live re-point (see ``db.runtime.repoint_portfolio``) — the in-process
+    engine swap takes effect immediately, but without this the change would be lost the
+    next time the process starts, reverting silently to whatever ``.env``/the shell still
+    say. Updates the FIRST existing line for either the bare name or its ``NEPTUNE_``-
+    prefixed form (matching whichever convention the file already uses); appends a new
+    bare line — the convention ``.env.example`` uses — only if neither is present. Every
+    other line is left untouched. Writes atomically (temp file + ``os.replace``) so a
+    crash mid-write can never leave a corrupt ``.env`` behind. Raises ``OSError`` if the
+    file can't be written (e.g. read-only filesystem) — the caller decides whether that's
+    fatal; a failed write here never affects the already-applied in-memory change.
+    """
+    prefixed = f"NEPTUNE_{env_name}"
+    lines: list[str] = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8-sig") as fh:
+            lines = fh.read().splitlines()
+
+    def key_of(line: str) -> str | None:
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            return None
+        return s.partition("=")[0].strip()
+
+    for i, line in enumerate(lines):
+        k = key_of(line)
+        if k in (env_name, prefixed):
+            lines[i] = f"{k}={value}"
+            break
+    else:
+        lines.append(f"{env_name}={value}")
+
+    tmp_path = f"{path}.tmp-{os.getpid()}"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.replace(tmp_path, path)
+
+
 def get_settings() -> Settings:
     """Resolve settings with precedence: shell environment > ``.env`` file > defaults.
     Shell-first keeps tests (which set ``DATABASE_URL`` in ``os.environ``) authoritative."""

@@ -295,7 +295,7 @@ export function Settings({
           const c = conns[m.role];
           if (!c) continue;
           try {
-            await saveConnection(m.role, {
+            const saved = await saveConnection(m.role, {
               host: c.host,
               port: Number(c.port),
               database: c.database,
@@ -305,6 +305,13 @@ export function Settings({
               // sslmode is written unconditionally by the backend, so always resend it.
               sslmode: c.sslmode || null,
             });
+            // PORTFOLIO only: the swap already took effect live even when this is false —
+            // it just means the change won't survive a restart (see api/main.py).
+            if (saved.env_updated === false) {
+              failures.push(
+                `${m.label}: reconnected, but couldn't save to .env — this will revert on the next restart`,
+              );
+            }
           } catch (e) {
             failures.push(`${m.label}: ${String(e)}`);
           }
@@ -636,6 +643,7 @@ export function Settings({
                     status={status}
                     rowMeta={rowMeta}
                     showSslmode={!isElectron}
+                    isElectron={isElectron}
                     testDisabledFor={(role) =>
                       !isElectron && dirtyRoles.has(role)
                         ? "Save first — this tests the stored connection, not the edits above."
