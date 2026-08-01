@@ -47,6 +47,13 @@ const LONGONLY_GROUP_ID = "__long_only__"; // long-only books only
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("Positions");
+  // Where Settings' Close returns to — the tab the gear was pressed from.
+  const [settingsReturnTab, setSettingsReturnTab] = useState<Tab>("Positions");
+
+  function openSettings() {
+    if (tab !== "Settings") setSettingsReturnTab(tab);
+    setTab("Settings");
+  }
   // The selected portfolio. Defaults to the Consolidated roll-up across every book.
   const [portfolioId, setPortfolioId] = useState<string>(CONSOLIDATED_ID);
   const [portfolios, setPortfolios] = useState<PortfolioMeta[]>([]);
@@ -403,7 +410,7 @@ export default function App() {
       <TitleBar
         status={status}
         testMode={inTestMode}
-        onSettings={() => setTab("Settings")}
+        onSettings={openSettings}
       />
       <TabBar tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
       <div className="flex min-h-0 flex-1">
@@ -440,8 +447,16 @@ export default function App() {
           />
         )}
 
-        <main className="min-w-0 flex-1 overflow-auto px-6 py-6">
-        {error && (
+        {/* Settings owns its own header + nav rail + scroll container, so it gets a flush,
+            unpadded, non-scrolling frame; every other tab keeps the padded scroller. */}
+        <main
+          className={
+            tab === "Settings"
+              ? "flex min-w-0 flex-1 overflow-hidden"
+              : "min-w-0 flex-1 overflow-auto px-6 py-6"
+          }
+        >
+        {error && tab !== "Settings" && (
           <div className="mb-4 rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">
             {error}
           </div>
@@ -455,7 +470,7 @@ export default function App() {
               No portfolios yet. Add your first book to start tracking risk and building the hedge.
             </p>
             <button
-              onClick={() => setTab("Settings")}
+              onClick={openSettings}
               className="mt-3 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80"
             >
               Add a portfolio
@@ -468,6 +483,7 @@ export default function App() {
         {tab === "Settings" ? (
           <Settings
             onPortfoliosChanged={reloadPortfolios}
+            onClose={() => setTab(settingsReturnTab)}
             canTestMode={canTestMode}
             inTestMode={inTestMode}
             dbReachable={dataOk}

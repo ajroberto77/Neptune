@@ -1,25 +1,11 @@
 import { useEffect, useState } from "react";
 import type { BetaDiagnostics, ConnectionRow, CredentialRow } from "../types";
-import type {
-  EntityRow,
-  FirmRow,
-  MacroCatalogRow,
-  PersonRow,
-  PortfolioMeta,
-  SecuritiesHealth,
-} from "../api/client";
+import type { MacroCatalogRow } from "../api/client";
 import {
-  createPortfolio,
-  deletePortfolio,
   fetchBetaDiagnostics,
   fetchConnections,
   fetchCredentials,
-  fetchEntities,
-  fetchFirms,
   fetchMacroCatalog,
-  fetchPeople,
-  fetchPortfolios,
-  fetchSecuritiesHealth,
   ingestFactors,
   ingestMacro,
   ingestPrices,
@@ -28,37 +14,36 @@ import {
   syncUniverse,
   testConnection,
 } from "../api/client";
-
-const ROLE_LABELS: Record<string, string> = {
-  PORTFOLIO: "Portfolio DB (app)",
-  SECURITIES: "Securities DB (market data)",
-  MACRO: "Macro DB (rates/credit + economic data)",
-  UNIVERSE: "Universe DB (cato_securities, read-only)",
-};
+import { BetaDiagPanel } from "./settings/BetaDiagPanel";
+import { DataHealth } from "./settings/DataHealth";
+import { DbCard } from "./settings/DbCard";
+import { PortfoliosPanel } from "./settings/PortfoliosPanel";
+import { Card, CardTitle, Field, SectionLabel } from "./settings/primitives";
+import { ALL_MEMBERS, DB_FAMILIES, EMPTY_CONN } from "./settings/families";
+import type { DbConn, DbRole } from "./settings/families";
 
 const PROVIDER_LABELS: Record<string, string> = {
   FRED: "FRED / ALFRED — macro data (rates, credit, economic; one key serves both)",
 };
 
-type Form = {
-  host: string;
-  port: number;
-  database: string;
-  username: string;
-  password: string;
-  sslmode: string;
-};
+type SectionId =
+  | "general"
+  | "databases"
+  | "keys"
+  | "portfolios"
+  | "ingest"
+  | "diagnostics";
 
-const EMPTY: Form = {
-  host: "",
-  port: 5432,
-  database: "",
-  username: "",
-  password: "",
-  sslmode: "",
-};
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "databases", label: "Databases" },
+  { id: "keys", label: "API Keys" },
+  { id: "portfolios", label: "Portfolios" },
+  { id: "ingest", label: "Data Ingest" },
+  { id: "diagnostics", label: "Diagnostics" },
+];
 
-function rowToForm(row: ConnectionRow): Form {
+function rowToConn(row: ConnectionRow): DbConn {
   return {
     host: row.host ?? "",
     port: row.port ?? 5432,
@@ -71,6 +56,8 @@ function rowToForm(row: ConnectionRow): Form {
 
 interface SettingsProps {
   onPortfoliosChanged?: () => void;
+  /** Leaves the Settings page. Rendered as the header's Close button when provided. */
+  onClose?: () => void;
   /** Test Mode is only possible inside the Electron shell (it relaunches the backend). */
   canTestMode?: boolean;
   inTestMode?: boolean;
@@ -87,11 +74,12 @@ interface SettingsProps {
   pricing?: boolean;
 }
 
-/** Settings tab: point Neptune at the right database instances. The password field is
- *  write-only — left blank, it preserves the stored secret. ``onPortfoliosChanged`` lets the
- *  app refresh its book switcher after a book is added or removed here. */
+/** Settings: a sidebar-navigated config page. Databases are presented by family (Neptune's own
+ *  vs CATO's read-only master) rather than by internal role; ingest actions live in their own
+ *  section so they can move to the Iridium Backend without disturbing the rest. */
 export function Settings({
   onPortfoliosChanged,
+  onClose,
   canTestMode = false,
   inTestMode = false,
   dbReachable = null,
@@ -104,13 +92,21 @@ export function Settings({
   lastPriced,
   pricing,
 }: SettingsProps = {}) {
+  const [section, setSection] = useState<SectionId>("general");
+
   const [rows, setRows] = useState<ConnectionRow[]>([]);
-  const [forms, setForms] = useState<Record<string, Form>>({});
+  /** One normalized form per role, whichever config path is live. */
+  const [conns, setConns] = useState<Record<string, DbConn>>({});
+  /** Roles edited since their last save — the API path can't test unsaved values. */
+  const [dirtyRoles, setDirtyRoles] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [oneTicker, setOneTicker] = useState("");
+
+  const [ingestTicker, setIngestTicker] = useState("");
+  const [diagTicker, setDiagTicker] = useState("");
   const [years, setYears] = useState(7); // backfill depth (more = deeper backtest history)
   const [betaDiag, setBetaDiag] = useState<BetaDiagnostics | null>(null);
+
   const [creds, setCreds] = useState<CredentialRow[]>([]);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [keyStatus, setKeyStatus] = useState<Record<string, string>>({});
@@ -119,27 +115,32 @@ export function Settings({
   // Electron IPC-based DB config: reads/writes the local neptune-config.json in Electron's
   // userData directory, which determines which Postgres the backend sidecar connects to.
   // This path works even when the backend is completely offline (no chicken-and-egg problem).
-  type DbForm = { host: string; port: number; database: string; user: string; password: string };
   const [electronCfg, setElectronCfg] = useState<Record<string, unknown> | null>(null);
-  const [electronForms, setElectronForms] = useState<Record<string, DbForm>>({});
-  const [electronDbStatus, setElectronDbStatus] = useState<Record<string, string>>({});
   const isElectron = typeof window !== "undefined" && Boolean(window.neptune?.saveConfig);
 
   function load() {
     fetchConnections()
       .then((rs) => {
         setRows(rs);
-        const f: Record<string, Form> = {};
-        for (const r of rs) f[r.role] = r.configured ? rowToForm(r) : { ...EMPTY };
-        setForms(f);
+        // In Electron the config file is the source of truth for the forms; the API rows are
+        // still fetched for their badges (from .env / bootstrap), but must not clobber them.
+        if (isElectron) return;
+        const next: Record<string, DbConn> = {};
+        for (const r of rs) next[r.role] = r.configured ? rowToConn(r) : { ...EMPTY_CONN };
+        setConns(next);
+        setDirtyRoles(new Set());
       })
-      .catch((e) => { if (!isElectron) setError(String(e)); });
+      .catch((e) => {
+        if (!isElectron) setError(String(e));
+      });
   }
 
   function loadCreds() {
     fetchCredentials()
       .then(setCreds)
-      .catch((e) => { if (!isElectron) setError(String(e)); });
+      .catch((e) => {
+        if (!isElectron) setError(String(e));
+      });
   }
 
   function loadCatalog() {
@@ -156,26 +157,32 @@ export function Settings({
 
   useEffect(() => {
     if (!isElectron) return;
-    window.neptune!.getConfig().then((cfg) => {
-      setElectronCfg(cfg);
-      const toForm = (key: string): DbForm => {
-        const d = (cfg as Record<string, Record<string, unknown>>)[key] ?? {};
-        return {
-          host: (d.host as string) ?? "localhost",
-          port: Number(d.port ?? 5432),
-          database: (d.database as string) ?? "",
-          user: (d.user as string) ?? "postgres",
-          password: (d.password as string) ?? "",
-        };
-      };
-      setElectronForms({
-        portfolio: toForm("portfolioDb"),
-        securities: toForm("securitiesDb"),
-        macro: toForm("macroDb"),
-        universe: toForm("universeDb"),
-      });
-    }).catch(() => {});
+    window
+      .neptune!.getConfig()
+      .then((cfg) => {
+        setElectronCfg(cfg);
+        const next: Record<string, DbConn> = {};
+        for (const m of ALL_MEMBERS) {
+          const d = (cfg as Record<string, Record<string, unknown>>)[m.electronKey] ?? {};
+          next[m.role] = {
+            host: (d.host as string) ?? "localhost",
+            port: Number(d.port ?? 5432),
+            database: (d.database as string) ?? "",
+            username: (d.user as string) ?? "postgres",
+            password: (d.password as string) ?? "",
+            sslmode: "", // not part of the Electron config
+          };
+        }
+        setConns(next);
+        setDirtyRoles(new Set());
+      })
+      .catch(() => {});
   }, [isElectron]);
+
+  function updateConn(role: DbRole, patch: Partial<DbConn>) {
+    setConns((prev) => ({ ...prev, [role]: { ...(prev[role] ?? EMPTY_CONN), ...patch } }));
+    setDirtyRoles((prev) => new Set(prev).add(role));
+  }
 
   async function handleSaveKey(provider: string) {
     setError(null);
@@ -189,20 +196,46 @@ export function Settings({
     }
   }
 
-  function update(role: string, patch: Partial<Form>) {
-    setForms((prev) => ({ ...prev, [role]: { ...prev[role], ...patch } }));
-  }
-
-  async function handleSave(role: string) {
+  async function handleSave(role: DbRole) {
     setError(null);
-    const f = forms[role];
+    const f = conns[role];
+    if (!f) return;
+    if (isElectron) {
+      if (!electronCfg) return;
+      const member = ALL_MEMBERS.find((m) => m.role === role)!;
+      const newCfg = {
+        ...electronCfg,
+        [member.electronKey]: {
+          host: f.host,
+          port: Number(f.port),
+          database: f.database,
+          user: f.username,
+          password: f.password,
+        },
+      };
+      setStatus((s) => ({ ...s, [role]: "Saving…" }));
+      try {
+        await window.neptune!.saveConfig(newCfg);
+        setElectronCfg(newCfg);
+        setDirtyRoles((prev) => {
+          const next = new Set(prev);
+          next.delete(role);
+          return next;
+        });
+        setStatus((s) => ({ ...s, [role]: "Saved — backend restarting…" }));
+        setTimeout(() => setStatus((s) => ({ ...s, [role]: "" })), 5000);
+      } catch (e) {
+        setStatus((s) => ({ ...s, [role]: `Error: ${String(e)}` }));
+      }
+      return;
+    }
     try {
       await saveConnection(role, {
         host: f.host,
         port: Number(f.port),
         database: f.database,
         username: f.username,
-        // Blank password => omit, so the stored secret is preserved.
+        // Blank password => null, so the stored secret is preserved ("" would clear it).
         password: f.password ? f.password : null,
         sslmode: f.sslmode || null,
       });
@@ -213,14 +246,32 @@ export function Settings({
     }
   }
 
-  async function handleTest(role: string) {
+  async function handleTest(role: DbRole) {
     setStatus((s) => ({ ...s, [role]: "Testing…" }));
+    if (isElectron) {
+      // The Electron bridge tests the values it is handed, so it can check unsaved edits.
+      const f = conns[role];
+      if (!f) return;
+      try {
+        const result = await window.neptune!.testDbConnection({
+          host: f.host,
+          port: Number(f.port),
+          database: f.database,
+          user: f.username,
+          password: f.password,
+        });
+        setStatus((s) => ({
+          ...s,
+          [role]: result.ok ? "Connection OK" : `Failed: ${result.message}`,
+        }));
+      } catch (e) {
+        setStatus((s) => ({ ...s, [role]: String(e) }));
+      }
+      return;
+    }
     try {
       const r = await testConnection(role);
-      setStatus((s) => ({
-        ...s,
-        [role]: r.ok ? "Connection OK" : `Failed: ${r.error ?? "error"}`,
-      }));
+      setStatus((s) => ({ ...s, [role]: r.ok ? "Connection OK" : `Failed: ${r.error ?? "error"}` }));
     } catch (e) {
       setStatus((s) => ({ ...s, [role]: String(e) }));
     }
@@ -230,10 +281,7 @@ export function Settings({
     setError(null);
     try {
       const r = await syncUniverse();
-      setStatus((s) => ({
-        ...s,
-        UNIVERSE: `Synced ${r.synced} securities from ${r.source}`,
-      }));
+      setStatus((s) => ({ ...s, UNIVERSE: `Synced ${r.synced} securities from ${r.source}` }));
     } catch (e) {
       setError(String(e));
     }
@@ -256,14 +304,14 @@ export function Settings({
 
   async function handleDiagnose(tickers: string[]) {
     if (!tickers.length) return;
-    setStatus((s) => ({ ...s, SECURITIES: `Diagnosing ${tickers.join(", ")}…` }));
+    setStatus((s) => ({ ...s, DIAGNOSE: `Diagnosing ${tickers.join(", ")}…` }));
     setBetaDiag(null);
     try {
       const r = await fetchBetaDiagnostics(tickers);
       setBetaDiag(r);
-      setStatus((s) => ({ ...s, SECURITIES: "" }));
+      setStatus((s) => ({ ...s, DIAGNOSE: "" }));
     } catch (e) {
-      setStatus((s) => ({ ...s, SECURITIES: String(e) }));
+      setStatus((s) => ({ ...s, DIAGNOSE: String(e) }));
     }
   }
 
@@ -297,476 +345,464 @@ export function Settings({
     }
   }
 
-  async function handleElectronSave(role: string) {
-    if (!electronCfg) return;
-    const cfgKey = (
-      { portfolio: "portfolioDb", securities: "securitiesDb", macro: "macroDb", universe: "universeDb" } as Record<string, string>
-    )[role];
-    const form = electronForms[role];
-    const newCfg = { ...electronCfg, [cfgKey]: { ...form, port: Number(form.port) } };
-    setElectronDbStatus((s) => ({ ...s, [role]: "Saving…" }));
-    try {
-      await window.neptune!.saveConfig(newCfg);
-      setElectronCfg(newCfg);
-      setElectronDbStatus((s) => ({ ...s, [role]: "Saved — backend restarting…" }));
-      setTimeout(() => setElectronDbStatus((s) => ({ ...s, [role]: "" })), 5000);
-    } catch (e) {
-      setElectronDbStatus((s) => ({ ...s, [role]: `Error: ${String(e)}` }));
-    }
-  }
-
-  async function handleElectronTest(role: string) {
-    const form = electronForms[role];
-    if (!form) return;
-    setElectronDbStatus((s) => ({ ...s, [role]: "Testing…" }));
-    try {
-      const result = await window.neptune!.testDbConnection({ ...form, port: Number(form.port) });
-      setElectronDbStatus((s) => ({
-        ...s,
-        [role]: result.ok ? "Connection OK" : `Failed: ${result.message}`,
-      }));
-    } catch (e) {
-      setElectronDbStatus((s) => ({ ...s, [role]: String(e) }));
-    }
-  }
-
-  function updateElectronForm(role: string, patch: Partial<DbForm>) {
-    setElectronForms((p) => ({ ...p, [role]: { ...p[role], ...patch } }));
-  }
+  const rowFor = (role: string) => rows.find((r) => r.role === role);
 
   return (
-    <div className="space-y-6">
-      {/* Test Mode — surfaces only in the Electron shell, and only when relevant: either no
-          database is reachable (offer it) or it's already active (offer a way out). It relaunches
-          the backend on a throwaway SQLite DB with a seeded demo book + synthetic market data. */}
-      {canTestMode && inTestMode ? (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-status-watch/40 bg-status-watch/10 p-4">
-          <div>
-            <p className="font-display text-sm font-semibold text-status-watch">Test Mode is active</p>
-            <p className="mt-1 text-xs text-slate-300">
-              Running on a throwaway local database with synthetic demo data — nothing here is real.
-            </p>
-          </div>
-          <button
-            onClick={onStopTestMode}
-            disabled={switchingMode}
-            className="shrink-0 rounded border border-ocean-border px-3 py-1.5 text-sm text-slate-200 transition hover:border-ocean-accent hover:text-white disabled:opacity-50"
-          >
-            {switchingMode ? "Switching…" : "Exit Test Mode"}
-          </button>
-        </div>
-      ) : canTestMode && dbReachable === false ? (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
-          <div>
-            <p className="font-display text-sm font-semibold text-white">No database connection found</p>
-            <p className="mt-1 text-xs text-slate-300">
-              Can&apos;t reach a database, so risk and positions won&apos;t load. Explore the app in
-              Test Mode — a throwaway local database seeded with a demo book and synthetic data.
-            </p>
-          </div>
-          <button
-            onClick={onStartTestMode}
-            disabled={switchingMode}
-            className="shrink-0 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-50"
-          >
-            {switchingMode ? "Starting…" : "Enable Test Mode"}
-          </button>
-        </div>
-      ) : null}
-
-      <p className="text-sm text-ocean-muted">
-        Point Neptune at the right database instances. A saved connection (host and port
-        included) overrides the matching environment variable. The portfolio database is the
-        bootstrap — it stores these settings, so it's set via <code>.env</code> and applied
-        at startup. The password is write-only: leave it blank to keep the stored secret.
-      </p>
-
-      {error && (
-        <div className="rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">
-          {error}
-        </div>
-      )}
-
-      {/* In Electron mode, DB connection cards appear here (top of page, before portfolios)
-          so they're immediately visible and work offline — no backend needed. */}
-      {isElectron && (
-        [
-          { role: "portfolio",  label: "Portfolio DB (app)",                       note: "applies on restart" },
-          { role: "securities", label: "Securities DB (market data)",               note: undefined },
-          { role: "macro",      label: "Macro DB (rates/credit + economic data)",   note: undefined },
-          { role: "universe",   label: "Universe DB (cato_securities, read-only)",  note: undefined },
-        ] as { role: string; label: string; note?: string }[]
-      ).map(({ role, label, note }) => {
-        const f = electronForms[role];
-        if (!f) return null;
-        return (
-          <div key={role} className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-                {label}
-              </h3>
-              {note && (
-                <span className="rounded bg-ocean-accent/20 px-2 py-0.5 text-xs text-ocean-accent">
-                  {note}
-                </span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <Field label="Host">
-                <input className="np-input" value={f.host}
-                  onChange={(e) => updateElectronForm(role, { host: e.target.value })} />
-              </Field>
-              <Field label="Port">
-                <input className="np-input" type="number" value={f.port}
-                  onChange={(e) => updateElectronForm(role, { port: Number(e.target.value) })} />
-              </Field>
-              <Field label="Database">
-                <input className="np-input" value={f.database}
-                  onChange={(e) => updateElectronForm(role, { database: e.target.value })} />
-              </Field>
-              <Field label="Username">
-                <input className="np-input" value={f.user}
-                  onChange={(e) => updateElectronForm(role, { user: e.target.value })} />
-              </Field>
-              <Field label="Password">
-                <input className="np-input" type="password" placeholder="(leave blank to clear)"
-                  value={f.password}
-                  onChange={(e) => updateElectronForm(role, { password: e.target.value })} />
-              </Field>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button onClick={() => handleElectronSave(role)}
-                className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80">
-                Save &amp; restart backend
-              </button>
-              <button onClick={() => handleElectronTest(role)}
-                className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                Test connection
-              </button>
-              {role === "universe" && (
-                <button onClick={handleSync}
-                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                  Sync universe
-                </button>
-              )}
-              {role === "macro" && (
-                <button onClick={handleMacroIngest}
-                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                  Backfill macro (FRED/ALFRED, since 2000)
-                </button>
-              )}
-              {role === "securities" && (
-                <>
-                  <label className="flex items-center gap-1 text-xs text-ocean-muted">
-                    <input type="number" min={1} max={25} value={years}
-                      aria-label="backfill-years"
-                      onChange={(e) => setYears(Math.max(1, Math.min(25, Number(e.target.value))))}
-                      className="np-input w-16" />
-                    yrs
-                  </label>
-                  <button onClick={() => handleIngest()}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                    Backfill prices
-                  </button>
-                  <button onClick={handleFactors}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                    Backfill factors
-                  </button>
-                  <input value={oneTicker}
-                    onChange={(e) => setOneTicker(e.target.value.toUpperCase())}
-                    placeholder="WEN" aria-label="backfill-one-ticker"
-                    className="np-input w-24" />
-                  <button onClick={() => handleIngest(parseTickers(oneTicker))}
-                    disabled={!oneTicker.trim()}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
-                    Backfill one
-                  </button>
-                  <button onClick={() => handleDiagnose(parseTickers(oneTicker))}
-                    disabled={!oneTicker.trim()}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
-                    Diagnose beta
-                  </button>
-                </>
-              )}
-              {(electronDbStatus[role] || status[role === "universe" ? "UNIVERSE" : role === "macro" ? "MACRO" : role === "securities" ? "SECURITIES" : "PORTFOLIO"]) && (
-                <span className="text-sm text-ocean-muted">
-                  {electronDbStatus[role] || status[role === "universe" ? "UNIVERSE" : role === "macro" ? "MACRO" : role === "securities" ? "SECURITIES" : "PORTFOLIO"]}
-                </span>
-              )}
-            </div>
-          </div>
-        );
-      })}
-
-      <PortfoliosPanel onChanged={onPortfoliosChanged} />
-
-      {/* Server price refresh — how often the backend pulls fresh marks for the open books.
-          "Live" streaming arrives with the Bloomberg feed (disabled until then). */}
-      {onChangeMins && (
-        <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-          <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
-            Price refresh
-          </h3>
-          <p className="mb-3 text-xs text-ocean-muted">
-            How often the server re-prices the open books. Manual refresh re-prices the selected
-            book immediately.
-          </p>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <select
-              value={String(refreshMins ?? 0)}
-              onChange={(e) => onChangeMins?.(Number(e.target.value))}
-              className="np-input w-auto"
-              aria-label="price-refresh-interval"
-            >
-              <option value="0">Off</option>
-              <option value="1">Every 1 min</option>
-              <option value="5">Every 5 min</option>
-              <option value="10">Every 10 min</option>
-              <option value="15">Every 15 min</option>
-              <option value="30">Every 30 min</option>
-              <option value="live" disabled>
-                Live (Bloomberg — coming soon)
-              </option>
-            </select>
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* ── Header ── */}
+      <header className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-ocean-border bg-ocean-panel px-6">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-[0.12em] text-white">
+          Settings
+        </h2>
+        <div className="ml-auto flex items-center gap-2">
+          {onClose && (
             <button
-              onClick={onRefreshNow}
-              disabled={pricing}
-              className="rounded border border-ocean-border px-3 py-1.5 text-ocean-muted transition hover:text-slate-200 disabled:opacity-50"
+              onClick={onClose}
+              className="rounded px-3 py-1.5 text-sm text-ocean-muted transition hover:bg-white/10 hover:text-white"
             >
-              {pricing ? "Refreshing…" : "Refresh now"}
+              ✕ Close
             </button>
-            {lastPriced && (
-              <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>
+          )}
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1">
+        {/* ── Nav rail — same recipe as the portfolios sidebar ── */}
+        <aside className="flex w-56 flex-shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-ocean-border bg-ocean-panel/40 px-2 py-3">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSection(s.id)}
+              aria-current={section === s.id ? "page" : undefined}
+              className={`block w-full truncate rounded border-l-2 px-3 py-2 text-left text-sm transition ${
+                section === s.id
+                  ? "border-ocean-accent bg-ocean-accent/15 text-blue-300"
+                  : "border-transparent text-slate-200 hover:bg-white/5"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </aside>
+
+        {/* ── Section content ── */}
+        <div className="min-w-0 flex-1 overflow-auto px-6 py-6">
+          <div className="space-y-6">
+            {error && (
+              <div className="rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">
+                {error}
+              </div>
+            )}
+
+            {/* ═══ GENERAL ═══ */}
+            {section === "general" && (
+              <>
+                {/* Test Mode — surfaces only in the Electron shell, and only when relevant:
+                    either no database is reachable (offer it) or it's already active (offer a
+                    way out). It relaunches the backend on a throwaway SQLite DB with a seeded
+                    demo book + synthetic market data. */}
+                {canTestMode && inTestMode ? (
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-status-watch/40 bg-status-watch/10 p-4">
+                    <div>
+                      <p className="font-display text-sm font-semibold text-status-watch">
+                        Test Mode is active
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Running on a throwaway local database with synthetic demo data — nothing
+                        here is real.
+                      </p>
+                    </div>
+                    <button
+                      onClick={onStopTestMode}
+                      disabled={switchingMode}
+                      className="shrink-0 rounded border border-ocean-border px-3 py-1.5 text-sm text-slate-200 transition hover:border-ocean-accent hover:text-white disabled:opacity-50"
+                    >
+                      {switchingMode ? "Switching…" : "Exit Test Mode"}
+                    </button>
+                  </div>
+                ) : canTestMode && dbReachable === false ? (
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
+                    <div>
+                      <p className="font-display text-sm font-semibold text-white">
+                        No database connection found
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Can&apos;t reach a database, so risk and positions won&apos;t load. Explore
+                        the app in Test Mode — a throwaway local database seeded with a demo book
+                        and synthetic data.
+                      </p>
+                    </div>
+                    <button
+                      onClick={onStartTestMode}
+                      disabled={switchingMode}
+                      className="shrink-0 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-50"
+                    >
+                      {switchingMode ? "Starting…" : "Enable Test Mode"}
+                    </button>
+                  </div>
+                ) : null}
+
+                {/* Server price refresh — how often the backend pulls fresh marks for the open
+                    books. "Live" streaming arrives with the Bloomberg feed (disabled until then). */}
+                {onChangeMins && (
+                  <>
+                    <SectionLabel>Pricing</SectionLabel>
+                    <Card>
+                      <div className="mb-1">
+                        <CardTitle>Price refresh</CardTitle>
+                      </div>
+                      <p className="mb-3 text-xs text-ocean-muted">
+                        How often the server re-prices the open books. Manual refresh re-prices the
+                        selected book immediately.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3 text-sm">
+                        <select
+                          value={String(refreshMins ?? 0)}
+                          onChange={(e) => onChangeMins?.(Number(e.target.value))}
+                          className="np-input w-auto"
+                          aria-label="price-refresh-interval"
+                        >
+                          <option value="0">Off</option>
+                          <option value="1">Every 1 min</option>
+                          <option value="5">Every 5 min</option>
+                          <option value="10">Every 10 min</option>
+                          <option value="15">Every 15 min</option>
+                          <option value="30">Every 30 min</option>
+                          <option value="live" disabled>
+                            Live (Bloomberg — coming soon)
+                          </option>
+                        </select>
+                        <button
+                          onClick={onRefreshNow}
+                          disabled={pricing}
+                          className="rounded border border-ocean-border px-3 py-1.5 text-ocean-muted transition hover:text-slate-200 disabled:opacity-50"
+                        >
+                          {pricing ? "Refreshing…" : "Refresh now"}
+                        </button>
+                        {lastPriced && (
+                          <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>
+                        )}
+                      </div>
+                    </Card>
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ═══ DATABASES ═══ */}
+            {section === "databases" && (
+              <>
+                <p className="text-sm text-ocean-muted">
+                  Point Neptune at the right database instances, grouped by the program that owns
+                  them. A saved connection (host and port included) overrides the matching
+                  environment variable. The password is write-only: leave it blank to keep the
+                  stored secret.
+                </p>
+
+                {DB_FAMILIES.map((family) => (
+                  <div key={family.id} className="space-y-3">
+                    <SectionLabel>{family.label}</SectionLabel>
+                    <p className="text-xs text-ocean-muted">{family.blurb}</p>
+                    {family.members.map((m) => {
+                      const row = rowFor(m.role);
+                      return (
+                        <DbCard
+                          key={m.role}
+                          member={m}
+                          value={conns[m.role] ?? EMPTY_CONN}
+                          onChange={(patch) => updateConn(m.role, patch)}
+                          onSave={() => handleSave(m.role)}
+                          onTest={() => handleTest(m.role)}
+                          status={status[m.role]}
+                          saveLabel={isElectron ? "Save & restart backend" : "Save"}
+                          fromEnv={!isElectron && row?.source === "env"}
+                          hasStoredPassword={!isElectron && row?.has_password}
+                          showSslmode={!isElectron}
+                          testDisabledReason={
+                            !isElectron && dirtyRoles.has(m.role)
+                              ? "Save first — this tests the stored connection, not the edits above."
+                              : undefined
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* ═══ API KEYS ═══ */}
+            {section === "keys" && (
+              <>
+                <SectionLabel>Data providers</SectionLabel>
+                <Card>
+                  <div className="mb-1">
+                    <CardTitle>Data provider API keys</CardTitle>
+                  </div>
+                  <p className="mb-3 text-xs text-ocean-muted">
+                    Keys for external data feeds. FRED powers the macro database (rates, credit,
+                    economic data); the same free key serves ALFRED (point-in-time vintages). Get
+                    one at{" "}
+                    <a
+                      href="https://fredaccount.stlouisfed.org/apikeys"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-ocean-accent hover:underline"
+                    >
+                      fredaccount.stlouisfed.org/apikeys
+                    </a>
+                    . Keys are write-only — leave blank to keep the stored secret.
+                  </p>
+                  <div className="space-y-3">
+                    {creds.map((c) => (
+                      <div key={c.provider} className="flex flex-wrap items-end gap-2">
+                        <div className="min-w-[18rem] flex-1">
+                          <Field
+                            label={`${PROVIDER_LABELS[c.provider] ?? c.provider} ${
+                              c.has_key ? `· set (${c.source})` : "· not set"
+                            }`}
+                          >
+                            <input
+                              className="np-input"
+                              type="password"
+                              aria-label={`${c.provider}-api-key`}
+                              placeholder={c.has_key ? "•••••• (stored)" : "paste API key"}
+                              value={keyInputs[c.provider] ?? ""}
+                              onChange={(e) =>
+                                setKeyInputs((s) => ({ ...s, [c.provider]: e.target.value }))
+                              }
+                            />
+                          </Field>
+                        </div>
+                        <button
+                          onClick={() => handleSaveKey(c.provider)}
+                          className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80"
+                        >
+                          Save key
+                        </button>
+                        {keyStatus[c.provider] && (
+                          <span className="text-sm text-ocean-muted">{keyStatus[c.provider]}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </>
+            )}
+
+            {/* ═══ PORTFOLIOS ═══ */}
+            {section === "portfolios" && <PortfoliosPanel onChanged={onPortfoliosChanged} />}
+
+            {/* ═══ DATA INGEST ═══ */}
+            {section === "ingest" && (
+              <>
+                <p className="text-sm text-ocean-muted">
+                  Pull external data into Neptune's databases. These are one-shot operations, not
+                  saved settings — each runs immediately and reports what it wrote.
+                </p>
+
+                <SectionLabel>Market data</SectionLabel>
+                <Card>
+                  <div className="mb-1">
+                    <CardTitle>Prices &amp; factors</CardTitle>
+                  </div>
+                  <p className="mb-3 text-xs text-ocean-muted">
+                    Backfills OHLCV history into the securities database and the Ken French daily
+                    factor panel. The benchmark is always included — it defines the date index every
+                    beta regression runs on.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs text-ocean-muted">
+                      <input
+                        type="number"
+                        min={1}
+                        max={25}
+                        value={years}
+                        aria-label="backfill-years"
+                        onChange={(e) =>
+                          setYears(Math.max(1, Math.min(25, Number(e.target.value))))
+                        }
+                        className="np-input w-16"
+                      />
+                      yrs
+                    </label>
+                    <button
+                      onClick={() => handleIngest()}
+                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                    >
+                      Backfill prices
+                    </button>
+                    <button
+                      onClick={handleFactors}
+                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                    >
+                      Backfill factors
+                    </button>
+                    <input
+                      value={ingestTicker}
+                      onChange={(e) => setIngestTicker(e.target.value.toUpperCase())}
+                      placeholder="WEN"
+                      aria-label="backfill-one-ticker"
+                      className="np-input w-24"
+                    />
+                    <button
+                      onClick={() => handleIngest(parseTickers(ingestTicker))}
+                      disabled={!ingestTicker.trim()}
+                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
+                    >
+                      Backfill one
+                    </button>
+                    {status.SECURITIES && (
+                      <span className="text-sm text-ocean-muted">{status.SECURITIES}</span>
+                    )}
+                  </div>
+                </Card>
+
+                <SectionLabel>Universe</SectionLabel>
+                <Card>
+                  <div className="mb-1">
+                    <CardTitle>Universe projection</CardTitle>
+                  </div>
+                  <p className="mb-3 text-xs text-ocean-muted">
+                    Re-projects the tradeable universe from CATO's securities master. Falls back to
+                    a synthetic universe when no CATO connection is configured.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleSync}
+                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                    >
+                      Sync universe
+                    </button>
+                    {status.UNIVERSE && (
+                      <span className="text-sm text-ocean-muted">{status.UNIVERSE}</span>
+                    )}
+                  </div>
+                </Card>
+
+                <SectionLabel>Macro</SectionLabel>
+                <Card>
+                  <div className="mb-1">
+                    <CardTitle>Macro series</CardTitle>
+                  </div>
+                  <p className="mb-3 text-xs text-ocean-muted">
+                    Pulls the registered macro catalog since 2000 — FRED for market/rates/credit,
+                    ALFRED for point-in-time economic vintages. Needs a FRED key (API Keys).
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleMacroIngest}
+                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200"
+                    >
+                      Backfill macro (FRED/ALFRED, since 2000)
+                    </button>
+                    {status.MACRO && (
+                      <span className="text-sm text-ocean-muted">{status.MACRO}</span>
+                    )}
+                  </div>
+                </Card>
+
+                {catalog.length > 0 && (
+                  <Card>
+                    <div className="mb-1">
+                      <CardTitle>Macro series catalog ({catalog.length})</CardTitle>
+                    </div>
+                    <p className="mb-3 text-xs text-ocean-muted">
+                      Every series the macro backfill can pull. &quot;Loaded&quot; shows what&apos;s
+                      already in your macro database.
+                    </p>
+                    <div className="max-h-96 overflow-auto rounded border border-ocean-border">
+                      <table className="w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-ocean-bg text-ocean-muted">
+                          <tr>
+                            <th className="px-3 py-2">Series</th>
+                            <th className="px-3 py-2">Name</th>
+                            <th className="px-3 py-2">Category</th>
+                            <th className="px-3 py-2">Freq</th>
+                            <th className="px-3 py-2">Source</th>
+                            <th className="px-3 py-2 text-right">Loaded</th>
+                            <th className="px-3 py-2">Last date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {catalog.map((s) => (
+                            <tr key={s.series_id} className="border-t border-ocean-border/50">
+                              <td className="px-3 py-1.5 font-mono text-slate-200">
+                                {s.series_id}
+                              </td>
+                              <td className="px-3 py-1.5 text-ocean-muted">{s.name}</td>
+                              <td className="px-3 py-1.5 text-ocean-muted">{s.category}</td>
+                              <td className="px-3 py-1.5 text-ocean-muted">{s.frequency}</td>
+                              <td className="px-3 py-1.5 text-ocean-muted">
+                                {s.ingestable ? (
+                                  <span className="font-mono">{s.source_code}</span>
+                                ) : (
+                                  <span className="italic">{s.source} (not ingested)</span>
+                                )}
+                              </td>
+                              <td
+                                className={`px-3 py-1.5 text-right font-mono ${
+                                  s.points > 0 ? "text-status-ok" : "text-ocean-muted"
+                                }`}
+                              >
+                                {s.points > 0 ? s.points.toLocaleString() : "—"}
+                              </td>
+                              <td className="px-3 py-1.5 font-mono text-ocean-muted">
+                                {s.last_date ?? "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+              </>
+            )}
+
+            {/* ═══ DIAGNOSTICS ═══ */}
+            {section === "diagnostics" && (
+              <>
+                <SectionLabel>Coverage</SectionLabel>
+                <DataHealth />
+
+                <SectionLabel>Beta</SectionLabel>
+                <Card>
+                  <div className="mb-1">
+                    <CardTitle>Diagnose beta</CardTitle>
+                  </div>
+                  <p className="mb-3 text-xs text-ocean-muted">
+                    Shows the regression inputs behind a name&apos;s beta — stored bars, span
+                    against the benchmark, observations used, and gap days — so a surprising number
+                    can be traced to data rather than a genuine fit.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={diagTicker}
+                      onChange={(e) => setDiagTicker(e.target.value.toUpperCase())}
+                      placeholder="WEN"
+                      aria-label="diagnose-ticker"
+                      className="np-input w-24"
+                    />
+                    <button
+                      onClick={() => handleDiagnose(parseTickers(diagTicker))}
+                      disabled={!diagTicker.trim()}
+                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50"
+                    >
+                      Diagnose beta
+                    </button>
+                    {status.DIAGNOSE && (
+                      <span className="text-sm text-ocean-muted">{status.DIAGNOSE}</span>
+                    )}
+                  </div>
+                </Card>
+
+                {betaDiag && <BetaDiagPanel diag={betaDiag} />}
+              </>
             )}
           </div>
         </div>
-      )}
-
-      <DataHealth />
-
-      <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-        <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Data provider API keys
-        </h3>
-        <p className="mb-3 text-xs text-ocean-muted">
-          Keys for external data feeds. FRED powers the macro database (rates, credit, economic
-          data); the same free key serves ALFRED (point-in-time vintages). Get one at{" "}
-          <a
-            href="https://fredaccount.stlouisfed.org/apikeys"
-            target="_blank"
-            rel="noreferrer"
-            className="text-ocean-accent hover:underline"
-          >
-            fredaccount.stlouisfed.org/apikeys
-          </a>
-          . Keys are write-only — leave blank to keep the stored secret.
-        </p>
-        <div className="space-y-3">
-          {creds.map((c) => (
-            <div key={c.provider} className="flex flex-wrap items-end gap-2">
-              <div className="min-w-[18rem] flex-1">
-                <Field
-                  label={`${PROVIDER_LABELS[c.provider] ?? c.provider} ${
-                    c.has_key ? `· set (${c.source})` : "· not set"
-                  }`}
-                >
-                  <input
-                    className="np-input"
-                    type="password"
-                    aria-label={`${c.provider}-api-key`}
-                    placeholder={c.has_key ? "•••••• (stored)" : "paste API key"}
-                    value={keyInputs[c.provider] ?? ""}
-                    onChange={(e) =>
-                      setKeyInputs((s) => ({ ...s, [c.provider]: e.target.value }))
-                    }
-                  />
-                </Field>
-              </div>
-              <button
-                onClick={() => handleSaveKey(c.provider)}
-                className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80"
-              >
-                Save key
-              </button>
-              {keyStatus[c.provider] && (
-                <span className="text-sm text-ocean-muted">{keyStatus[c.provider]}</span>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
-
-      {catalog.length > 0 && (
-        <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-          <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
-            Macro series catalog ({catalog.length})
-          </h3>
-          <p className="mb-3 text-xs text-ocean-muted">
-            Every series the macro backfill can pull (FRED for market/rates/credit, ALFRED for
-            point-in-time economic vintages). "Backfill macro" on the Macro DB card below loads
-            them since 2000. "Loaded" shows what's already in your macro DB.
-          </p>
-          <div className="max-h-96 overflow-auto rounded border border-ocean-border">
-            <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-ocean-bg text-ocean-muted">
-                <tr>
-                  <th className="px-3 py-2">Series</th>
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Category</th>
-                  <th className="px-3 py-2">Freq</th>
-                  <th className="px-3 py-2">Source</th>
-                  <th className="px-3 py-2 text-right">Loaded</th>
-                  <th className="px-3 py-2">Last date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {catalog.map((s) => (
-                  <tr key={s.series_id} className="border-t border-ocean-border/50">
-                    <td className="px-3 py-1.5 font-mono text-ocean-text">{s.series_id}</td>
-                    <td className="px-3 py-1.5 text-ocean-muted">{s.name}</td>
-                    <td className="px-3 py-1.5 text-ocean-muted">{s.category}</td>
-                    <td className="px-3 py-1.5 text-ocean-muted">{s.frequency}</td>
-                    <td className="px-3 py-1.5 text-ocean-muted">
-                      {s.ingestable ? (
-                        <span className="font-mono">{s.source_code}</span>
-                      ) : (
-                        <span className="italic">{s.source} (not ingested)</span>
-                      )}
-                    </td>
-                    <td
-                      className={`px-3 py-1.5 text-right font-mono ${
-                        s.points > 0 ? "text-status-ok" : "text-ocean-muted"
-                      }`}
-                    >
-                      {s.points > 0 ? s.points.toLocaleString() : "—"}
-                    </td>
-                    <td className="px-3 py-1.5 font-mono text-ocean-muted">
-                      {s.last_date ?? "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {!isElectron && rows.map((row) => {
-          const f = forms[row.role] ?? EMPTY;
-          return (
-            <div
-              key={row.role}
-              className="rounded-lg border border-ocean-border bg-ocean-panel p-5"
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-                  {ROLE_LABELS[row.role] ?? row.role}
-                </h3>
-                <div className="flex items-center gap-2">
-                  {row.source === "env" && (
-                    <span className="rounded bg-ocean-border/40 px-2 py-0.5 text-xs text-ocean-muted">
-                      from .env
-                    </span>
-                  )}
-                  {row.bootstrap && (
-                    <span className="rounded bg-ocean-accent/20 px-2 py-0.5 text-xs text-ocean-accent">
-                      bootstrap · applies on restart
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                <Field label="Host">
-                  <input className="np-input" value={f.host}
-                    onChange={(e) => update(row.role, { host: e.target.value })} />
-                </Field>
-                <Field label="Port">
-                  <input className="np-input" type="number" value={f.port}
-                    onChange={(e) => update(row.role, { port: Number(e.target.value) })} />
-                </Field>
-                <Field label="Database">
-                  <input className="np-input" value={f.database}
-                    onChange={(e) => update(row.role, { database: e.target.value })} />
-                </Field>
-                <Field label="Username">
-                  <input className="np-input" value={f.username}
-                    onChange={(e) => update(row.role, { username: e.target.value })} />
-                </Field>
-                <Field label={row.has_password ? "Password (stored)" : "Password"}>
-                  <input className="np-input" type="password"
-                    placeholder={row.has_password ? "•••••• (unchanged)" : ""}
-                    value={f.password}
-                    onChange={(e) => update(row.role, { password: e.target.value })} />
-                </Field>
-                <Field label="SSL mode">
-                  <input className="np-input" placeholder="(optional)" value={f.sslmode}
-                    onChange={(e) => update(row.role, { sslmode: e.target.value })} />
-                </Field>
-              </div>
-              <div className="mt-4 flex items-center gap-2">
-                <button onClick={() => handleSave(row.role)}
-                  className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80">
-                  Save
-                </button>
-                <button onClick={() => handleTest(row.role)}
-                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                  Test connection
-                </button>
-                {row.role === "UNIVERSE" && (
-                  <button onClick={handleSync}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                    Sync universe
-                  </button>
-                )}
-                {row.role === "MACRO" && (
-                  <button onClick={handleMacroIngest}
-                    className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                    Backfill macro (FRED/ALFRED, since 2000)
-                  </button>
-                )}
-                {row.role === "SECURITIES" && (
-                  <>
-                    <label className="flex items-center gap-1 text-xs text-ocean-muted">
-                      <input type="number" min={1} max={25} value={years}
-                        aria-label="backfill-years"
-                        onChange={(e) => setYears(Math.max(1, Math.min(25, Number(e.target.value))))}
-                        className="np-input w-16" />
-                      yrs
-                    </label>
-                    <button onClick={() => handleIngest()}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                      Backfill prices
-                    </button>
-                    <button onClick={handleFactors}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200">
-                      Backfill factors
-                    </button>
-                    <input value={oneTicker}
-                      onChange={(e) => setOneTicker(e.target.value.toUpperCase())}
-                      placeholder="WEN" aria-label="backfill-one-ticker"
-                      className="np-input w-24" />
-                    <button onClick={() => handleIngest(parseTickers(oneTicker))}
-                      disabled={!oneTicker.trim()}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
-                      Backfill one
-                    </button>
-                    <button onClick={() => handleDiagnose(parseTickers(oneTicker))}
-                      disabled={!oneTicker.trim()}
-                      className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
-                      Diagnose beta
-                    </button>
-                  </>
-                )}
-                {status[row.role] && (
-                  <span className="text-sm text-ocean-muted">{status[row.role]}</span>
-                )}
-              </div>
-            </div>
-          );
-        })
-      }
-
-      {betaDiag && <BetaDiagPanel diag={betaDiag} />}
     </div>
   );
 }
@@ -776,372 +812,4 @@ function parseTickers(s: string): string[] {
     .split(/[,\s]+/)
     .map((t) => t.trim().toUpperCase())
     .filter(Boolean);
-}
-
-/** Per-ticker beta diagnostics: the regression inputs behind a surprising beta — stored bars,
- *  date span vs the benchmark, observations used, forward-filled gap days, and raw vs shrunk
- *  beta — so "too low/high" can be traced to data vs a genuine fit. */
-function BetaDiagPanel({ diag }: { diag: BetaDiagnostics }) {
-  const b = diag.benchmark;
-  return (
-    <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-      <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-        Beta diagnostics
-      </h3>
-      <p className="mt-1 text-xs text-ocean-muted">
-        Benchmark {b.ticker}: {b.bars} bars, {b.first_bar} → {b.last_bar} ({b.obs_used} obs used).
-        A name with far fewer bars, a later start, or many gap days will read a muted beta — that's
-        data, not the market. Names below {diag.min_obs} obs are held at the 1.0 prior.
-      </p>
-      <table className="mt-3 w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs uppercase text-ocean-muted">
-            <th className="pb-2 font-medium">Ticker</th>
-            <th className="pb-2 text-right font-medium">Bars</th>
-            <th className="pb-2 font-medium">Span</th>
-            <th className="pb-2 text-right font-medium">Obs used</th>
-            <th className="pb-2 text-right font-medium">Gap days</th>
-            <th className="pb-2 text-right font-medium">Raw β</th>
-            <th className="pb-2 text-right font-medium">Shrunk β</th>
-            <th className="pb-2 font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {diag.names.map((n) => (
-            <tr key={n.ticker} className="border-t border-ocean-border/60">
-              <td className="py-2 font-mono">{n.ticker}</td>
-              <td className="py-2 text-right font-mono">{n.bars ?? "—"}</td>
-              <td className="py-2 font-mono text-xs text-ocean-muted">
-                {n.first_bar ? `${n.first_bar} → ${n.last_bar}` : "—"}
-                {n.starts_after_benchmark ? " ⚠" : ""}
-              </td>
-              <td className="py-2 text-right font-mono">{n.obs_used ?? "—"}</td>
-              <td className={`py-2 text-right font-mono ${n.gap_days ? "text-status-watch" : ""}`}>
-                {n.gap_days ?? "—"}
-              </td>
-              <td className="py-2 text-right font-mono">{n.beta_raw?.toFixed(2) ?? "—"}</td>
-              <td className="py-2 text-right font-mono">{n.beta?.toFixed(2) ?? "—"}</td>
-              <td
-                className={`py-2 text-xs ${
-                  n.status === "ok" ? "text-status-ok" : "text-status-breach"
-                }`}
-                title={n.note ?? ""}
-              >
-                {n.status}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/** Portfolios: add and remove books. A book carries full ownership — a management firm, the
- *  investor entity whose capital it runs, and its lead PM — picked from the org graph. Removing
- *  a book is refused by the server while it still holds open positions (flatten it first), and
- *  is bookkeeping only — it never routes or unwinds anything at a venue. */
-function PortfoliosPanel({ onChanged }: { onChanged?: () => void }) {
-  const [books, setBooks] = useState<PortfolioMeta[]>([]);
-  const [firms, setFirms] = useState<FirmRow[]>([]);
-  const [people, setPeople] = useState<PersonRow[]>([]);
-  const [entities, setEntities] = useState<EntityRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const [name, setName] = useState("");
-  const [mandate, setMandate] = useState<"LONG_SHORT" | "LONG_ONLY">("LONG_SHORT");
-  const [firmId, setFirmId] = useState("");
-  const [entityId, setEntityId] = useState("");
-  const [leadPm, setLeadPm] = useState("");
-
-  function load() {
-    fetchPortfolios().then(setBooks).catch((e) => setError(String(e)));
-    fetchFirms().then(setFirms).catch(() => setFirms([]));
-    fetchPeople().then(setPeople).catch(() => setPeople([]));
-    fetchEntities().then(setEntities).catch(() => setEntities([]));
-  }
-  useEffect(load, []);
-
-  const personName = (id?: string | null) =>
-    id ? people.find((p) => p.id === id)?.name ?? id : "—";
-
-  async function handleAdd() {
-    if (!name.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await createPortfolio({
-        name: name.trim(),
-        mandate,
-        firm_id: firmId || null,
-        investor_entity_id: entityId || null,
-        lead_pm_ids: leadPm ? [leadPm] : [],
-      });
-      setName("");
-      setLeadPm("");
-      load();
-      onChanged?.();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleRemove(id: string, label: string) {
-    if (!window.confirm(`Remove portfolio "${label}"? This cannot be undone.`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await deletePortfolio(id);
-      load();
-      onChanged?.();
-    } catch (e) {
-      // The server refuses a book that still holds open positions (409) — surface that.
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-      <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
-        Portfolios
-      </h3>
-      <p className="mb-3 text-xs text-ocean-muted">
-        The books Neptune manages. Each belongs to an investor entity and is led by a PM. A book
-        must be flattened (no open positions) before it can be removed.
-      </p>
-
-      {error && (
-        <div className="mb-3 rounded border border-status-breach/40 bg-status-breach/10 p-2 text-sm text-status-breach">
-          {error}
-        </div>
-      )}
-
-      {books.length === 0 ? (
-        <p className="mb-4 text-sm text-status-watch">
-          No portfolios yet — add your first book below to get started.
-        </p>
-      ) : (
-        <div className="mb-4 overflow-auto rounded border border-ocean-border">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-ocean-bg text-xs uppercase text-ocean-muted">
-              <tr>
-                <th className="px-3 py-2">Book</th>
-                <th className="px-3 py-2">Mandate</th>
-                <th className="px-3 py-2">Lead PM</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {books.map((b) => (
-                <tr key={b.id} className="border-t border-ocean-border/50">
-                  <td className="px-3 py-2">
-                    <div className="text-ocean-text">{b.name}</div>
-                    <div className="font-mono text-[11px] text-ocean-muted">{b.id}</div>
-                  </td>
-                  <td className="px-3 py-2 text-ocean-muted">
-                    {b.mandate === "LONG_SHORT" ? "Long / Short" : "Long Only"}
-                  </td>
-                  <td className="px-3 py-2 text-ocean-muted">
-                    {personName(b.lead_pm_ids?.[0])}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      onClick={() => handleRemove(b.id, b.name)}
-                      disabled={busy}
-                      className="rounded border border-status-breach/40 px-2 py-1 text-xs text-status-breach hover:bg-status-breach/10 disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Field label="Name">
-          <input
-            className="np-input"
-            aria-label="new-portfolio-name"
-            placeholder="Macro Alpha"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </Field>
-        <Field label="Mandate">
-          <select
-            className="np-input"
-            aria-label="new-portfolio-mandate"
-            value={mandate}
-            onChange={(e) => setMandate(e.target.value as "LONG_SHORT" | "LONG_ONLY")}
-          >
-            <option value="LONG_SHORT">Long / Short (hedged)</option>
-            <option value="LONG_ONLY">Long Only</option>
-          </select>
-        </Field>
-        <Field label="Lead PM">
-          <select
-            className="np-input"
-            aria-label="new-portfolio-pm"
-            value={leadPm}
-            onChange={(e) => setLeadPm(e.target.value)}
-          >
-            <option value="">(none)</option>
-            {people.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Firm">
-          <select
-            className="np-input"
-            aria-label="new-portfolio-firm"
-            value={firmId}
-            onChange={(e) => setFirmId(e.target.value)}
-          >
-            <option value="">(none)</option>
-            {firms.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Investor entity">
-          <select
-            className="np-input"
-            aria-label="new-portfolio-entity"
-            value={entityId}
-            onChange={(e) => setEntityId(e.target.value)}
-          >
-            <option value="">(none)</option>
-            {entities.map((en) => (
-              <option key={en.id} value={en.id}>
-                {en.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
-
-      <div className="mt-4">
-        <button
-          onClick={handleAdd}
-          disabled={busy || !name.trim()}
-          className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80 disabled:opacity-50"
-        >
-          Add portfolio
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Data health: benchmark bar count, universe coverage, and factor-panel status — the silent
- *  gates that decide whether betas and the hedge are trustworthy, made visible. */
-function DataHealth() {
-  const [h, setH] = useState<SecuritiesHealth | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  function load() {
-    setLoading(true);
-    setErr(null);
-    fetchSecuritiesHealth()
-      .then(setH)
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
-  }
-  useEffect(load, []);
-
-  const bars = h?.benchmark_bars;
-  const benchOk = bars != null && bars >= 200; // ~250 trading days = healthy benchmark
-  const factorsLoaded = h?.factor_panel && h.factor_panel !== "MKT-only";
-
-  return (
-    <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Data health
-        </h3>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="rounded border border-ocean-border px-2 py-1 text-xs text-ocean-muted hover:text-slate-200 disabled:opacity-40"
-        >
-          {loading ? "Checking…" : "Refresh"}
-        </button>
-      </div>
-
-      {err && <p className="text-sm text-status-breach">{err}</p>}
-      {h && (
-        <>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Metric
-              label={`Benchmark (${h.benchmark ?? "?"}) bars`}
-              value={bars ?? "—"}
-              ok={benchOk}
-              hint={benchOk ? undefined : "needs full backfill (~250)"}
-            />
-            <Metric label="Names projected" value={h.securities_projected} ok={h.securities_projected > 0} />
-            <Metric
-              label="Names with a beta"
-              value={h.names_with_computable_beta ?? 0}
-              ok={(h.names_with_computable_beta ?? 0) > 0}
-              hint={`${h.names_with_30plus_bars} have ≥30 bars`}
-            />
-            <Metric
-              label="Factor panel"
-              value={h.factor_panel ?? "—"}
-              ok={!!factorsLoaded}
-              hint={factorsLoaded ? undefined : "load Ken French to enable factor hedges"}
-            />
-          </div>
-          <p className="mt-3 text-xs text-ocean-muted/80">
-            Source: <span className="font-mono">{h.source}</span> — {h.reason}
-          </p>
-        </>
-      )}
-    </div>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  ok,
-  hint,
-}: {
-  label: string;
-  value: string | number;
-  ok: boolean;
-  hint?: string;
-}) {
-  return (
-    <div>
-      <div className="text-xs uppercase text-ocean-muted">{label}</div>
-      <div className={`font-mono text-lg ${ok ? "text-status-ok" : "text-status-breach"}`}>
-        {value}
-      </div>
-      {hint && <div className="text-[11px] text-ocean-muted/70">{hint}</div>}
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-xs text-ocean-muted">{label}</span>
-      {children}
-    </label>
-  );
 }

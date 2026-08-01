@@ -3,16 +3,21 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Settings } from "./Settings";
 import type { ConnectionRow } from "../types";
 
+// All four roles, as the backend's GET /settings/connections always returns them. Note the
+// UNIVERSE row deliberately sits on a different port — CATO is its own server, which is the
+// case the family grouping has to represent rather than flatten.
 const rows: ConnectionRow[] = [
   { role: "PORTFOLIO", host: "localhost", port: 5432, database: "neptune_portfolios",
     username: "neptune", has_password: true, configured: true, bootstrap: true },
   { role: "SECURITIES", host: "localhost", port: 5432, database: "neptune_securities",
     username: "neptune", has_password: true, configured: true, bootstrap: false },
+  { role: "MACRO", host: "localhost", port: 5432, database: "neptune_macro",
+    username: "neptune", has_password: true, configured: true, bootstrap: false },
   { role: "UNIVERSE", host: "localhost", port: 5434, database: "cato_securities",
     username: "readonly", has_password: true, configured: true, bootstrap: false },
 ];
 
-const saveConnection = vi.fn(async (_role: string, _body: unknown) => rows[2]);
+const saveConnection = vi.fn(async (_role: string, _body: unknown) => rows[3]);
 const testConnection = vi.fn(async (role: string) => ({ role, ok: true }));
 const syncUniverse = vi.fn(async () => ({ synced: 42, source: "cato_securities" }));
 const ingestPrices = vi.fn(async (_tickers?: string[], _years?: number) => ({
@@ -101,6 +106,12 @@ vi.mock("../api/client", () => ({
     }),
 }));
 
+/** Settings is sidebar-navigated: only the active section is mounted, so a test has to click
+ *  its way to the section it exercises before querying for anything inside it. */
+function gotoSection(label: string) {
+  fireEvent.click(screen.getByRole("button", { name: label }));
+}
+
 describe("Settings", () => {
   beforeEach(() => {
     saveConnection.mockClear();
@@ -114,21 +125,38 @@ describe("Settings", () => {
     portfolioList = [];
   });
 
-  it("renders all three connection roles and flags the bootstrap DB", async () => {
+  it("groups the databases by family and flags the bootstrap DB", async () => {
     render(<Settings />);
-    expect(await screen.findByText(/Portfolio DB/)).toBeInTheDocument();
-    expect(screen.getByText(/Securities DB/)).toBeInTheDocument();
-    expect(screen.getByText(/Universe DB/)).toBeInTheDocument();
+    gotoSection("Databases");
+    // Family headings, not four flat role cards.
+    expect(await screen.findByText("Neptune databases")).toBeInTheDocument();
+    expect(screen.getByText("CATO databases")).toBeInTheDocument();
+    // Every member database is offered, including ones with no stored row yet.
+    expect(screen.getByText("Portfolio (app)")).toBeInTheDocument();
+    expect(screen.getByText("Securities (market data)")).toBeInTheDocument();
+    expect(screen.getByText("Macro (rates/credit + economic)")).toBeInTheDocument();
+    expect(screen.getByText("Universe (cato_securities)")).toBeInTheDocument();
     // The portfolio DB is marked restart-only.
     expect(screen.getByText(/applies on restart/)).toBeInTheDocument();
   });
 
+  it("navigates between sections from the rail", async () => {
+    render(<Settings />);
+    // General is the landing section; Databases content is not mounted yet.
+    expect(screen.queryByText("Neptune databases")).not.toBeInTheDocument();
+    gotoSection("Databases");
+    expect(await screen.findByText("Neptune databases")).toBeInTheDocument();
+    gotoSection("Portfolios");
+    expect(screen.queryByText("Neptune databases")).not.toBeInTheDocument();
+    expect(await screen.findByText(/No portfolios yet/)).toBeInTheDocument();
+  });
+
   it("saves a connection with a blank password (preserves stored secret)", async () => {
     render(<Settings />);
-    await screen.findByText(/Universe DB/);
+    gotoSection("Databases");
+    await screen.findByText("CATO databases");
     // Save the universe row without typing a password.
-    const saveButtons = screen.getAllByText("Save");
-    fireEvent.click(saveButtons[2]);
+    fireEvent.click(screen.getByLabelText("universe-save"));
     await waitFor(() => expect(saveConnection).toHaveBeenCalled());
     const [role, body] = saveConnection.mock.calls[0];
     expect(role).toBe("UNIVERSE");
@@ -136,18 +164,29 @@ describe("Settings", () => {
     expect((body as { password: string | null }).password).toBeNull();
   });
 
+  it("disables Test connection on an edited row, since it tests the stored URL", async () => {
+    render(<Settings />);
+    gotoSection("Databases");
+    await screen.findByText("CATO databases");
+    expect(screen.getByLabelText("universe-test")).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("universe-host"), {
+      target: { value: "cato-prod.internal" },
+    });
+    expect(screen.getByLabelText("universe-test")).toBeDisabled();
+  });
+
   it("syncs the universe and reports the count", async () => {
     render(<Settings />);
-    await screen.findByText(/Universe DB/);
-    fireEvent.click(screen.getByText("Sync universe"));
+    gotoSection("Data Ingest");
+    fireEvent.click(await screen.findByText("Sync universe"));
     await waitFor(() => expect(syncUniverse).toHaveBeenCalledOnce());
     expect(await screen.findByText(/Synced 42 securities/)).toBeInTheDocument();
   });
 
   it("backfills prices and reports total bars across names", async () => {
     render(<Settings />);
-    await screen.findByText(/Securities DB/);
-    fireEvent.click(screen.getByText("Backfill prices"));
+    gotoSection("Data Ingest");
+    fireEvent.click(await screen.findByText("Backfill prices"));
     await waitFor(() => expect(ingestPrices).toHaveBeenCalledOnce());
     // 252 + 252 bars across 2 names.
     expect(
@@ -157,8 +196,8 @@ describe("Settings", () => {
 
   it("backfills Ken French factors and reports the observation count", async () => {
     render(<Settings />);
-    await screen.findByText(/Securities DB/);
-    fireEvent.click(screen.getByText("Backfill factors"));
+    gotoSection("Data Ingest");
+    fireEvent.click(await screen.findByText("Backfill factors"));
     await waitFor(() => expect(ingestFactors).toHaveBeenCalledOnce());
     // 252 × 3 factors.
     expect(
@@ -169,6 +208,7 @@ describe("Settings", () => {
   it("shows an empty-state and adds a portfolio with ownership fields", async () => {
     const onChanged = vi.fn();
     render(<Settings onPortfoliosChanged={onChanged} />);
+    gotoSection("Portfolios");
     expect(await screen.findByText(/No portfolios yet/)).toBeInTheDocument();
     // Fill the full-ownership add form and submit.
     fireEvent.change(screen.getByLabelText("new-portfolio-name"), {
@@ -191,6 +231,7 @@ describe("Settings", () => {
     ];
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<Settings />);
+    gotoSection("Portfolios");
     expect(await screen.findByText("Macro Alpha")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Remove"));
     await waitFor(() => expect(deletePortfolio).toHaveBeenCalledWith("macro-alpha"));
@@ -199,6 +240,7 @@ describe("Settings", () => {
 
   it("saves a FRED API key (write-only) and links to where to get one", async () => {
     render(<Settings />);
+    gotoSection("API Keys");
     await screen.findByText(/Data provider API keys/);
     // The how-to-get-one link is surfaced.
     expect(screen.getByText(/fredaccount.stlouisfed.org\/apikeys/)).toBeInTheDocument();
