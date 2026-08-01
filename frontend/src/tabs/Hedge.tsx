@@ -173,7 +173,7 @@ export function Hedge({
               </thead>
               <tbody>
                 {proposal.proposed_shorts.map((s) => (
-                  <tr key={s.ticker} className="border-t border-ocean-border/60">
+                  <tr key={s.ticker} className="border-t border-ocean-border/70">
                     <td className="py-2 font-mono">{s.ticker}</td>
                     <td className="py-2 text-ocean-muted">{s.sector ?? "—"}</td>
                     <td className="py-2 text-right font-mono">

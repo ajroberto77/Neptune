@@ -111,7 +111,7 @@ export function PortfoliosPanel({ onChanged }: { onChanged?: () => void }) {
             </thead>
             <tbody>
               {books.map((b) => (
-                <tr key={b.id} className="border-t border-ocean-border/50">
+                <tr key={b.id} className="border-t border-ocean-border/70">
                   <td className="px-3 py-2">
                     <div className="text-slate-200">{b.name}</div>
                     <div className="font-mono text-[11px] text-ocean-muted">{b.id}</div>

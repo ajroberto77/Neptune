@@ -15,7 +15,7 @@ function Sparkline({
   height?: number;
   baseline?: number;
 }) {
-  if (values.length < 2) return <span className="text-ocean-muted/50">—</span>;
+  if (values.length < 2) return <span className="text-ocean-faint">—</span>;
   const lo = Math.min(...values, baseline ?? Infinity);
   const hi = Math.max(...values, baseline ?? -Infinity);
   const span = hi - lo || 1;
@@ -36,12 +36,14 @@ function Sparkline({
 
 function StatCells({ stats }: { stats: BetaStats | null }) {
   if (!stats) return <>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
   </>;
-  // Flag a name whose beta has drifted a lot over the window (range > 0.5).
+  // Flag a name whose beta has drifted a lot over the window (range > 0.5). Color alone isn't
+  // a safe signal (see the readability audit), so a drifty range also gets a leading "!" —
+  // the only status cue in the app that used to rely on hue by itself.
   const drifty = stats.range > 0.5;
   return (
     <>
@@ -49,7 +51,7 @@ function StatCells({ stats }: { stats: BetaStats | null }) {
       <td className="py-2 text-right font-mono">{stats.mean.toFixed(2)}</td>
       <td className="py-2 text-right font-mono">{stats.std.toFixed(2)}</td>
       <td className={`py-2 text-right font-mono ${drifty ? "text-status-watch" : ""}`}>
-        {stats.min.toFixed(2)}–{stats.max.toFixed(2)}
+        {drifty && "! "}{stats.min.toFixed(2)}–{stats.max.toFixed(2)}
       </td>
     </>
   );
@@ -145,7 +147,7 @@ export function BetaHistory({ portfolioId }: { portfolioId: string }) {
               <tbody>
                 {data.positions.map((p) => (
                   <tr key={`${p.ticker}-${p.side}-${p.short_type}`}
-                      className="border-t border-ocean-border/60">
+                      className="border-t border-ocean-border/70">
                     <td className="py-2 font-mono">{p.ticker}</td>
                     <td className="py-2 text-xs uppercase text-ocean-muted">
                       {p.side === "SHORT"
@@ -267,7 +269,7 @@ function HedgeBacktestPanel({ portfolioId }: { portfolioId: string }) {
                 const isRec = recommended !== null && r.beta_add_budget === recommended;
                 return (
                   <tr key={r.beta_add_budget}
-                      className={`border-t border-ocean-border/60 ${isRec ? "bg-status-ok/10" : ""}`}>
+                      className={`border-t border-ocean-border/70 ${isRec ? "bg-status-ok/10" : ""}`}>
                     <td className="py-2 font-mono">
                       {r.beta_add_budget}{isRec ? " ◄ rec" : ""}
                     </td>

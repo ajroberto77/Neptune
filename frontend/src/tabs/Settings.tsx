@@ -604,7 +604,7 @@ export function Settings({
                           {pricing ? "Refreshing…" : "Refresh now"}
                         </button>
                         {lastPriced && (
-                          <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>
+                          <span className="text-xs text-ocean-muted">updated {lastPriced}</span>
                         )}
                       </div>
                     </Card>
@@ -837,7 +837,7 @@ export function Settings({
                         </thead>
                         <tbody>
                           {catalog.map((s) => (
-                            <tr key={s.series_id} className="border-t border-ocean-border/50">
+                            <tr key={s.series_id} className="border-t border-ocean-border/70">
                               <td className="px-3 py-1.5 font-mono text-slate-200">
                                 {s.series_id}
                               </td>

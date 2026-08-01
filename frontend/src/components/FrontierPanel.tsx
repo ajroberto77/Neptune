@@ -43,7 +43,7 @@ export function FrontierPanel({
           </thead>
           <tbody>
             {frontier.frontier.map((p) => (
-              <tr key={p.n_cap} className="border-t border-ocean-border/60">
+              <tr key={p.n_cap} className="border-t border-ocean-border/70">
                 <td className="py-2 font-mono">&le; {p.n_cap}</td>
                 <td className="py-2 text-right font-mono">{p.n_selected}</td>
                 <td className="py-2 text-right font-mono">{p.net_beta_after.toFixed(4)}</td>

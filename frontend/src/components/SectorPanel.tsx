@@ -31,7 +31,7 @@ export function SectorPanel({ proposal }: { proposal: HedgeProposal }) {
         </thead>
         <tbody>
           {proposal.sectors.map((s) => (
-            <tr key={s.sector} className="border-t border-ocean-border/60">
+            <tr key={s.sector} className="border-t border-ocean-border/70">
               <td className="py-2">{s.sector}</td>
               <td className="py-2 text-right font-mono">{money(s.notional)}</td>
               <td className="py-2">

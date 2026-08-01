@@ -35,14 +35,14 @@ export function FactorMonitorPanel({ portfolioId }: { portfolioId: string }) {
       <h3 className="mb-1 font-display text-sm uppercase tracking-wide text-ocean-muted">
         Factor Monitor
       </h3>
-      <p className="mb-3 text-xs text-ocean-muted/70">
+      <p className="mb-3 text-xs text-ocean-muted">
         Report-only — monitored, not neutralized by the hedge.
       </p>
 
       {error && <p className="text-sm text-rose-400">{error}</p>}
-      {!data && !error && <p className="text-sm text-ocean-muted/60">Loading…</p>}
+      {!data && !error && <p className="text-sm text-ocean-muted">Loading…</p>}
       {data && !data.available && (
-        <p className="text-sm text-ocean-muted/60">
+        <p className="text-sm text-ocean-muted">
           Not available yet — price-only factor panel not built for this book.
         </p>
       )}
@@ -59,7 +59,7 @@ export function FactorMonitorPanel({ portfolioId }: { portfolioId: string }) {
               </thead>
               <tbody>
                 {factors.map(([f, v]) => (
-                  <tr key={f} className="border-t border-ocean-border/60">
+                  <tr key={f} className="border-t border-ocean-border/70">
                     <td className="py-2">{FACTOR_LABELS[f] ?? f}</td>
                     <td className="py-2 text-right font-mono">{v.toFixed(4)}</td>
                   </tr>
@@ -77,7 +77,7 @@ export function FactorMonitorPanel({ portfolioId }: { portfolioId: string }) {
               </thead>
               <tbody>
                 {sectors.map(([s, v]) => (
-                  <tr key={s} className="border-t border-ocean-border/60">
+                  <tr key={s} className="border-t border-ocean-border/70">
                     <td className="py-2">{s}</td>
                     <td className="py-2 text-right font-mono">
                       {(v * 100).toFixed(1)}%

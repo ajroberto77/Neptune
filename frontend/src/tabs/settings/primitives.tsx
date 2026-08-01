@@ -49,7 +49,7 @@ export function Metric({
       <div className={`font-mono text-lg ${ok ? "text-status-ok" : "text-status-breach"}`}>
         {value}
       </div>
-      {hint && <div className="text-[11px] text-ocean-muted/70">{hint}</div>}
+      {hint && <div className="text-[11px] text-ocean-muted">{hint}</div>}
     </div>
   );
 }

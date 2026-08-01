@@ -65,7 +65,7 @@ export function DataHealth() {
               hint={factorsLoaded ? undefined : "load Ken French to enable factor hedges"}
             />
           </div>
-          <p className="mt-3 text-xs text-ocean-muted/80">
+          <p className="mt-3 text-xs text-ocean-muted">
             Source: <span className="font-mono">{h.source}</span> — {h.reason}
           </p>
         </>

@@ -103,7 +103,7 @@ function TotalsRow({
     <tr
       className={
         subtle
-          ? "border-t border-ocean-border/60 font-medium text-ocean-muted"
+          ? "border-t border-ocean-border/70 font-medium text-ocean-muted"
           : "border-t-2 border-ocean-border font-medium"
       }
     >
@@ -125,7 +125,7 @@ function TotalsRow({
 // A non-standard beta source flagged inline; a normal pipeline beta shows nothing (no clutter).
 function betaFlag(p: PositionRow) {
   if (p.beta_method === "forward_override")
-    return <span className="ml-2 text-[10px] uppercase text-ocean-muted/60">ovr</span>;
+    return <span className="ml-2 text-[10px] uppercase text-ocean-muted">ovr</span>;
   if (p.beta_method === "insufficient_data")
     return <span className="ml-2 text-[10px] uppercase text-status-watch">thin</span>;
   return null;
@@ -134,7 +134,7 @@ function betaFlag(p: PositionRow) {
 /** One position row, shared by Longs and both Shorts subgroups so every table lines up. */
 function PositionTr({ p }: { p: PositionRow }) {
   return (
-    <tr className="border-t border-ocean-border/60">
+    <tr className="border-t border-ocean-border/70">
       <td className="truncate py-2 font-mono">
         {p.ticker}
         {betaFlag(p)}
@@ -160,7 +160,7 @@ function SubHeader({ label, count }: { label: string; count: number }) {
   return (
     <tr>
       <td colSpan={11} className="pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-ocean-muted">
-        {label} <span className="text-ocean-muted/60">({count})</span>
+        {label} <span className="text-ocean-faint">({count})</span>
       </td>
     </tr>
   );
@@ -206,7 +206,7 @@ export function Portfolio({ positions }: { positions: PositionRow[] }) {
       {/* Longs */}
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
         <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Longs <span className="text-ocean-muted/60">({longs.length})</span>
+          Longs <span className="text-ocean-faint">({longs.length})</span>
         </h3>
         {longs.length === 0 ? (
           <p className="text-sm text-ocean-muted">No positions.</p>
@@ -230,7 +230,7 @@ export function Portfolio({ positions }: { positions: PositionRow[] }) {
       {/* Shorts — Systematic and (if any) Discretionary subgroups, then the grand Total Short */}
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
         <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Shorts <span className="text-ocean-muted/60">({shorts.length})</span>
+          Shorts <span className="text-ocean-faint">({shorts.length})</span>
         </h3>
         {shorts.length === 0 ? (
           <p className="text-sm text-ocean-muted">No positions.</p>

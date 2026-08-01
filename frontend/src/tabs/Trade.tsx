@@ -211,7 +211,7 @@ export function Trade({
     <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Trades <span className="text-ocean-muted/60">({rows.length})</span>
+          Trades <span className="text-ocean-faint">({rows.length})</span>
           {systematicCount > 0 && (
             <span className="ml-2 text-xs text-status-ok">
               · {systematicCount} systematic hedge {systematicCount === 1 ? "row" : "rows"}
@@ -262,7 +262,7 @@ export function Trade({
           {rows.map((r) => (
             <tr
               key={r.key}
-              className={`border-t border-ocean-border/60 ${r.error ? "bg-status-breach/10" : r.systematic ? "bg-status-ok/5" : ""}`}
+              className={`border-t border-ocean-border/70 ${r.error ? "bg-status-breach/10" : r.systematic ? "bg-status-ok/5" : ""}`}
             >
               <td className="py-2 pr-2">
                 <div className="flex items-center gap-1">
@@ -379,7 +379,7 @@ export function Trade({
         </button>
         {msg && <span className="text-sm text-ocean-muted">{msg}</span>}
       </div>
-      <p className="mt-3 text-xs text-ocean-muted/70">
+      <p className="mt-3 text-xs text-ocean-muted">
         Buy/Sell nets against the current holding. Rows from an approved hedge book as systematic
         shorts (kept distinct from discretionary — I-03); Neptune never routes orders (I-01).
       </p>
@@ -405,7 +405,7 @@ function Blotter({ portfolioId, reloadKey }: { portfolioId: string; reloadKey: n
   return (
     <div className="mt-8">
       <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-        Blotter <span className="text-ocean-muted/60">(executed trades)</span>
+        Blotter <span className="text-ocean-faint">(executed trades)</span>
       </h3>
       {err && <p className="text-sm text-status-breach">{err}</p>}
       {rows.length === 0 ? (
@@ -427,7 +427,7 @@ function Blotter({ portfolioId, reloadKey }: { portfolioId: string; reloadKey: n
             </thead>
             <tbody>
               {rows.map((t) => (
-                <tr key={t.id} className="border-t border-ocean-border/60">
+                <tr key={t.id} className="border-t border-ocean-border/70">
                   <td className="px-3 py-1.5 font-mono text-ocean-muted">{t.trade_date}</td>
                   <td className="px-3 py-1.5 font-mono">{t.ticker}</td>
                   <td

@@ -31,7 +31,7 @@ export function FactorTable({ factors }: { factors: FactorStatus[] }) {
         </thead>
         <tbody>
           {factors.map((f) => (
-            <tr key={f.factor} className="border-t border-ocean-border/60">
+            <tr key={f.factor} className="border-t border-ocean-border/70">
               <td className="py-2">{FACTOR_LABELS[f.factor] ?? f.factor}</td>
               <td className="py-2 text-right font-mono">{f.exposure.toFixed(4)}</td>
               <td className="py-2 text-right font-mono text-ocean-muted">

@@ -29,7 +29,7 @@ export function BetaDiagPanel({ diag }: { diag: BetaDiagnostics }) {
         </thead>
         <tbody>
           {diag.names.map((n) => (
-            <tr key={n.ticker} className="border-t border-ocean-border/60">
+            <tr key={n.ticker} className="border-t border-ocean-border/70">
               <td className="py-2 font-mono">{n.ticker}</td>
               <td className="py-2 text-right font-mono">{n.bars ?? "—"}</td>
               <td className="py-2 font-mono text-xs text-ocean-muted">
