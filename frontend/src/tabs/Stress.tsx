@@ -37,7 +37,7 @@ export function Stress({
           <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
             <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
               Value at Risk{" "}
-              <span className="text-ocean-muted/60">
+              <span className="text-ocean-faint">
                 ({(report.var.confidence * 100).toFixed(0)}%, {report.var.horizon_days}d)
               </span>
             </h3>
@@ -53,7 +53,7 @@ export function Stress({
               </thead>
               <tbody>
                 {report.var_methods.map((m) => (
-                  <tr key={m.method} className="border-t border-ocean-border/60">
+                  <tr key={m.method} className="border-t border-ocean-border/70">
                     <td className="py-2">{METHOD_LABELS[m.method] ?? m.method}</td>
                     <td className="py-2 text-right font-mono text-status-breach">
                       {money(m.var)}
@@ -91,7 +91,7 @@ export function Stress({
               </thead>
               <tbody>
                 {report.scenarios.map((s) => (
-                  <tr key={s.name} className="border-t border-ocean-border/60">
+                  <tr key={s.name} className="border-t border-ocean-border/70">
                     <td className="py-2">{s.name}</td>
                     <Cell value={s.by_book.LONG ?? 0} />
                     <Cell value={s.by_book.SYSTEMATIC_SHORT ?? 0} />
@@ -103,7 +103,7 @@ export function Stress({
                 ))}
               </tbody>
             </table>
-            <p className="mt-3 text-xs text-ocean-muted/70">
+            <p className="mt-3 text-xs text-ocean-muted">
               Market shocks use each name's <span className="text-slate-300">downside beta</span> when
               the market falls and <span className="text-slate-300">upside beta</span> when it rises
               (fit on down vs up days), so a selloff and a rally aren't mirror images. The net-beta

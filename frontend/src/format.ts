@@ -28,3 +28,10 @@ export function pnlColor(value: number): string {
   if (value < 0) return "text-status-breach";
   return "text-ocean-muted";
 }
+
+/** Signed percentage, e.g. "+1.24%" / "-0.50%", or "—" when not computable. */
+export function signedPct(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const sign = value >= 0 ? "+" : "-";
+  return sign + Math.abs(value * 100).toFixed(2) + "%";
+}

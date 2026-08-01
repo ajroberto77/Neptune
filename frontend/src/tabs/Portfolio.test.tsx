@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Portfolio } from "./Portfolio";
 import type { PositionRow } from "../types";
@@ -79,22 +79,5 @@ describe("Portfolio", () => {
     render(<Portfolio positions={[pos({ side: "LONG" })]} />);
     // Only the Shorts section is empty.
     expect(screen.getAllByText("No positions.").length).toBe(1);
-  });
-
-  it("triggers a manual price refresh from the live-pricing control", async () => {
-    const { fireEvent } = await import("@testing-library/react");
-    const onRefreshNow = vi.fn();
-    render(
-      <Portfolio
-        positions={[pos({})]}
-        refreshMins={10}
-        onChangeMins={() => {}}
-        onRefreshNow={onRefreshNow}
-        lastPriced={null}
-        pricing={false}
-      />,
-    );
-    fireEvent.click(screen.getByText("Refresh now"));
-    expect(onRefreshNow).toHaveBeenCalledOnce();
   });
 });

@@ -50,6 +50,107 @@ def test_clear_systematic_shorts_replaces_not_stacks(session):
     assert positions["DISCX"].short_type is ShortType.DISCRETIONARY
 
 
+def test_apply_systematic_hedge_books_covers_and_shorts_as_trades(session):
+    """Approving a new hedge reconciles the systematic book by BOOKING TRADES (buy-to-cover the
+    names dropped/reduced, sell-short the names added/increased), not by deleting positions.
+    Stale names are covered with realized P&L; unchanged names are left untouched (no churn);
+    discretionary shorts are never touched."""
+    from datetime import date
+
+    service = PositionService(session)
+    service.create_portfolio("PH", "Hedge Book")
+    service.add_position("PH", Position("LONGX", Side.LONG, 5_000_000))
+    service.add_position(
+        "PH", Position("DISCX", Side.SHORT, 500_000, short_type=ShortType.DISCRETIONARY)
+    )
+    # Initial hedge: short STALE @100 and KEEP @50.
+    s1 = service.apply_systematic_hedge(
+        "PH",
+        targets={"STALE": (100, 100.0), "KEEP": (200, 50.0)},
+        cover_prices={},
+        trade_date=date(2026, 1, 2),
+    )
+    assert s1 == {"covered": 0, "opened": 2, "realized_pnl": 0.0}
+
+    # New hedge: drop STALE entirely, keep KEEP at the SAME size, add NEWN. STALE covered @90
+    # (shorted @100 → +$10/sh × 100 = +$1000 realized). KEEP unchanged (no trade). NEWN opened.
+    s2 = service.apply_systematic_hedge(
+        "PH",
+        targets={"KEEP": (200, 55.0), "NEWN": (300, 20.0)},
+        cover_prices={"STALE": 90.0},
+        trade_date=date(2026, 2, 2),
+    )
+    assert s2["covered"] == 1            # STALE
+    assert s2["opened"] == 1             # NEWN (KEEP unchanged → no trade)
+    assert s2["realized_pnl"] == pytest.approx(1000.0)
+
+    live = {p.ticker: p for p in service.list_positions("PH") if p.notional > 0}
+    assert "STALE" not in live           # fully covered → flat, hidden
+    assert set(live) == {"LONGX", "KEEP", "NEWN", "DISCX"}
+    assert sum(l.quantity for l in live["KEEP"].lots) == 200  # untouched, not churned
+    assert live["DISCX"].short_type is ShortType.DISCRETIONARY  # never touched
+
+    # The blotter recorded the covers/shorts as HEDGE-origin trades.
+    from neptune.domain.models import TradeOrigin
+    txs = service.transactions("PH")
+    hedge = [t for t in txs if t.origin is TradeOrigin.HEDGE]
+    cover = next(t for t in hedge if t.ticker == "STALE")
+    assert cover.action.value == "BUY" and cover.realized_pnl == pytest.approx(1000.0)
+    assert any(t.ticker == "NEWN" and t.action.value == "SELL" for t in hedge)
+
+
+def test_apply_hedge_legs_books_exactly_what_is_shown(session):
+    """The delta-aware grid submits explicit legs: a SELL opens/increases a systematic short, a
+    BUY covers/reduces it (WYSIWYG). A BUY books realized P&L at the cover price; a name not in
+    the legs is left untouched."""
+    from datetime import date
+    from neptune.domain.models import TradeAction, TradeOrigin
+
+    service = PositionService(session)
+    service.create_portfolio("PL", "Legs Book")
+    service.add_position("PL", Position("LONGX", Side.LONG, 5_000_000))
+    # Seed a live hedge: STALE 100 @100, KEEP 200 @50.
+    service.apply_hedge_legs(
+        "PL",
+        legs=[("STALE", TradeAction.SELL, 100, 100.0), ("KEEP", TradeAction.SELL, 200, 50.0)],
+        trade_date=date(2026, 1, 2),
+    )
+    # Now cover STALE @90 (realized +$1000) and open NEWN; KEEP gets no leg → untouched.
+    out = service.apply_hedge_legs(
+        "PL",
+        legs=[("STALE", TradeAction.BUY, 100, 90.0), ("NEWN", TradeAction.SELL, 300, 20.0)],
+        trade_date=date(2026, 2, 2),
+    )
+    assert out["covered"] == 1 and out["opened"] == 1
+    assert out["realized_pnl"] == pytest.approx(1000.0)
+
+    live = {p.ticker: p for p in service.list_positions("PL") if p.notional > 0}
+    assert "STALE" not in live                     # fully covered
+    assert set(live) == {"LONGX", "KEEP", "NEWN"}
+    assert sum(l.quantity for l in live["KEEP"].lots) == 200  # untouched
+
+    hedge = [t for t in service.transactions("PL") if t.origin is TradeOrigin.HEDGE]
+    cover = next(t for t in hedge if t.ticker == "STALE" and t.action is TradeAction.BUY)
+    assert cover.realized_pnl == pytest.approx(1000.0)
+
+
+def test_manual_trade_writes_a_blotter_row(session):
+    """A manual Buy/Sell appends one ledger row with the netting effect and realized P&L."""
+    from datetime import date
+    from neptune.domain.models import TradeAction, TradeOrigin
+
+    service = PositionService(session)
+    service.create_portfolio("PB", "Blotter Book")
+    service.book_trade("PB", "AAA", TradeAction.BUY, 100, 50.0, date(2026, 1, 5))
+    service.book_trade("PB", "AAA", TradeAction.SELL, 40, 60.0, date(2026, 1, 6))  # sell long → +$400
+    txs = service.transactions("PB")
+    assert [t.ticker for t in txs] == ["AAA", "AAA"]  # newest first
+    assert all(t.origin is TradeOrigin.MANUAL for t in txs)
+    sell = txs[0]
+    assert sell.action is TradeAction.SELL
+    assert sell.realized_pnl == pytest.approx(400.0)  # 40 × (60 − 50)
+
+
 def test_long_only_book_rejects_shorting(session):
     """A LONG_ONLY mandate blocks any short (systematic hedge or discretionary) at the booking
     layer — longs are fine, shorts raise. The other books keep their default LONG_SHORT mandate."""

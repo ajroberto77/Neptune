@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { BetaHistory, BetaStats } from "../types";
-import { fetchBetaHistory } from "../api/client";
+import type { BetaHistory, BetaStats, HedgeBacktest, HedgeCalibration } from "../types";
+import { fetchBetaHistory, fetchHedgeBacktest, fetchHedgeCalibration } from "../api/client";
 
 /** A tiny inline sparkline (no chart dependency). Maps values to a fixed viewBox; an optional
  *  baseline (e.g. β = 0) is drawn so you can see sign and drift at a glance. */
@@ -15,7 +15,7 @@ function Sparkline({
   height?: number;
   baseline?: number;
 }) {
-  if (values.length < 2) return <span className="text-ocean-muted/50">—</span>;
+  if (values.length < 2) return <span className="text-ocean-faint">—</span>;
   const lo = Math.min(...values, baseline ?? Infinity);
   const hi = Math.max(...values, baseline ?? -Infinity);
   const span = hi - lo || 1;
@@ -36,12 +36,14 @@ function Sparkline({
 
 function StatCells({ stats }: { stats: BetaStats | null }) {
   if (!stats) return <>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
-    <td className="py-2 text-right font-mono text-ocean-muted/50">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
+    <td className="py-2 text-right font-mono text-ocean-faint">—</td>
   </>;
-  // Flag a name whose beta has drifted a lot over the window (range > 0.5).
+  // Flag a name whose beta has drifted a lot over the window (range > 0.5). Color alone isn't
+  // a safe signal (see the readability audit), so a drifty range also gets a leading "!" —
+  // the only status cue in the app that used to rely on hue by itself.
   const drifty = stats.range > 0.5;
   return (
     <>
@@ -49,7 +51,7 @@ function StatCells({ stats }: { stats: BetaStats | null }) {
       <td className="py-2 text-right font-mono">{stats.mean.toFixed(2)}</td>
       <td className="py-2 text-right font-mono">{stats.std.toFixed(2)}</td>
       <td className={`py-2 text-right font-mono ${drifty ? "text-status-watch" : ""}`}>
-        {stats.min.toFixed(2)}–{stats.max.toFixed(2)}
+        {drifty && "! "}{stats.min.toFixed(2)}–{stats.max.toFixed(2)}
       </td>
     </>
   );
@@ -145,7 +147,7 @@ export function BetaHistory({ portfolioId }: { portfolioId: string }) {
               <tbody>
                 {data.positions.map((p) => (
                   <tr key={`${p.ticker}-${p.side}-${p.short_type}`}
-                      className="border-t border-ocean-border/60">
+                      className="border-t border-ocean-border/70">
                     <td className="py-2 font-mono">{p.ticker}</td>
                     <td className="py-2 text-xs uppercase text-ocean-muted">
                       {p.side === "SHORT"
@@ -171,6 +173,122 @@ export function BetaHistory({ portfolioId }: { portfolioId: string }) {
             </p>
           </div>
         </>
+      )}
+
+      <HedgeBacktestPanel portfolioId={portfolioId} />
+    </div>
+  );
+}
+
+/** Walk-forward HEDGE backtest: re-optimizes the hedge at each past rebalance and plots the
+ *  REALIZED net beta vs the ±tol band — the control metric. The calibrate sweep shows how the
+ *  beta-add budget trades realized control against turnover, so the level is chosen, not guessed. */
+function HedgeBacktestPanel({ portfolioId }: { portfolioId: string }) {
+  const [bt, setBt] = useState<HedgeBacktest | null>(null);
+  const [cal, setCal] = useState<HedgeCalibration | null>(null);
+  const [busy, setBusy] = useState<null | "bt" | "cal">(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function run(kind: "bt" | "cal") {
+    setBusy(kind);
+    setErr(null);
+    try {
+      if (kind === "bt") setBt(await fetchHedgeBacktest(portfolioId));
+      else setCal(await fetchHedgeCalibration(portfolioId));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Recommended budget: the LOOSEST (largest) that still passes the 95% coverage target.
+  const recommended = cal?.grid
+    .filter((r) => r.coverage >= 0.95)
+    .reduce<number | null>((best, r) => (best === null || r.beta_add_budget > best ? r.beta_add_budget : best), null);
+
+  return (
+    <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
+          Hedge backtest (walk-forward)
+        </h3>
+        <div className="flex gap-2">
+          <button onClick={() => run("bt")} disabled={busy !== null}
+                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
+            {busy === "bt" ? "Replaying…" : "Run backtest"}
+          </button>
+          <button onClick={() => run("cal")} disabled={busy !== null}
+                  className="rounded border border-ocean-border px-3 py-1.5 text-sm text-ocean-muted hover:text-slate-200 disabled:opacity-50">
+            {busy === "cal" ? "Sweeping…" : "Calibrate budget"}
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-ocean-muted">
+        Re-optimizes the hedge at each past month, holds it forward, and measures the REALIZED net
+        beta. Calibration sweeps the beta-add budget; pick the loosest that keeps coverage high.
+      </p>
+
+      {err && <div className="mt-3 rounded border border-status-breach/40 bg-status-breach/10 p-3 text-sm text-status-breach">{err}</div>}
+
+      {bt && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-wrap gap-6 text-sm">
+              <Stat label="Realized β RMSE" value={bt.rmse.toFixed(3)} />
+              <Stat label={`Coverage (|β|≤${bt.tol})`} value={`${Math.round(bt.coverage * 100)}%`} />
+              <Stat label="Mean turnover" value={bt.mean_turnover.toFixed(3)} />
+              <Stat label="Rebalances" value={String(bt.n_rebalances)} />
+            </div>
+            <Sparkline values={bt.points.map((p) => p.realized_net_beta)} width={300} height={48} baseline={0} />
+          </div>
+          {bt.n_rebalances < 2 && (
+            <p className="mt-2 text-sm text-ocean-muted">
+              Not enough priced history to replay. Backfill more years (Settings) and retry.
+            </p>
+          )}
+        </div>
+      )}
+
+      {cal && (
+        <div className="mt-5">
+          <h4 className="mb-2 text-xs font-medium uppercase text-ocean-muted">
+            Budget calibration — current: {cal.current_budget}
+          </h4>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase text-ocean-muted">
+                <th className="pb-2 font-medium">Beta-add budget</th>
+                <th className="pb-2 text-right font-medium">Realized β RMSE</th>
+                <th className="pb-2 text-right font-medium">Coverage</th>
+                <th className="pb-2 text-right font-medium">Mean turnover</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cal.grid.map((r) => {
+                const isRec = recommended !== null && r.beta_add_budget === recommended;
+                return (
+                  <tr key={r.beta_add_budget}
+                      className={`border-t border-ocean-border/70 ${isRec ? "bg-status-ok/10" : ""}`}>
+                    <td className="py-2 font-mono">
+                      {r.beta_add_budget}{isRec ? " ◄ rec" : ""}
+                    </td>
+                    <td className="py-2 text-right font-mono">{r.rmse.toFixed(3)}</td>
+                    <td className={`py-2 text-right font-mono ${r.coverage >= 0.95 ? "text-status-ok" : "text-status-watch"}`}>
+                      {Math.round(r.coverage * 100)}%
+                    </td>
+                    <td className="py-2 text-right font-mono">{r.mean_turnover.toFixed(3)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-3 text-xs text-ocean-muted">
+            Recommended = the loosest budget still keeping coverage ≥ 95% (looser preserves
+            factor-matching room without hurting realized control). Tightening past it only adds
+            turnover. This is a suggestion — the hard |β| ≤ {cal.tol} limit is policy, unchanged.
+          </p>
+        </div>
       )}
     </div>
   );

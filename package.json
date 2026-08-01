@@ -1,0 +1,19 @@
+{
+  "name": "neptune-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Neptune — Electron desktop shell hosting the React UI + FastAPI backend",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently --kill-others --names vite,app --prefix-colors gray,cyan \"npm --prefix frontend run dev\" \"cross-env NODE_ENV=development electron .\"",
+    "build": "npm --prefix frontend run build",
+    "electron": "electron .",
+    "start": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^10.1.0",
+    "electron": "^28.0.0"
+  }
+}

@@ -1,0 +1,133 @@
+# Database interactions — current state and the Iridium Backend transition
+
+> **Status / purpose.** This is a planning + reference doc. It captures exactly how Neptune
+> touches each database **today** and how that will narrow once data ingestion moves out of
+> Neptune into a separate service, **Iridium Backend**. Nothing here changes behaviour by
+> itself — it exists so the transition is clean and so every contributor shares one map of who
+> reads and who writes each store. It supersedes the data-flow parts of
+> [`data_architecture.md`](./data_architecture.md), which predates the ingestion Neptune now
+> performs.
+
+Neptune's three-layer architecture (CLAUDE.md §1) is the backdrop: the **Quant Engine** does
+no I/O at all; data is read at the **Risk Interface / API** seam and passed into the engine as
+arrays/dataclasses. So "database interaction" lives entirely in the API, the repositories, the
+data adapters, and the ingestion code — never in `src/neptune/quant/`.
+
+---
+
+## 1. The four databases
+
+| DB (logical) | env var | SQLAlchemy base / session | today | target (post-Iridium-Backend) |
+|---|---|---|---|---|
+| `neptune_portfolios` | `PORTFOLIO_DATABASE_URL` | `PortfolioBase` / `SessionLocal` (`get_session`) | **read-write** (the app's own data) | **read-write — the only DB Neptune writes** |
+| `neptune_securities` | `SECURITIES_DATABASE_URL` | `SecuritiesBase` / `SecuritiesSession`, `securities_session()` | read-write (Neptune ingests prices/factors/betas) | **read-only** (Iridium Backend ingests) |
+| `neptune_macro` | `MACRO_DATABASE_URL` | `MacroBase` / `MacroSession`, `macro_session()` | read-write (Neptune ingests FRED/ALFRED) | **read-only** (Iridium Backend ingests) |
+| `cato_securities` | `UNIVERSE_DATABASE_URL` | read-only adapter | read-only (universe master) | read-only (unchanged) |
+
+Each URL falls back to the single legacy `DATABASE_URL` (`config.py` `portfolio_url` /
+`securities_url` / `macro_url`), so a one-DB dev/test setup works while production points each
+role at its own instance. In tests every role resolves to a shared in-memory SQLite DB.
+
+---
+
+## 2. Engine / session architecture
+
+Multi-base SQLAlchemy, defined in `src/neptune/db/base.py`:
+
+- Three independent declarative bases — `PortfolioBase`, `SecuritiesBase`, `MacroBase` — each
+  with its own `make_engine(...)` engine, `sessionmaker`, and `init_*_db()`. `init_*_db` runs
+  `create_all` plus the additive, dialect-agnostic bridges `_ensure_columns` /
+  `_ensure_enum_values` (so a column/enum value added in code lands on an existing DB without a
+  formal migration).
+- **Per-request portfolio sessions:** `get_session()` in `api/main.py` yields a `SessionLocal`.
+- **On-demand securities/macro sessions:** `securities_session(...)` / `macro_session(...)`
+  context managers in `src/neptune/db/runtime.py`. These **cache one engine per URL**
+  (`_engines`, and a separate `_macro_engines`) so repeated calls reuse a pooled engine and the
+  test `:memory:` URLs don't collide across roles.
+- The portfolio DB is the **bootstrap**: it also stores the runtime connection settings
+  (`db_connections`), app settings, and provider credentials, so it must be reachable from
+  `.env` at startup before the settings-store overrides can be read.
+
+---
+
+## 3. Configuration & connection resolution
+
+- **Env (`config.py`).** Bare (un-prefixed) names are parsed from the shell and `.env`
+  (`_dotenv_values`, BOM/utf-8-sig safe): `DATABASE_URL`, `PORTFOLIO_DATABASE_URL`,
+  `SECURITIES_DATABASE_URL`, `MACRO_DATABASE_URL`, `UNIVERSE_DATABASE_URL`, plus the FRED key in
+  `_SECRET_ENV`. Shell wins over `.env` so tests stay authoritative.
+- **Settings-store override (portfolio DB).** `settings_store/service.py`
+  `ConnectionSettingsService.resolve_url(role)` prefers a stored `db_connections` row over env.
+  SECURITIES / MACRO / UNIVERSE rows apply live; the PORTFOLIO row is informational
+  (bootstrap / restart-only). The FRED key is resolved by `credentials.py` (stored > env) and
+  is **write-only** — never serialized back.
+
+---
+
+## 4. Write paths (what Neptune writes today)
+
+By database — this is the list that narrows in the transition:
+
+- **`neptune_portfolios` (stays read-write):**
+  - `PositionRepository` — portfolios, positions, lots.
+  - `TransactionRepository` — the blotter (append-only executed-trade ledger; recording an
+    execution is **not** auto-execution — no broker routing, CLAUDE.md §2).
+  - `OrgRepository` — firms, people, investor entities, book-manager links.
+  - `settings_store` services — `db_connections`, `app_settings`, `provider_credentials`.
+  - All via `SessionLocal` / `get_session`.
+- **`neptune_securities` (→ Iridium Backend writes this later):**
+  - yfinance price ingest — `POST /securities/ingest`, the Settings "Backfill prices" button,
+    and the always-on refresh scheduler (`scheduling/scheduler.py`).
+  - Ken French factor ingest — `POST /factors/ingest`, "Backfill factors".
+  - Beta rebuild — `risk/beta_store.rebuild_betas`.
+  - Universe projection sync — `POST /settings/universe/sync` projects `cato_securities` →
+    local `securities` rows.
+- **`neptune_macro` (→ Iridium Backend writes this later):**
+  - `macro.ingest.ingest_catalog` + `macro.catalog.seed_catalog` — `POST /macro/ingest`,
+    "Backfill macro": observations, point-in-time vintages, and the series registry.
+- **`cato_securities`:** never written (read-only universe master).
+
+## 5. Read paths
+
+The engine seam reads; it never writes:
+
+- **Prices / factors / betas:** `market_data_for(...)` builds a `DbMarketData`
+  (`data/db_market.py`) over `neptune_securities` and hands arrays to the quant/risk code. The
+  synthetic fallback is used when the DB has no usable history.
+- **Macro:** `macro/repository.py` (catalog + coverage) and `risk/macro_derive.py` read
+  `neptune_macro` for the rates/credit/economic views.
+- **Universe:** the read-only adapter over `cato_securities` (instruments / identifiers).
+
+---
+
+## 6. Target state & the Iridium Backend transition
+
+End state: **Neptune writes only `neptune_portfolios`** and consumes securities + macro
+**read-only**. What changes:
+
+1. **Neptune stops writing securities/macro.** Retire or feature-flag the ingest surfaces:
+   `POST /securities/ingest`, `/factors/ingest`, `/macro/ingest`, `/settings/universe/sync`,
+   the refresh scheduler, and the Settings "Backfill" buttons. Iridium Backend owns ingestion of prices,
+   factors, betas, and macro series.
+2. **Read adapters are unchanged.** `DbMarketData` and the macro repository keep reading the
+   same DBs — only the *writer* moves. Because all reads already go through these seams, the
+   quant / optimizer / P&L / risk code needs **no change**.
+3. **Schema ownership follows the writer.** Post-transition Iridium Backend runs `create_all` /
+   migrations for `neptune_securities` and `neptune_macro`; Neptune's `init_securities_db` /
+   `init_macro_db` become **connect-and-verify** (or no-ops) so two apps don't race on DDL.
+4. **Connection model is unchanged.** Neptune still points at the three URLs via env /
+   Settings; only the direction (read vs write) narrows. If Iridium Backend writes its **own**
+   databases, Neptune simply re-points its read URLs at those.
+5. **Invariant fit.** This mirrors how `cato_securities` is already treated — Neptune consumes
+   upstream truth and never mutates it — and keeps the engine I/O-free (CLAUDE.md §1) and the
+   Fundamental Layer a read-only input (§1).
+
+## 7. Open items / risks
+
+- **DDL races** if both apps run `create_all` against the same DB during the cutover — decide a
+  single owner per DB before flipping.
+- **Series registry seeding** (`seed_catalog`) — who owns the macro catalog once ingest moves.
+- **Read-DB staleness / SLA** — Neptune's risk views become only as fresh as Iridium Backend's
+  ingest cadence; surface "last updated" in Data Health.
+- **Same DB vs separate DB** — whether Iridium Backend writes the *same* Postgres instances or
+  its own (then Neptune re-points the read URLs). Decide before the cutover.

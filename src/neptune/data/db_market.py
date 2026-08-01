@@ -62,11 +62,19 @@ class DbMarketData:
         benchmark: str = "SPY",
         lookback: int | None = None,
         source: str | None = None,
+        promoted_factors: tuple[str, ...] | None = None,
     ):
         self.session = session
         self.benchmark = benchmark
         self.lookback = lookback
         self.source = source
+        # Monitor factors PROMOTED into the neutralized model (default from settings). When
+        # non-empty, factor_returns() includes them so the loadings regression + optimizer pick
+        # them up; empty → the optimizer's factor set is exactly FF5+MOM (no behavior change).
+        if promoted_factors is None:
+            from neptune.config import settings as _settings
+            promoted_factors = _settings.promoted
+        self.promoted_factors = tuple(promoted_factors)
         self._series_cache: dict[str, list[tuple[date, float, float]]] = {}
 
         bench = self._series(benchmark)
@@ -167,7 +175,47 @@ class DbMarketData:
         style = self._style_factors()
         if style is not None:
             factors.update(style)
+        # PROMOTED monitor factors join the neutralized model. Pre-basket dates (NaN in the raw
+        # neptune series) are filled with 0.0 — a long-short factor with no basket yet earns no
+        # return — so the cumsum-based rolling loadings regression isn't NaN-poisoned. WARM-UP
+        # caveat: until a freshly-promoted factor has >= the loadings/cov window of REAL history,
+        # that window still overlaps the zero-filled region, so its loadings and its diagonal in F
+        # are damped toward 0. This never breaks neutrality (the hard factor constraint still
+        # binds) — it only weakens the min-variance SHAPING for that factor until history accrues.
+        # (A future refinement: gate promotion on sufficient real observations.)
+        if self.promoted_factors:
+            promoted = self.neptune_factor_returns()
+            for f in self.promoted_factors:
+                if f in promoted:
+                    factors[f] = np.nan_to_num(promoted[f], nan=0.0)
         return factors
+
+    def neptune_factor_returns(self) -> dict[str, np.ndarray]:
+        """The price-only ``neptune``-sourced single factors (IVOL/BAB/AMIHUD) aligned to the
+        market return dates, NaN on dates with no stored value (these series only start once the
+        factor's baskets first form). Kept SEPARATE from ``factor_returns()`` on purpose: the
+        PM monitors these but the optimizer does NOT neutralize them, so they must never enter
+        the regression that produces the optimizer's loadings. Empty until built."""
+        from neptune.quant.factor_build import NEPTUNE_FACTORS
+
+        if len(self._dates) < 2:
+            return {}
+        target = self._dates[1:]
+        lo, hi = target[0], target[-1]
+        rows = self.session.execute(
+            select(FactorReturn.factor, FactorReturn.ts, FactorReturn.ret).where(
+                FactorReturn.factor.in_(NEPTUNE_FACTORS),
+                FactorReturn.source == "neptune",
+                FactorReturn.ts >= lo, FactorReturn.ts <= hi,
+            )
+        ).all()
+        by_factor: dict[str, dict[date, float]] = {}
+        for factor, ts, ret in rows:
+            by_factor.setdefault(factor, {})[ts] = ret
+        return {
+            f: np.array([by_factor[f].get(d, np.nan) for d in target], dtype=float)
+            for f in NEPTUNE_FACTORS if by_factor.get(f)
+        }
 
     def _style_factors(self) -> dict[str, np.ndarray] | None:
         """Load SMB/HML/MOM aligned to the market return dates, or None if the panel is
@@ -195,6 +243,39 @@ class DbMarketData:
 
     def ticker_returns(self, ticker: str) -> np.ndarray:
         return _simple_returns(self._adj_aligned(ticker))
+
+    def aligned_returns(self, ticker: str) -> np.ndarray:
+        """Returns over the FULL benchmark return-date axis (``len(return_dates())``), NaN before
+        the name's first real bar; interior missing sessions forward-fill the price (zero return).
+        Unlike ``ticker_returns`` (a contiguous tail), this keeps every name on the SAME axis so
+        the factor builder can stack names into one ``(N, T)`` matrix."""
+        adj_by_day = {ts: adj for ts, adj, _close in self._series(ticker)}
+        last: float | None = None
+        adj: list[float] = []
+        for d in self._dates:
+            if d in adj_by_day:
+                last = adj_by_day[d]
+            adj.append(last if last is not None else np.nan)
+        arr = np.array(adj, dtype=float)
+        with np.errstate(invalid="ignore"):
+            return arr[1:] / arr[:-1] - 1.0  # NaN propagates before the first bar
+
+    def aligned_dollar_volume(self, ticker: str) -> np.ndarray:
+        """Daily dollar volume (close × volume) on the return-date axis — ``[i]`` is the volume on
+        ``return_dates()[i]`` (the day the return is realized). NaN where volume isn't stored.
+        (Unlike ``aligned_returns``, interior gaps are NOT forward-filled — a missing-volume day is
+        NaN and simply drops out of the trailing Amihud mean, rather than being imputed.)"""
+        iid = self.session.scalar(
+            select(Security.instrument_id).where(Security.ticker == ticker)
+        )
+        dv_by_day: dict[date, float] = {}
+        if iid is not None:
+            for ts, close, vol in self.session.execute(
+                select(Price.ts, Price.close, Price.volume).where(Price.instrument_id == iid)
+            ).all():
+                if close is not None and vol is not None:
+                    dv_by_day[ts] = float(close) * float(vol)
+        return np.array([dv_by_day.get(d, np.nan) for d in self._dates[1:]], dtype=float)
 
     def current_price(self, ticker: str) -> float:
         """Latest raw close (the mark)."""
@@ -244,3 +325,25 @@ class DbMarketData:
         return self.session.scalar(
             select(Security.sector).where(Security.ticker == ticker)
         )
+
+    def average_dollar_volume(self, ticker: str, window: int = 63) -> float | None:
+        """Trailing average daily DOLLAR volume (close × volume) over the last ``window`` bars —
+        the liquidity proxy for the short-universe screen. None when volume isn't stored (so the
+        caller treats it as unknown rather than illiquid)."""
+        series = self._series(ticker)
+        if not series:
+            return None
+        iid = self.session.scalar(
+            select(Security.instrument_id).where(Security.ticker == ticker)
+        )
+        if iid is None:
+            return None
+        rows = self.session.execute(
+            select(Price.close, Price.volume)
+            .where(Price.instrument_id == iid, Price.volume.isnot(None))
+            .order_by(Price.ts.desc()).limit(window)
+        ).all()
+        if not rows:
+            return None
+        dollar = [float(c) * float(v) for c, v in rows if c is not None and v is not None]
+        return float(np.mean(dollar)) if dollar else None

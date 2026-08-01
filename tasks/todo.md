@@ -244,3 +244,98 @@ first vertical slice · 🔵 LATER = deferred.
 - [ ] **Phase 2: Cash vs Swap instrument + swap financing.** Add an `instrument` field
       (needs a schema migration — no Alembic yet) and model swap funding/borrow accrual in the
       P&L engine. Deferred from Phase 1 to avoid breaking existing DBs.
+
+## Factor program (PM, 2026-06) — see the factor-research brief
+
+- [x] 🟢 Materialized daily **betas** (`betas` table, vectorized rolling OLS, one-pass sweep
+      on ingest) and **style loadings** (`factor_loadings` table, `model` tag) — read by the
+      hedge backtest + propose path instead of computing on the fly.
+- [x] 🟢 **Build price-only differentiating factors — Stage 1 (construction).** IVOL, BAB,
+      Amihud, and per-sector SECTOR_* daily return series (`quant/factor_build.py`, pure; lagged
+      baskets, BAB beta-floor) persisted to `factor_returns` (source `neptune`) + a
+      `factor_definitions` registry row (`risk/factor_build.py`). Quant-reviewed.
+- [x] 🟢 **Stage 2 (monitor) — PM decision: REPORT-ONLY, not neutralized.** IVOL/BAB/AMIHUD are
+      monitored (net notional-weighted exposure) and per-sector net weight reported; the optimizer
+      is UNTOUCHED and the sector concentration cap remains the sector control. `monitor_report`
+      (`risk/factor_build.py`) + `GET /portfolios/{id}/factor-monitor` + a Factor Monitor panel on
+      the Risk tab. Neptune factors are deliberately kept OUT of `factor_returns()`/`FACTORS` so
+      they never enter the optimizer's loadings regression. Factors rebuilt on price ingest.
+- [x] 🟢 **Promotion path (config-gated, default OFF).** A PM lists factors in
+      `settings.promoted_factors` (e.g. `NEPTUNE_PROMOTED_FACTORS="BAB,IVOL"`); promoted monitor
+      factors then flow end-to-end — `DbMarketData.factor_returns()` merges them (NaN pre-basket
+      history 0-filled so the cumsum rolling regression isn't poisoned), `rebuild_loadings`
+      materializes their loadings, the optimizer NEUTRALIZES them via a threaded `hedge_factors`
+      set (same hard `factor_limit`), and the risk summary classifies them. Empty default ⇒ the
+      model is exactly FF5+MOM, optimizer untouched (asserted). Per-factor limits + a dedicated
+      `model` tag are a later refinement.
+- [x] 🟢 **Covariance hedge objective (net-book minimum variance).** Quant-recommended: the
+      approvable proposal minimizes the NET BOOK's variance via a factor-model covariance
+      Σ = BᵀFB + D (`factor_covariance` = PSD-projected F over [MKT,*hedge_factors];
+      `Candidate.idio_var` = D from `residual_variance`). Objective `quad_form(net_full,F) + Σdᵢxᵢ²`
+      has NO return term → pure risk reduction, never a view (§5); the hard |β|≤0.05 + factor
+      limits are unchanged. Applied to HARD solves only (the soft frontier keeps tracking-error so
+      it still answers "how many names reach neutral"). Auto-falls back to the diagonal
+      diversification penalty when the panel isn't loaded (`covariance_objective` toggle, default on).
+- [ ] 🔵 **Fundamentals feed (Mercury; ingest interim).** REQUIRED for:
+      * **value-weighting** the sector factor (needs market cap = price × **shares outstanding**;
+        until then the sector factor is **equal-weighted** — a documented proxy);
+      * self-building **HML / RMW / CMA** (book equity, operating profitability, asset growth) —
+        until then we INGEST these from Ken French;
+      * **QMJ** (quality) factor.
+      Interim: pull shares-outstanding / basic fundamentals (yfinance) to enable VW sector +
+      characteristic scores; replace with the Mercury feed when available. Point-in-time
+      correctness matters (avoid look-ahead) — Mercury > yfinance for that.
+- [ ] 🔵 Ingest the Ken French FF5+MOM panel operationally + a **stale-panel guard** (Risk
+      Interface) so the hedge never silently degrades to beta-only.
+- [ ] 🔵 Loading-window decision: decouple the style-loading window from the 252-day market beta
+      (research flagged 60 daily obs as thin for 6 slopes); consider shrinkage on the loadings.
+
+## Macro-data database (PM, 2026-06-03) — see [`docs/macro_data.md`](../docs/macro_data.md)
+
+> New **Neptune-owned** macro DB (rates/credit + economic data). Data-layer input only; the
+> pure engine never imports it; human-facing regime/scenario context only (§1/§5). Decisions
+> locked: backfill to 2000, full ALFRED vintage depth, transforms in the risk layer (raw stays
+> canonical), enriched analytical type flags, EOD-only (CDX/MOVE deferred to a paid phase).
+
+- [x] 🟢 **Phase 1a — schema + engine wiring (no network; fully testable).** `MacroBase` /
+      `macro_engine` / `MacroSession` / `init_macro_db` in `db/base.py` (+ startup lifespan);
+      `macro_database_url` + `macro_url` + `MACRO_DATABASE_URL` alias in `config.py`; `MACRO`
+      `ConnectionRole` (+ `_ENV_URL`). `src/neptune/macro/models.py`: `macro_series` registry
+      (all §2 type flags incl. `transform_op`/`transform_horizon`, `is_vintaged` derived),
+      `macro_observations` (MARKET, flat), `macro_vintages` (ECON, point-in-time),
+      `macro_release_calendar`. Mirrors securities idioms (`BigIntPK`, source-tagged uniqueness).
+- [x] 🟢 **Phase 1b — repository (revision logic; fully testable).** `macro/repository.py`:
+      append-only insert (revision = new vintage row; benchmark restatement = `record_vintage_batch`
+      sharing one `vintage_date`), MARKET `record_observation` upsert, `ingest_latest` (build
+      vintages by diffing a latest-only source), and the three reads — `latest`, `first_print`,
+      `as_of(d)`. Tests in `test_macro.py`: as-of/latest/first-print + panel reconstruction,
+      look-ahead safety, multi-source, layer purity (quant↛macro, macro↛quant/network).
+- [x] 🟢 **Phase 1c — Phase-1 indicator registry seed** (`macro/catalog.py` — the §6 core catalog
+      as data, FRED/ALFRED codes) + risk-layer transforms (`risk/macro_transforms.py`:
+      DIFF/PCT_CHANGE/LOG_DIFF/ZSCORE over POP/YOY + `annualize`), `validate_transform` refuses
+      invalid ops (pct-change a rate; re-transform a RATE_OF_CHANGE/DIFFUSION). 14 tests green;
+      full suite 237 green.
+- [x] 🟢 **API-key plumbing (for 1d).** Write-only provider credentials store
+      (`provider_credentials` table, `settings_store/credentials.py`) with env/.env fallback
+      (`NEPTUNE_FRED_API_KEY`/bare `FRED_API_KEY`); `GET/PUT /settings/credentials` (masked,
+      never echoes the key); a "Data provider API keys" panel on the Settings tab with the
+      FRED how-to-get-one link. One FRED key serves ALFRED. (`test_settings.py`, `Settings.test.tsx`.)
+- [x] 🟢 **Phase 1d — ingest (logic built + mocked-tested; live run needs network allowlist).**
+      `macro/providers.py` `FredProvider` (FRED current values for MARKET; ALFRED full-vintage
+      via the realtime range → `vintage_date = realtime_start`); `macro/ingest.py`
+      (`build_fred_provider` reads the key via `CredentialsService.resolve_key("FRED")`,
+      `ingest_series`/`ingest_catalog`, skips no-code series like ISM); `db/runtime.py`
+      `macro_session` (own engine cache — fixed a url-collision clobber with securities);
+      `POST /macro/ingest` (400 w/o key, 503 on feed error) + a "Backfill macro" button on the
+      MACRO Settings card. FRED covers the whole Phase-1 core (incl. UST) so no Treasury client
+      needed. Tests: fake-provider ingest + FRED/ALFRED JSON parsing + endpoint guard.
+      **BLOCKED for a live run:** this env's network policy denies `api.stlouisfed.org`
+      ("Host not in allowlist") — allowlist it (and run) here, or run where network is open.
+- [x] 🟢 **Short-rate continuity.** `FF_TARGET` (policy target) ingested via an ordered
+      multi-code `source_code` (`DFEDTAR,DFEDTARU`, merged by date, later code wins) — the
+      ingest now supports comma-separated provider codes. `SHORT_RATE` (continuous EFFR→SOFR
+      funding rate) is a spread-adjusted splice derived on read in `risk/macro_derive.py`
+      (not ingested). Tests: splice spread-adjustment, DB-backed short_rate, FF_TARGET 2-code merge.
+- [ ] 🔵 **Phase 1d-follow — scheduling.** EOD daily MARKET pull (live bar excluded) +
+      event-driven ECON-release pull on a Celery schedule (manual `/macro/ingest` works now).
+- [ ] 🔵 Global (non-US) rates/FX; paid feeds (CDX/MOVE/intraday) if budgeted.

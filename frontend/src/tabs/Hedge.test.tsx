@@ -30,9 +30,8 @@ const frontier: Frontier = {
 };
 
 const base = {
-  portfolios: [{ id: "P-A", name: "Book A" }],
-  hedgePortfolioId: "P-A",
-  onHedgePortfolio: () => {},
+  canHedge: true,
+  portfolioName: "Book A",
   onPropose: () => {},
   proposing: false,
   onApprove: () => {},
@@ -70,6 +69,12 @@ describe("Hedge", () => {
     expect(screen.getByText(/≤ 20/)).toBeInTheDocument();
   });
 
+  it("shows a prompt and hides the propose controls when no L/S book is the hedge target", () => {
+    render(<Hedge {...base} canHedge={false} portfolioName={null} proposal={null} />);
+    expect(screen.getByText(/Select one from the sidebar/)).toBeInTheDocument();
+    expect(screen.queryByText("Propose hedge")).not.toBeInTheDocument();
+  });
+
   it("shows the sector breakdown and feeds the header limit into Propose", () => {
     const onPropose = vi.fn();
     render(<Hedge {...base} proposal={proposal} onPropose={onPropose} />);
@@ -78,6 +83,6 @@ describe("Hedge", () => {
     // The sector limit lives in the proposal header now; Propose carries it.
     fireEvent.change(screen.getByLabelText("sector-limit-input"), { target: { value: "20" } });
     fireEvent.click(screen.getByText("Propose hedge"));
-    expect(onPropose).toHaveBeenCalledWith(0.2, undefined);
+    expect(onPropose).toHaveBeenCalledWith(0.2, undefined, undefined);
   });
 });

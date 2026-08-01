@@ -141,6 +141,99 @@ def test_thin_real_window_flagged_insufficient_not_a_flaky_beta(securities_sessi
     assert [c.ticker for c in db_universe(md)] == []  # not a usable hedge candidate
 
 
+def test_rebuild_betas_stores_full_window_only_and_is_idempotent(securities_session):
+    """The daily beta sweep stores a row ONLY for dates with a full trailing lookback: with N
+    return-dates and lookback L there are N-L+1 betas (the PM's 1000→750 rule). Re-running is
+    idempotent (replaces, not duplicates), and a too-short name gets nothing."""
+    from neptune.risk import beta_store
+    from neptune.securities.models import Beta
+
+    synth = SyntheticMarketData(n=320)
+    _seed(securities_session, "SPY", 1, synth.market_returns())          # ~321 bars → 320 returns
+    _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"))     # full history
+    _seed(securities_session, "SHORTY", 3, [0.01] * 40)                  # only ~40 returns
+    securities_session.commit()
+
+    lookback = 60
+    written = beta_store.rebuild_betas(securities_session, benchmark="SPY", lookback=lookback)
+    assert written > 0
+
+    aaa = beta_store.stored_beta_series(securities_session, "AAA", "SPY")
+    # AAA's return count is min(its bars, SPY's). Full-window rows = n_returns - lookback + 1.
+    n_ret = min(len(synth.ticker_returns("AAA")), len(synth.market_returns()))
+    assert len(aaa) == n_ret - lookback + 1
+    assert all(n == lookback for _ts, _b, _br, n in aaa)  # every stored row is a FULL window
+
+    # SHORTY (~40 returns < lookback) gets no betas — not enough data.
+    assert beta_store.stored_beta_series(securities_session, "SHORTY", "SPY") == []
+
+    # Idempotent: a second sweep replaces rather than duplicates.
+    again = beta_store.rebuild_betas(securities_session, benchmark="SPY", lookback=lookback)
+    assert again == written
+    total = securities_session.query(Beta).filter(Beta.benchmark == "SPY").count()
+    assert total == written
+
+
+def test_db_universe_liquidity_screen_drops_illiquid_names(securities_session):
+    """Option D: a name whose trailing average dollar volume is below the floor is dropped; names
+    with no stored volume are kept (unknown ≠ illiquid)."""
+    from neptune.securities.models import Price
+    from sqlalchemy import select as _select
+
+    synth = SyntheticMarketData()
+    _seed(securities_session, "SPY", 1, synth.market_returns())
+    _seed(securities_session, "LIQ", 2, synth.ticker_returns("AAA"), sector="Technology")
+    _seed(securities_session, "ILLIQ", 3, synth.ticker_returns("BBB"), sector="Energy")
+    securities_session.commit()
+    # Give LIQ heavy volume, ILLIQ tiny volume; SPY/none left null (unknown).
+    for iid, vol in [(2, 5_000_000.0), (3, 100.0)]:
+        for p in securities_session.execute(
+            _select(Price).where(Price.instrument_id == iid)
+        ).scalars():
+            p.volume = vol
+    securities_session.commit()
+
+    md = DbMarketData(securities_session, benchmark="SPY")
+    # No floor → both present.
+    assert {c.ticker for c in analytics.db_universe(md)} == {"LIQ", "ILLIQ"}
+    # Floor at $1M ADV → ILLIQ (≈ close×100) dropped, LIQ kept.
+    screened = {c.ticker for c in analytics.db_universe(md, min_adv_usd=1_000_000.0)}
+    assert "LIQ" in screened and "ILLIQ" not in screened
+
+
+def test_rebuild_loadings_materializes_only_with_a_factor_panel(securities_session):
+    """Style loadings materialize only once the factor return panel is ingested; without it the
+    sweep is a no-op (the hedge stays beta-only). With a panel, full-window loadings are stored."""
+    from datetime import date as _date
+    from neptune.risk import beta_store
+    from neptune.securities.models import FactorReturn
+
+    synth = SyntheticMarketData(n=200)
+    _seed(securities_session, "SPY", 1, synth.market_returns())
+    _seed(securities_session, "AAA", 2, synth.ticker_returns("AAA"))
+    securities_session.commit()
+
+    # No factor panel yet → no-op.
+    assert beta_store.rebuild_loadings(securities_session, benchmark="SPY", window=40) == 0
+    assert beta_store.stored_loadings_latest(securities_session) == {}
+
+    # Ingest a style-factor panel over the benchmark's return dates, then re-sweep.
+    md = DbMarketData(securities_session, benchmark="SPY")
+    rdates = md.return_dates()
+    rng = np.random.default_rng(1)
+    for f in ("SMB", "HML", "RMW", "CMA", "MOM"):
+        for ts in rdates:
+            securities_session.add(FactorReturn(factor=f, ts=ts, ret=float(rng.normal(0, 0.006)),
+                                                source="test"))
+    securities_session.commit()
+
+    written = beta_store.rebuild_loadings(securities_session, benchmark="SPY", window=40)
+    assert written > 0
+    latest = beta_store.stored_loadings_latest(securities_session)
+    assert "AAA" in latest
+    assert set(latest["AAA"]) == {"SMB", "HML", "RMW", "CMA", "MOM"}
+
+
 def test_beta_uses_completed_closes_not_todays_live_bar(securities_session):
     """A beta as-of today is computed from CLOSES strictly before today, so an intraday price
     refresh (which rewrites today's bar) never moves it — only marks do."""

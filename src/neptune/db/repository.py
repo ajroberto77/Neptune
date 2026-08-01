@@ -12,8 +12,17 @@ from neptune.db.models import (
     PersonORM,
     PortfolioORM,
     PositionORM,
+    TransactionORM,
 )
-from neptune.domain.models import LotEntry, Mandate, Portfolio, Position, Side, ShortType
+from neptune.domain.models import (
+    LotEntry,
+    Mandate,
+    Portfolio,
+    Position,
+    Side,
+    ShortType,
+    Transaction,
+)
 from neptune.domain.org import InvestorEntity, ManagementFirm, Person, PersonRole
 from neptune.pnl import CostBasisMethod
 
@@ -177,12 +186,112 @@ class PositionRepository:
         self.session.commit()
         return True
 
+    def delete_portfolio(self, portfolio_id: str) -> bool:
+        """Delete a book and everything that hangs off it. Positions→lots and book_manager
+        links cascade via the ORM relationships; the blotter (``transactions``) references the
+        book by FK but is NOT an ORM relationship, so its rows don't cascade — delete them
+        explicitly first. Returns False if the book doesn't exist."""
+        row = self.session.get(PortfolioORM, portfolio_id)
+        if row is None:
+            return False
+        self.session.query(TransactionORM).filter(
+            TransactionORM.portfolio_id == portfolio_id
+        ).delete(synchronize_session=False)
+        self.session.delete(row)  # positions→lots and book_managers cascade
+        self.session.commit()
+        return True
+
+
+def _to_domain_transaction(row: TransactionORM) -> Transaction:
+    return Transaction(
+        ticker=row.ticker,
+        action=row.action,
+        quantity=row.quantity,
+        price=row.price,
+        trade_date=row.trade_date,
+        short_type=row.short_type,
+        origin=row.origin,
+        realized_pnl=row.realized_pnl,
+        effect=row.effect,
+        fee_per_share=row.fee_per_share,
+        portfolio_id=row.portfolio_id,
+        executed_at=row.executed_at,
+        id=row.id,
+    )
+
+
+class TransactionRepository:
+    """Append-only ledger of executed trades (the blotter). Records what was booked; never
+    routes anything to a venue (CLAUDE.md §2)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add(self, tx: Transaction) -> int:
+        row = TransactionORM(
+            portfolio_id=tx.portfolio_id,
+            ticker=tx.ticker,
+            action=tx.action,
+            quantity=tx.quantity,
+            price=tx.price,
+            fee_per_share=tx.fee_per_share,
+            trade_date=tx.trade_date,
+            short_type=tx.short_type,
+            origin=tx.origin,
+            realized_pnl=tx.realized_pnl,
+            effect=tx.effect,
+        )
+        self.session.add(row)
+        self.session.commit()
+        return row.id
+
+    def list_for(self, portfolio_id: str, *, limit: int | None = None) -> list[Transaction]:
+        return self._query([portfolio_id], limit=limit)
+
+    def list_many(self, portfolio_ids: list[str], *, limit: int | None = None) -> list[Transaction]:
+        """The ledger across several books (e.g. the consolidated roll-up), newest first."""
+        return self._query(portfolio_ids, limit=limit)
+
+    def _query(self, portfolio_ids: list[str], *, limit: int | None) -> list[Transaction]:
+        stmt = (
+            select(TransactionORM)
+            .where(TransactionORM.portfolio_id.in_(portfolio_ids))
+            # Newest first: by trade date, then insertion order (executed_at can tie on the same day).
+            .order_by(TransactionORM.trade_date.desc(), TransactionORM.id.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [_to_domain_transaction(r) for r in self.session.execute(stmt).scalars()]
+
 
 class OrgRepository:
     """CRUD over the ownership graph: firms, people, investor entities, book managers."""
 
     def __init__(self, session: Session):
         self.session = session
+
+    def get_firm(self, firm_id: str) -> ManagementFirm | None:
+        row = self.session.get(ManagementFirmORM, firm_id)
+        return (
+            ManagementFirm(row.id, row.name, row.is_internal, row.subscription_tier)
+            if row else None
+        )
+
+    def list_firms(self) -> list[ManagementFirm]:
+        rows = self.session.scalars(
+            select(ManagementFirmORM).order_by(ManagementFirmORM.id)
+        ).all()
+        return [ManagementFirm(r.id, r.name, r.is_internal, r.subscription_tier) for r in rows]
+
+    def list_people(self) -> list[Person]:
+        rows = self.session.scalars(select(PersonORM).order_by(PersonORM.id)).all()
+        return [Person(r.id, r.firm_id, r.name, r.role, r.email, r.is_active) for r in rows]
+
+    def list_investor_entities(self) -> list[InvestorEntity]:
+        rows = self.session.scalars(
+            select(InvestorEntityORM).order_by(InvestorEntityORM.id)
+        ).all()
+        return [InvestorEntity(r.id, r.firm_id, r.name, r.base_currency) for r in rows]
 
     def create_firm(
         self, firm_id: str, name: str, is_internal: bool = False,

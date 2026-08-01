@@ -1,10 +1,22 @@
 import type { PositionRow } from "../types";
-import { money, pnlColor, price, signedMoney } from "../format";
+import { money, pnlColor, price, signedMoney, signedPct } from "../format";
 
 // Signed exposure: longs +, shorts −. Beta-adjusted notional = signed notional × beta, so a
 // beta-neutral book nets to ~0 (longs and shorts offset).
 const sign = (p: PositionRow) => (p.side === "SHORT" ? -1 : 1);
 const betaAdj = (p: PositionRow) => sign(p) * p.notional * p.beta;
+
+// A position's prior (yesterday's) gross market value — the denominator for the day's return.
+// Null when the name isn't priced (no prev close) so we render "—" rather than a bogus %.
+const priorMV = (p: PositionRow) =>
+  p.prev_close != null && p.quantity ? Math.abs(p.prev_close * p.quantity) : null;
+
+// Day return = day P&L ÷ prior market value, signed like the P&L columns (a long up 2% and a
+// short on a name down 2% both read +2%). Null when prior value is unknown/zero.
+const dayPct = (p: PositionRow) => {
+  const base = priorMV(p);
+  return base ? p.pnl.day / base : null;
+};
 
 interface Totals {
   notional: number; // gross notional in the section
@@ -12,6 +24,7 @@ interface Totals {
   betaAdj: number; // signed Σ sign·notional·beta
   betaNotional: number; // Σ notional·beta (name beta) — for the weighted-average beta
   day: number;
+  priorMV: number; // Σ prior market value of priced names — denominator for the section day %
   unrealized: number;
   realized: number;
   total: number;
@@ -25,17 +38,21 @@ function sumTotals(rows: PositionRow[]): Totals {
       betaAdj: a.betaAdj + betaAdj(p),
       betaNotional: a.betaNotional + p.notional * p.beta,
       day: a.day + p.pnl.day,
+      priorMV: a.priorMV + (priorMV(p) ?? 0),
       unrealized: a.unrealized + p.pnl.unrealized,
       realized: a.realized + p.pnl.realized,
       total: a.total + p.pnl.total,
     }),
-    { notional: 0, signedNotional: 0, betaAdj: 0, betaNotional: 0, day: 0, unrealized: 0, realized: 0, total: 0 },
+    { notional: 0, signedNotional: 0, betaAdj: 0, betaNotional: 0, day: 0, priorMV: 0, unrealized: 0, realized: 0, total: 0 },
   );
 }
 
+// Section day return = Σ day P&L ÷ Σ prior market value (priced names only).
+const dayPctOf = (t: Totals) => (t.priorMV ? t.day / t.priorMV : null);
+
 // One shared column layout so the Net, Longs, and Shorts tables line up column-for-column.
 function Cols() {
-  const widths = ["18%", "8%", "8%", "11%", "13%", "10%", "10%", "7%", "10%", "5%"];
+  const widths = ["16%", "7%", "7%", "10%", "12%", "9%", "7%", "9%", "7%", "9%", "7%"];
   return (
     <colgroup>
       {widths.map((w, i) => (
@@ -55,6 +72,7 @@ function Head() {
         <th className="pb-2 text-right font-medium">Notional</th>
         <th className="pb-2 text-right font-medium">Beta-Adj Notional</th>
         <th className="pb-2 text-right font-medium">Day P&L</th>
+        <th className="pb-2 text-right font-medium">Day %</th>
         <th className="pb-2 text-right font-medium">Unrealized</th>
         <th className="pb-2 text-right font-medium">Realized</th>
         <th className="pb-2 text-right font-medium">Total</th>
@@ -85,7 +103,7 @@ function TotalsRow({
     <tr
       className={
         subtle
-          ? "border-t border-ocean-border/60 font-medium text-ocean-muted"
+          ? "border-t border-ocean-border/70 font-medium text-ocean-muted"
           : "border-t-2 border-ocean-border font-medium"
       }
     >
@@ -95,6 +113,7 @@ function TotalsRow({
       <td className="py-2 text-right font-mono">{label.startsWith("Net") ? signedMoney(notional) : money(notional)}</td>
       <td className="py-2 text-right font-mono">{signedMoney(ba)}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(t.day)}`}>{signedMoney(t.day)}</td>
+      <td className={`py-2 text-right font-mono ${pnlColor(dayPctOf(t) ?? 0)}`}>{signedPct(dayPctOf(t))}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(t.unrealized)}`}>{signedMoney(t.unrealized)}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(t.realized)}`}>{signedMoney(t.realized)}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(t.total)}`}>{signedMoney(t.total)}</td>
@@ -106,7 +125,7 @@ function TotalsRow({
 // A non-standard beta source flagged inline; a normal pipeline beta shows nothing (no clutter).
 function betaFlag(p: PositionRow) {
   if (p.beta_method === "forward_override")
-    return <span className="ml-2 text-[10px] uppercase text-ocean-muted/60">ovr</span>;
+    return <span className="ml-2 text-[10px] uppercase text-ocean-muted">ovr</span>;
   if (p.beta_method === "insufficient_data")
     return <span className="ml-2 text-[10px] uppercase text-status-watch">thin</span>;
   return null;
@@ -115,7 +134,7 @@ function betaFlag(p: PositionRow) {
 /** One position row, shared by Longs and both Shorts subgroups so every table lines up. */
 function PositionTr({ p }: { p: PositionRow }) {
   return (
-    <tr className="border-t border-ocean-border/60">
+    <tr className="border-t border-ocean-border/70">
       <td className="truncate py-2 font-mono">
         {p.ticker}
         {betaFlag(p)}
@@ -127,6 +146,7 @@ function PositionTr({ p }: { p: PositionRow }) {
       <td className="py-2 text-right font-mono">{money(p.notional)}</td>
       <td className="py-2 text-right font-mono">{signedMoney(betaAdj(p))}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.day)}`}>{signedMoney(p.pnl.day)}</td>
+      <td className={`py-2 text-right font-mono ${pnlColor(dayPct(p) ?? 0)}`}>{signedPct(dayPct(p))}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.unrealized)}`}>{signedMoney(p.pnl.unrealized)}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.realized)}`}>{signedMoney(p.pnl.realized)}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(p.pnl.total)}`}>{signedMoney(p.pnl.total)}</td>
@@ -139,8 +159,8 @@ function PositionTr({ p }: { p: PositionRow }) {
 function SubHeader({ label, count }: { label: string; count: number }) {
   return (
     <tr>
-      <td colSpan={10} className="pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-ocean-muted">
-        {label} <span className="text-ocean-muted/60">({count})</span>
+      <td colSpan={11} className="pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-ocean-muted">
+        {label} <span className="text-ocean-faint">({count})</span>
       </td>
     </tr>
   );
@@ -152,21 +172,7 @@ const wtdBetaOf = (t: Totals) => (t.notional ? t.betaNotional / t.notional : NaN
  *  layout so they read top-to-bottom. The Shorts table is split into Systematic and (if any)
  *  Discretionary subgroups, each with its own subtotal, then the grand Total Short — so the two
  *  books stay distinct (I-03) without per-row tags. Net beta-adj is ~0 when hedged to zero beta. */
-export function Portfolio({
-  positions,
-  refreshMins,
-  onChangeMins,
-  onRefreshNow,
-  lastPriced,
-  pricing,
-}: {
-  positions: PositionRow[];
-  refreshMins?: number;
-  onChangeMins?: (m: number) => void;
-  onRefreshNow?: () => void;
-  lastPriced?: string | null;
-  pricing?: boolean;
-}) {
+export function Portfolio({ positions }: { positions: PositionRow[] }) {
   const longs = positions.filter((p) => p.side === "LONG" && p.notional !== 0);
   const shorts = positions.filter((p) => p.side === "SHORT" && p.notional !== 0);
   const net = sumTotals([...longs, ...shorts]);
@@ -183,28 +189,6 @@ export function Portfolio({
 
   return (
     <div className="space-y-6">
-      {onRefreshNow && (
-        <div className="flex items-center justify-end gap-3 text-sm text-ocean-muted">
-          <span>Server price refresh: every</span>
-          <input
-            type="number"
-            min={0}
-            value={refreshMins ?? 0}
-            onChange={(e) => onChangeMins?.(Number(e.target.value))}
-            className="np-input w-16 text-right"
-          />
-          <span>min {refreshMins ? "" : "(off)"}</span>
-          <button
-            onClick={onRefreshNow}
-            disabled={pricing}
-            className="rounded border border-ocean-border px-3 py-1.5 hover:text-slate-200 disabled:opacity-50"
-          >
-            {pricing ? "Refreshing…" : "Refresh now"}
-          </button>
-          {lastPriced && <span className="text-xs text-ocean-muted/60">updated {lastPriced}</span>}
-        </div>
-      )}
-
       {/* Net Position on top — long − short. Net beta-adj ~0 means hedged to zero net beta. */}
       <div className="rounded-lg border border-ocean-accent/40 bg-ocean-panel p-5">
         <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-accent">
@@ -222,7 +206,7 @@ export function Portfolio({
       {/* Longs */}
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
         <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Longs <span className="text-ocean-muted/60">({longs.length})</span>
+          Longs <span className="text-ocean-faint">({longs.length})</span>
         </h3>
         {longs.length === 0 ? (
           <p className="text-sm text-ocean-muted">No positions.</p>
@@ -246,7 +230,7 @@ export function Portfolio({
       {/* Shorts — Systematic and (if any) Discretionary subgroups, then the grand Total Short */}
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
         <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-          Shorts <span className="text-ocean-muted/60">({shorts.length})</span>
+          Shorts <span className="text-ocean-faint">({shorts.length})</span>
         </h3>
         {shorts.length === 0 ? (
           <p className="text-sm text-ocean-muted">No positions.</p>

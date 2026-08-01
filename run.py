@@ -4,10 +4,13 @@
     python run.py
 
 Starts both servers and streams their logs together:
-  * [api]  FastAPI backend via uvicorn on http://localhost:8000  (--reload)
-  * [web]  Vite frontend dev server on http://localhost:5173 (proxies API calls to :8000)
+  * [api]  FastAPI backend via uvicorn on http://<api_host>:<api_port>  (--reload)
+           default 127.0.0.1:8000; configurable via NEPTUNE_API_HOST/NEPTUNE_API_PORT
+           (or the bare API_HOST/API_PORT) — see neptune.config.Settings.
+  * [web]  Vite frontend dev server on http://localhost:5176 (proxies API calls to the
+           backend above)
 
-Open the UI at http://localhost:5173. Press Ctrl-C once to stop both.
+Open the UI at http://localhost:5176. Press Ctrl-C once to stop both.
 
 Notes
 -----
@@ -29,8 +32,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"
-API_URL = "http://localhost:8000"
-WEB_URL = "http://localhost:5173"
+sys.path.insert(0, str(ROOT / "src"))  # so `neptune.config` imports without an editable install
+
+from neptune.config import settings  # noqa: E402 — after the sys.path fixup above
+
+API_URL = f"http://{settings.api_host}:{settings.api_port}"
+WEB_URL = "http://localhost:5176"
 
 
 def _pump(proc: subprocess.Popen, label: str) -> None:
@@ -64,7 +71,7 @@ def main() -> int:
         procs.append((
             subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "neptune.api.main:app", "--reload",
-                 "--port", "8000"],
+                 "--host", settings.api_host, "--port", str(settings.api_port)],
                 cwd=ROOT, env=env, **common,
             ),
             "api",

@@ -34,13 +34,88 @@ def test_url_encodes_special_characters():
     assert m["has_password"] is True
 
 
-def test_connections_list_reports_all_three_roles(client):
+def test_connections_list_reports_all_roles(client):
     rows = client.get("/settings/connections").json()
     roles = {r["role"] for r in rows}
-    assert roles == {"PORTFOLIO", "SECURITIES", "UNIVERSE"}
+    assert roles == {"PORTFOLIO", "SECURITIES", "MACRO", "UNIVERSE"}
     # The portfolio DB is flagged as the env-driven bootstrap.
     portfolio = next(r for r in rows if r["role"] == "PORTFOLIO")
     assert portfolio["bootstrap"] is True
+
+
+def test_env_url_prefills_the_form_without_exposing_the_password():
+    """With no stored row, a role's host/port/database/username come from the env/.env URL
+    (so the Settings form pre-fills what the app is actually using) — but the password is
+    only ever a presence flag, never returned."""
+    from neptune.settings_store.service import _url_to_masked
+
+    masked = _url_to_masked(
+        ConnectionRole.SECURITIES,
+        "postgresql+psycopg://postgres:cato@localhost:5434/neptune_securities",
+    )
+    assert masked["host"] == "localhost"
+    assert masked["port"] == 5434
+    assert masked["database"] == "neptune_securities"
+    assert masked["username"] == "postgres"
+    assert masked["driver"] == "postgresql+psycopg"
+    assert masked["has_password"] is True
+    assert "password" not in masked  # the secret itself is never serialized
+
+
+def test_macro_catalog_lists_series_with_coverage(client):
+    """The catalog endpoint surfaces the ingest 'menu' (seeded on first read) with per-series
+    coverage. Before any backfill, every series shows zero points; ingestable series carry a
+    real FRED/ALFRED code, derived/licensed ones don't."""
+    body = client.get("/macro/catalog").json()
+    assert body["total"] == len(body["series"]) > 0
+    by_id = {s["series_id"]: s for s in body["series"]}
+    # A core rates series is ingestable from FRED and starts empty.
+    assert by_id["UST_10Y"]["ingestable"] is True
+    assert by_id["UST_10Y"]["source_code"] == "DGS10"
+    assert by_id["UST_10Y"]["points"] == 0
+    assert by_id["UST_10Y"]["last_date"] is None
+    # The derived short-rate splice is NOT ingested (no source code → not on the FRED menu).
+    assert by_id["SHORT_RATE"]["ingestable"] is False
+
+
+def test_credentials_status_starts_unset(client):
+    rows = client.get("/settings/credentials").json()
+    fred = next(r for r in rows if r["provider"] == "FRED")
+    assert fred == {"provider": "FRED", "has_key": False, "source": "none"}
+
+
+def test_set_credential_is_write_only_and_resolves(client):
+    # Storing a key never echoes it back; status flips to stored.
+    body = client.put("/settings/credentials/FRED", json={"api_key": "abc123secret"}).json()
+    assert body == {"provider": "FRED", "has_key": True, "source": "stored"}
+    assert "api_key" not in body and "abc123secret" not in str(body)
+    # And it isn't exposed by the list endpoint either.
+    listed = client.get("/settings/credentials").json()
+    assert "abc123secret" not in str(listed)
+    fred = next(r for r in listed if r["provider"] == "FRED")
+    assert fred["has_key"] is True
+
+    # The service resolves the actual key for the ingest layer (never serialized).
+    from neptune.db.base import SessionLocal
+    from neptune.settings_store.credentials import CredentialsService
+    with SessionLocal() as s:
+        assert CredentialsService(s).resolve_key("FRED") == "abc123secret"
+
+    # Empty string clears it.
+    cleared = client.put("/settings/credentials/FRED", json={"api_key": ""}).json()
+    assert cleared["has_key"] is False
+
+
+def test_set_credential_unknown_provider_404(client):
+    r = client.put("/settings/credentials/BLOOMBERG", json={"api_key": "x"})
+    assert r.status_code == 404
+
+
+def test_macro_ingest_requires_a_fred_key(client):
+    # With no key configured (none stored, none in env) the endpoint fails fast with 400.
+    r = client.post("/macro/ingest", json={"start_year": 2020})
+    assert r.status_code == 400
+    assert "FRED" in r.json()["detail"]
 
 
 def test_upsert_connection_never_returns_password(client):
@@ -188,6 +263,56 @@ def test_portfolio_beta_history_returns_net_and_per_position_series(client):
     assert len(hb["series"]) >= 5
     assert hb["stats"]["mean"] == pytest.approx(1.2, abs=0.3)  # recovers the name's ~1.2 beta
     assert hb["stats"]["range"] < 0.4  # stable name → low drift
+
+
+def test_hedge_backtest_replays_and_controls_net_beta(client):
+    """The walk-forward hedge backtest re-optimizes at each rebalance and reports the REALIZED
+    net beta. With a clean universe that can hedge the long book, realized |β| should stay well
+    inside tolerance most of the time (high coverage)."""
+    from datetime import date, timedelta
+
+    import numpy as np
+    from sqlalchemy.orm import Session
+
+    from neptune.db.base import securities_engine
+    from neptune.securities.models import Price, Security
+
+    rng = np.random.default_rng(7)
+    n = 900  # ~3.5y of daily bars so the walk-forward has room
+    mkt = rng.normal(0.0, 0.01, n)
+
+    def _seed(sec, iid, ticker, betas_to_market, base=100.0):
+        rets = betas_to_market * mkt + rng.normal(0, 0.004, n)
+        sec.add(Security(instrument_id=iid, ticker=ticker, security_type="Common Stock"))
+        px = [base]
+        for r in rets:
+            px.append(px[-1] * (1 + r))
+        start = date.today() - timedelta(days=len(px) + 1)
+        for i, p in enumerate(px):
+            sec.add(Price(instrument_id=iid, ts=start + timedelta(days=i),
+                          close=p, adj_close=p, source="yfinance"))
+
+    with Session(securities_engine) as sec:
+        _seed(sec, 1, "SPY", np.ones(n))            # benchmark
+        _seed(sec, 2, "LONGA", 1.1 * np.ones(n))    # the long we must hedge
+        # A diversified shortable universe of positive-beta names (ample capacity to hedge to ~0).
+        betas = [0.6, 0.8, 1.0, 1.2, 1.4, 0.9, 1.1, 0.7, 0.5, 1.3, 0.85, 1.05, 0.95, 1.15, 0.75, 1.25]
+        for j, b in enumerate(betas, start=3):
+            _seed(sec, j, f"H{j}", b * np.ones(n))
+        sec.commit()
+
+    client.post("/portfolios", json={"id": "BT", "name": "Backtest Book"})
+    client.post("/portfolios/BT/positions", json={
+        "ticker": "LONGA", "side": "LONG", "notional": 1_000_000.0,
+    })
+
+    r = client.get("/portfolios/BT/hedge-backtest?points=10&step=21")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_rebalances"] >= 5
+    assert all("realized_net_beta" in p for p in body["points"])
+    assert body["rmse"] < 0.05           # the process keeps realized net beta controlled
+    assert body["coverage"] >= 0.8       # most rebalances land inside |β| <= tol
 
 
 def test_factor_ingest_reports_feed_unavailable(client, monkeypatch):

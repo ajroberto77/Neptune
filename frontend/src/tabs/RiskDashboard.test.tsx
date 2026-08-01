@@ -1,7 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { RiskDashboard } from "./RiskDashboard";
 import type { RiskSummary } from "../types";
+
+// The report-only monitor self-fetches; stub it so the Risk tab renders in isolation.
+vi.mock("../api/client", () => ({
+  fetchFactorMonitor: () =>
+    Promise.resolve({
+      portfolio_id: "IRIDIUM-CORE",
+      available: false,
+      long_aum: 0,
+      factors: {},
+      sectors: {},
+    }),
+}));
 
 const summary: RiskSummary = {
   portfolio_id: "IRIDIUM-CORE",
@@ -19,7 +31,7 @@ const summary: RiskSummary = {
 
 describe("RiskDashboard", () => {
   it("shows the net beta and a BREACH badge when outside tolerance", () => {
-    render(<RiskDashboard summary={summary} />);
+    render(<RiskDashboard summary={summary} portfolioId="IRIDIUM-CORE" />);
     expect(screen.getByLabelText("net-beta-value")).toHaveTextContent("+0.9400");
     expect(screen.getByText("BREACH")).toBeInTheDocument();
   });

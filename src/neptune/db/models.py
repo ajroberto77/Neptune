@@ -15,18 +15,18 @@ NOTE: append-only history (invariant I-07) is NOT yet enforced in the slice —
 `audit_log`) is a deferred phase."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date
+from sqlalchemy import Boolean, Date, DateTime
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from neptune.db.base import Base
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod
 from neptune.settings_store import ConnectionRole
-from neptune.domain.models import Side, ShortType
+from neptune.domain.models import Side, ShortType, TradeAction, TradeOrigin
 
 
 class ManagementFirmORM(Base):
@@ -173,6 +173,38 @@ class LotORM(Base):
     position: Mapped[PositionORM] = relationship(back_populates="lots")
 
 
+class TransactionORM(Base):
+    """An append-only record of an executed trade (the blotter). One row per booked ticket —
+    a desk Buy/Sell or a hedge-approval cover/short. Recording an execution is NOT
+    auto-execution (no broker routing, CLAUDE.md §2); this is the audit trail of what was
+    booked. ``realized_pnl`` captures the P&L locked in by the closing portion of the ticket
+    (0 for a pure open). Enum columns are stored as VARCHAR (``native_enum=False``) so adding
+    a value later never needs a Postgres ALTER TYPE migration."""
+
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolios.id"), nullable=False, index=True)
+    ticker: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[TradeAction] = mapped_column(SAEnum(TradeAction, native_enum=False), nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    price: Mapped[float] = mapped_column(Float, nullable=False)  # execution price per share
+    fee_per_share: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # Tie-breaks ordering within a trade_date (e.g. covers before the new shorts in one approve).
+    executed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    # Which short book the trade affected (SYSTEMATIC for hedge trades; NA for longs).
+    short_type: Mapped[ShortType] = mapped_column(
+        SAEnum(ShortType, native_enum=False), nullable=False, default=ShortType.NA
+    )
+    origin: Mapped[TradeOrigin] = mapped_column(
+        SAEnum(TradeOrigin, native_enum=False), nullable=False, default=TradeOrigin.MANUAL
+    )
+    realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Human-readable effect, e.g. "Open long", "Cover short", "Sell short", "Cover systematic".
+    effect: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
 class DbConnectionORM(Base):
     """A configurable database connection target (see ``settings_store``).
 
@@ -201,3 +233,14 @@ class AppSettingORM(Base):
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class ProviderCredentialORM(Base):
+    """A stored API key for an external data provider (e.g. FRED). One row per provider; lives
+    in the portfolio DB. The ``api_key`` is **write-only** — NEVER returned by the API; reads
+    expose only whether a key is set. Same secret discipline as ``DbConnectionORM.password``."""
+
+    __tablename__ = "provider_credentials"
+
+    provider: Mapped[str] = mapped_column(String, primary_key=True)  # 'FRED'
+    api_key: Mapped[str | None] = mapped_column(String, nullable=True)  # write-only

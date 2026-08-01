@@ -214,3 +214,64 @@ class FactorReturn(SecuritiesBase):
     ts: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     ret: Mapped[float] = mapped_column(Float, nullable=False)  # decimal daily return
     source: Mapped[str] = mapped_column(String, nullable=False, default="ken_french")
+
+
+class FactorDefinition(SecuritiesBase):
+    """Registry of every factor whose return series lives in ``factor_returns`` — one row per
+    factor name. Ken French columns (SMB/HML/…) are ``kind='external'``; the price-only factors
+    Neptune builds itself (IVOL/BAB/AMIHUD/SECTOR_*) are ``kind='price'`` with the construction
+    recorded in ``method`` so a reader knows it's, e.g., equal-weighted (not value-weighted)
+    until the fundamentals feed lands. Pure metadata — the daily numbers stay in FactorReturn."""
+
+    __tablename__ = "factor_definitions"
+
+    factor: Mapped[str] = mapped_column(String, primary_key=True)
+    family: Mapped[str] = mapped_column(String, nullable=False)   # FF5MOM | NEPTUNE | SECTOR
+    kind: Mapped[str] = mapped_column(String, nullable=False)     # external | price
+    source: Mapped[str] = mapped_column(String, nullable=False)   # matches FactorReturn.source
+    method: Mapped[str] = mapped_column(String, nullable=False, default="")  # construction note
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+
+class Beta(SecuritiesBase):
+    """The MATERIALIZED daily beta series — computed once per ingest in a single sweep, not on
+    the fly. One row per (security, date, benchmark): the point-in-time 252-day OLS → Vasicek
+    beta as it would have read that day. Stored ONLY for dates with a full trailing ``lookback``
+    window (so 1000 days of prices → ~750 days of beta); the sweep is idempotent and re-run after
+    each ingest to extend/fill as more history lands. The Vasicek prior is the fixed market-level
+    constant, so a name's beta is independent of any book — safe to precompute and cache."""
+
+    __tablename__ = "betas"
+
+    instrument_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.instrument_id"), primary_key=True
+    )
+    ts: Mapped[date] = mapped_column(Date, primary_key=True)
+    benchmark: Mapped[str] = mapped_column(String, primary_key=True)  # market proxy (e.g. SPY)
+    lookback: Mapped[int] = mapped_column(Integer, nullable=False)    # trailing window (252)
+    beta: Mapped[float] = mapped_column(Float, nullable=False)        # Vasicek-shrunk beta
+    beta_raw: Mapped[float] = mapped_column(Float, nullable=False)    # raw OLS slope
+    var_ols: Mapped[float] = mapped_column(Float, nullable=False)
+    n_obs: Mapped[int] = mapped_column(Integer, nullable=False)
+    prior_var: Mapped[float] = mapped_column(Float, nullable=False)   # Vasicek prior used
+
+
+class FactorLoading(SecuritiesBase):
+    """The MATERIALIZED daily per-security STYLE-FACTOR loadings — multivariate OLS of a name's
+    returns on the factor panel (MKT + FF5 + momentum), stored one row per (security, date,
+    factor, model). Mirrors ``Beta``: computed in a sweep after ingest (full-window dates only),
+    idempotent, read point-in-time by the optimizer/backtest. ``model`` tags the factor set/window
+    (e.g. 'FF5MOM') so a future expanded set (e.g. +BAB) can coexist without collision. Only
+    materialized once the factor return panel is loaded; otherwise the hedge is beta-only."""
+
+    __tablename__ = "factor_loadings"
+
+    instrument_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.instrument_id"), primary_key=True
+    )
+    ts: Mapped[date] = mapped_column(Date, primary_key=True)
+    factor: Mapped[str] = mapped_column(String, primary_key=True)   # SMB/HML/RMW/CMA/MOM
+    model: Mapped[str] = mapped_column(String, primary_key=True)    # factor set + window tag
+    loading: Mapped[float] = mapped_column(Float, nullable=False)   # multivariate regression coef
+    window: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_obs: Mapped[int] = mapped_column(Integer, nullable=False)

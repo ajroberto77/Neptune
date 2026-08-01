@@ -5,7 +5,13 @@ const FACTOR_LABELS: Record<string, string> = {
   MKT: "Market",
   SMB: "Size (SMB)",
   HML: "Value (HML)",
+  RMW: "Profitability (RMW)",
+  CMA: "Investment (CMA)",
   MOM: "Momentum",
+  // Promoted price-only factors (shown here once a PM neutralizes them).
+  IVOL: "Idio Vol",
+  BAB: "Betting-against-beta",
+  AMIHUD: "Illiquidity",
 };
 
 export function FactorTable({ factors }: { factors: FactorStatus[] }) {
@@ -25,7 +31,7 @@ export function FactorTable({ factors }: { factors: FactorStatus[] }) {
         </thead>
         <tbody>
           {factors.map((f) => (
-            <tr key={f.factor} className="border-t border-ocean-border/60">
+            <tr key={f.factor} className="border-t border-ocean-border/70">
               <td className="py-2">{FACTOR_LABELS[f.factor] ?? f.factor}</td>
               <td className="py-2 text-right font-mono">{f.exposure.toFixed(4)}</td>
               <td className="py-2 text-right font-mono text-ocean-muted">

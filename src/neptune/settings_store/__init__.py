@@ -24,6 +24,7 @@ class ConnectionRole(str, Enum):
 
     PORTFOLIO = "PORTFOLIO"    # app DB — bootstrap; env-driven at runtime
     SECURITIES = "SECURITIES"  # Neptune market-data DB (read/write)
+    MACRO = "MACRO"            # Neptune macro-data DB (read/write)
     UNIVERSE = "UNIVERSE"      # cato_securities master (READ-ONLY)
 
 

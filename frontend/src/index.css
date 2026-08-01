@@ -3,13 +3,45 @@
 @tailwind utilities;
 
 @layer base {
+  /* App-shell frame: the window never page-scrolls; the content panel scrolls inside a fixed
+     full-height frame (TitleBar + TabBar + panel), matching the Iridium desktop suite. */
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
   body {
-    @apply bg-ocean-bg text-slate-200 font-body antialiased;
+    @apply overflow-hidden bg-ocean-bg text-slate-200 font-body antialiased;
+  }
+
+  /* Thin scrollbars, suite-style. */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded bg-ocean-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ocean-muted;
   }
 }
 
 @layer components {
   .np-input {
-    @apply w-full rounded border border-ocean-border bg-ocean-bg px-2 py-1.5 text-sm text-slate-200 placeholder:text-ocean-muted/50 focus:border-ocean-accent focus:outline-none;
+    @apply w-full rounded border border-ocean-border bg-ocean-bg px-2 py-1.5 text-sm text-slate-200 placeholder:text-ocean-faint focus:border-ocean-accent focus:outline-none;
+  }
+
+  /* Frameless-window drag regions: the custom TitleBar/TabBar move the window; interactive
+     controls inside them opt out so they stay clickable. No effect in a plain browser. */
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
   }
 }

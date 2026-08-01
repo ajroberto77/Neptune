@@ -8,7 +8,7 @@ or mutate it (see CLAUDE.md, layer 3).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 from neptune.pnl import CostBasisMethod
@@ -28,6 +28,15 @@ class TradeAction(str, Enum):
 
     BUY = "BUY"
     SELL = "SELL"
+
+
+class TradeOrigin(str, Enum):
+    """Where an executed trade came from. MANUAL = a desk ticket (Trade tab); HEDGE = booked
+    by approving an optimizer hedge proposal (the systematic-short covers and new shorts).
+    Recorded on every ledger row so the blotter can distinguish desk trades from hedge churn."""
+
+    MANUAL = "MANUAL"
+    HEDGE = "HEDGE"
 
 
 class ShortType(str, Enum):
@@ -174,3 +183,23 @@ class Portfolio:
     def long_aum(self) -> float:
         """Total long notional — the denominator for beta/factor normalization."""
         return sum(p.notional for p in self.longs)
+
+
+@dataclass(frozen=True)
+class Transaction:
+    """A booked execution (one blotter row). Read model returned by the ledger; the system
+    records these but never routes them to a venue (CLAUDE.md §2)."""
+
+    ticker: str
+    action: TradeAction
+    quantity: float
+    price: float
+    trade_date: date
+    short_type: ShortType = ShortType.NA
+    origin: TradeOrigin = TradeOrigin.MANUAL
+    realized_pnl: float = 0.0
+    effect: str = ""
+    fee_per_share: float = 0.0
+    portfolio_id: str | None = None
+    executed_at: datetime | None = None
+    id: int | None = None

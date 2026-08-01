@@ -6,10 +6,11 @@ import { money, signedMoney } from "../format";
 
 interface Props {
   proposal: HedgeProposal | null;
-  portfolios: { id: string; name: string }[];
-  hedgePortfolioId: string;
-  onHedgePortfolio: (id: string) => void;
-  onPropose: (sectorLimit?: number, maxNames?: number) => void;
+  /** Whether a real Long/Short book is the current hedge target (set from the sidebar). */
+  canHedge: boolean;
+  /** Name of the book being hedged (the inherited sidebar selection). */
+  portfolioName: string | null;
+  onPropose: (sectorLimit?: number, maxNames?: number, betaAddBudget?: number) => void;
   proposing: boolean;
   onApprove: () => void;
   onReject: () => void;
@@ -27,9 +28,8 @@ const shares = (n: number) => n.toLocaleString(undefined, { maximumFractionDigit
  *  (I-01). The sector-concentration breakdown shows below once a basket is proposed. */
 export function Hedge({
   proposal,
-  portfolios,
-  hedgePortfolioId,
-  onHedgePortfolio,
+  canHedge,
+  portfolioName,
   onPropose,
   proposing,
   onApprove,
@@ -41,11 +41,14 @@ export function Hedge({
 }: Props) {
   const [sectorLimitPct, setSectorLimitPct] = useState(30);
   const [targetShorts, setTargetShorts] = useState<string>("");
+  // The negative-beta-short fence (Option A). Blank = server default (≈ ⅓ × beta_tol).
+  const [betaAddBudget, setBetaAddBudget] = useState<string>("");
 
   function propose() {
     onPropose(
       Math.min(100, Math.max(1, sectorLimitPct)) / 100,
       targetShorts ? Number(targetShorts) : undefined,
+      betaAddBudget !== "" ? Math.max(0, Number(betaAddBudget)) : undefined,
     );
   }
 
@@ -67,24 +70,16 @@ export function Hedge({
     <div className="space-y-6">
       <div className="rounded-lg border border-ocean-border bg-ocean-panel p-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
-            Systematic Hedge Proposal
-          </h3>
+          <div>
+            <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
+              Systematic Hedge Proposal
+            </h3>
+            {canHedge && portfolioName && (
+              <p className="mt-1 text-sm font-medium text-slate-200">{portfolioName}</p>
+            )}
+          </div>
+          {canHedge && (
           <div className="flex items-end gap-3">
-            <label className="text-xs text-ocean-muted">
-              <span className="mb-1 block">Portfolio</span>
-              <select
-                className="np-input py-1"
-                value={hedgePortfolioId}
-                onChange={(e) => onHedgePortfolio(e.target.value)}
-              >
-                {portfolios.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
             <label className="text-xs text-ocean-muted">
               <span className="mb-1 block">Sector limit %</span>
               <input
@@ -108,6 +103,22 @@ export function Hedge({
                 className="np-input w-24"
               />
             </label>
+            <label
+              className="text-xs text-ocean-muted"
+              title="Max net market beta the shorts may ADD (negative-beta-short fence). Blank = default ≈ ⅓ × beta tolerance."
+            >
+              <span className="mb-1 block">Max β added</span>
+              <input
+                type="number"
+                min={0}
+                step={0.005}
+                placeholder="auto"
+                value={betaAddBudget}
+                aria-label="beta-add-budget-input"
+                onChange={(e) => setBetaAddBudget(e.target.value)}
+                className="np-input w-20"
+              />
+            </label>
             <button
               onClick={propose}
               disabled={proposing}
@@ -116,9 +127,15 @@ export function Hedge({
               {proposing ? "Optimizing…" : "Propose hedge"}
             </button>
           </div>
+          )}
         </div>
 
-        {proposal ? (
+        {!canHedge ? (
+          <p className="mt-4 text-sm text-ocean-muted">
+            Hedging targets a single Long / Short book. Select one from the sidebar — long-only
+            books and roll-ups can&apos;t be hedged.
+          </p>
+        ) : proposal ? (
           <div className="mt-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-6 text-sm">
@@ -156,7 +173,7 @@ export function Hedge({
               </thead>
               <tbody>
                 {proposal.proposed_shorts.map((s) => (
-                  <tr key={s.ticker} className="border-t border-ocean-border/60">
+                  <tr key={s.ticker} className="border-t border-ocean-border/70">
                     <td className="py-2 font-mono">{s.ticker}</td>
                     <td className="py-2 text-ocean-muted">{s.sector ?? "—"}</td>
                     <td className="py-2 text-right font-mono">
@@ -197,9 +214,11 @@ export function Hedge({
         )}
       </div>
 
-      {proposal && <SectorPanel proposal={proposal} />}
+      {canHedge && proposal && <SectorPanel proposal={proposal} />}
 
-      <FrontierPanel frontier={frontier} onRun={onFrontier} loading={frontierLoading} />
+      {canHedge && (
+        <FrontierPanel frontier={frontier} onRun={onFrontier} loading={frontierLoading} />
+      )}
     </div>
   );
 }

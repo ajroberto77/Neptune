@@ -4,7 +4,47 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from neptune.quant.factors import factor_loadings, portfolio_factor_exposure
+from neptune.quant.factors import (
+    factor_covariance,
+    factor_loadings,
+    portfolio_factor_exposure,
+    residual_variance,
+    rolling_factor_loadings,
+)
+
+
+def test_factor_covariance_is_symmetric_psd_and_ordered():
+    rng = np.random.default_rng(7)
+    n = 200
+    fr = {
+        "MKT": rng.normal(0, 0.01, n),
+        "SMB": rng.normal(0, 0.008, n),
+        "HML": rng.normal(0, 0.007, n),
+    }
+    order = ("MKT", "SMB", "HML")
+    F = factor_covariance(fr, order, window=120)
+    assert F.shape == (3, 3)
+    assert np.allclose(F, F.T)                       # symmetric
+    assert np.min(np.linalg.eigvalsh(F)) >= -1e-12   # PSD
+    # Missing factor → None (panel not fully loaded) so the optimizer falls back to diagonal.
+    assert factor_covariance(fr, ("MKT", "SMB", "RMW")) is None
+
+
+def test_residual_variance_is_below_total_and_intercept_invariant():
+    rng = np.random.default_rng(11)
+    n = 300
+    mkt = rng.normal(0, 0.01, n)
+    smb = rng.normal(0, 0.008, n)
+    idio = rng.normal(0, 0.004, n)
+    r = 0.02 + 1.2 * mkt + 0.5 * smb + idio  # 0.02 = alpha (intercept)
+    fr = {"MKT": mkt, "SMB": smb}
+    loadings = factor_loadings(r, fr, window=300).loadings
+    rv = residual_variance(r, fr, loadings, window=300)
+    assert 0.0 < rv < float(np.var(r))               # factor model explains part of the variance
+    assert rv == pytest.approx(float(np.var(idio)), rel=0.2)   # ~ the true idio variance
+    # Variance is invariant to the regression intercept (alpha) by construction.
+    rv_shifted = residual_variance(r + 5.0, fr, loadings, window=300)
+    assert rv_shifted == pytest.approx(rv, rel=1e-9)
 
 
 def _factor_panel(n=200, seed=21):
@@ -26,6 +66,28 @@ def test_loadings_recovered_from_synthetic_returns():
 
     for f, expected in true.items():
         assert result.loadings[f] == pytest.approx(expected, abs=1e-8)
+
+
+def test_rolling_factor_loadings_match_single_window_fit():
+    """The vectorized rolling loadings must equal factor_loadings on the trailing window at each
+    index, so the materialized loading series is identical to computing on the fly."""
+    rng = np.random.default_rng(9)
+    n, window = 300, 60
+    factors = {
+        "MKT": rng.normal(0, 0.01, n), "SMB": rng.normal(0, 0.008, n),
+        "HML": rng.normal(0, 0.008, n), "MOM": rng.normal(0, 0.009, n),
+    }
+    asset = (1.1 * factors["MKT"] + 0.3 * factors["SMB"] - 0.2 * factors["HML"]
+             + 0.15 * factors["MOM"] + rng.normal(0, 0.003, n))
+    roll = rolling_factor_loadings(asset, factors, window=window)
+
+    assert np.isnan(roll.loadings["MKT"][2])  # < params obs → NaN
+    for i in (80, 150, 299):  # full-window indices match the single-window multivariate fit
+        ref = factor_loadings(asset[: i + 1], {f: s[: i + 1] for f, s in factors.items()},
+                              window=window)
+        for f in factors:
+            assert roll.loadings[f][i] == pytest.approx(ref.loadings[f], abs=1e-6)
+        assert int(roll.n_obs[i]) == window
 
 
 def test_portfolio_exposure_is_notional_weighted():

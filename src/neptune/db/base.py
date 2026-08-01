@@ -42,6 +42,11 @@ class SecuritiesBase(DeclarativeBase):
     """Declarative base for the securities database (prices/dividends/corp actions)."""
 
 
+class MacroBase(DeclarativeBase):
+    """Declarative base for the macro database (rates/credit + economic series).
+    See ``docs/macro_data.md``."""
+
+
 # Backward-compatible alias: the original slice imported ``Base`` for portfolio models.
 Base = PortfolioBase
 
@@ -62,28 +67,72 @@ def make_engine(url: str | None = None):
     return eng
 
 
+class _RebindableSessionmaker:
+    """A sessionmaker whose target engine can be swapped in place.
+
+    Every existing ``from neptune.db.base import SessionLocal`` binds to THIS ONE OBJECT
+    at import time (api/main.py, scheduling/scheduler.py). Reassigning the module-level
+    ``SessionLocal`` name later would be invisible to those callers — Python copies the
+    reference at import time, so a later ``db.base.SessionLocal = x`` doesn't reach them.
+    Mutating this object's internal engine instead is visible everywhere immediately,
+    since every caller holds a reference to the same object. This is what lets the
+    portfolio DB be re-pointed live, from a request handler, with no process restart —
+    see ``db.runtime.repoint_portfolio``.
+    """
+
+    def __init__(self, engine):
+        self._engine = engine
+        self._factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+    def __call__(self, *args, **kwargs):
+        return self._factory(*args, **kwargs)
+
+    @property
+    def bind(self):
+        """The engine sessions are currently created against."""
+        return self._engine
+
+    def rebind(self, engine) -> None:
+        self._engine = engine
+        self._factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+
 # --- Portfolio database (the canonical app DB; default target) -------------------
 portfolio_engine = make_engine(settings.portfolio_url)
-PortfolioSession = sessionmaker(bind=portfolio_engine, expire_on_commit=False, future=True)
+SessionLocal = _RebindableSessionmaker(portfolio_engine)
 
-# Backward-compatible aliases.
+# Backward-compatible aliases. NOTE: ``engine`` is a snapshot taken at import time, not a
+# live reference — after ``repoint_portfolio`` swaps the session factory, ``engine`` here
+# still points at the ORIGINAL database. Nothing in this codebase queries it directly
+# (grep confirms only ``SessionLocal()`` is ever used to talk to the portfolio DB); it
+# exists purely as `init_db`'s default parameter, which a repoint always overrides
+# explicitly. Prefer ``SessionLocal.bind`` if you need the current engine.
 engine = portfolio_engine
-SessionLocal = PortfolioSession
+PortfolioSession = SessionLocal
 
 # --- Securities database (market data) -------------------------------------------
 securities_engine = make_engine(settings.securities_url)
 SecuritiesSession = sessionmaker(bind=securities_engine, expire_on_commit=False, future=True)
+
+# --- Macro database (rates/credit + economic series) -----------------------------
+macro_engine = make_engine(settings.macro_url)
+MacroSession = sessionmaker(bind=macro_engine, expire_on_commit=False, future=True)
 
 
 def init_db(target_engine=engine) -> None:
     """Create the **portfolio** tables. For the slice we use ``create_all``; production
     uses Alembic. Default target is the portfolio engine; tests pass an explicit one."""
     from neptune.db import models  # noqa: F401  (register portfolio mappers)
+    from neptune.settings_store import ConnectionRole
 
     PortfolioBase.metadata.create_all(bind=target_engine)
     # Additive bridge until Alembic: a deployed portfolio DB picks up new columns.
     _ensure_columns(target_engine, "lots", {"fee_per_share": "FLOAT DEFAULT 0"})
     _ensure_columns(target_engine, "portfolios", {"mandate": "VARCHAR DEFAULT 'LONG_SHORT'"})
+    # A DB created before MACRO existed has a native Postgres enum lacking that label;
+    # create_all never adds values to an existing enum type, so querying the MACRO role
+    # would error. Backfill any missing labels (Postgres-only; no-op on SQLite).
+    _ensure_enum_values(target_engine, "connectionrole", [r.value for r in ConnectionRole])
 
 
 def init_securities_db(target_engine=securities_engine) -> None:
@@ -96,6 +145,37 @@ def init_securities_db(target_engine=securities_engine) -> None:
     # No Alembic yet: `create_all` won't add columns to an EXISTING table. Bridge that for
     # additive columns so a deployed securities DB picks up new fields without a manual migration.
     _ensure_columns(target_engine, "securities", {"sector": "VARCHAR"})
+
+
+def init_macro_db(target_engine=macro_engine) -> None:
+    """Create the **macro** tables (series registry + observations + vintages + release
+    calendar). Like the securities DB, ``create_all`` yields a working relational schema
+    everywhere; on Postgres the observation/vintage fact tables are TimescaleDB-hypertable
+    candidates via a later guarded migration."""
+    from neptune.macro import models  # noqa: F401  (register macro mappers)
+
+    MacroBase.metadata.create_all(bind=target_engine)
+
+
+def _ensure_enum_values(target_engine, type_name: str, values: list[str]) -> None:
+    """Lightweight additive migration for native Postgres ENUM types: ``ALTER TYPE ... ADD
+    VALUE IF NOT EXISTS`` for any label missing from an EXISTING enum type. Needed because
+    ``create_all`` never alters an enum type once it exists, so a DB created before a new
+    enum member was added (e.g. the MACRO connection role) would reject queries on that value.
+    Postgres-only and idempotent; a no-op on SQLite (which stores enums as plain text)."""
+    if target_engine.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+
+    # ADD VALUE cannot run inside a transaction block, so use an AUTOCOMMIT connection.
+    with target_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        exists = conn.execute(
+            text("SELECT 1 FROM pg_type WHERE typname = :n"), {"n": type_name}
+        ).first()
+        if not exists:
+            return  # fresh DB: create_all already built the type with every current label
+        for v in values:
+            conn.execute(text(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{v}'"))
 
 
 def _ensure_columns(target_engine, table: str, columns: dict[str, str]) -> None:

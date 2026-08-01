@@ -77,6 +77,72 @@ def test_mandate_rollups_and_long_only_guards(client):
     assert client.post("/portfolios/LO-1/hedge/propose").status_code == 422
 
 
+def test_org_pickers_are_populated(client):
+    # The add-portfolio ownership pickers read these lists; the Iridium scaffolding is always
+    # seeded, so a fresh DB still has a firm, an investor entity, and a PM to choose.
+    firms = {f["id"] for f in client.get("/firms").json()}
+    people = {p["id"] for p in client.get("/people").json()}
+    entities = {e["id"] for e in client.get("/investor-entities").json()}
+    assert "IRIDIUM" in firms
+    assert "pm-iridium" in people
+    assert "IRIDIUM-FUND" in entities
+
+
+def test_create_portfolio_with_ownership_then_delete(client):
+    # Create a book with full ownership fields; id is derived from the name when omitted.
+    r = client.post("/portfolios", json={
+        "name": "Macro Alpha", "mandate": "LONG_SHORT",
+        "firm_id": "IRIDIUM", "investor_entity_id": "IRIDIUM-FUND",
+        "lead_pm_ids": ["pm-iridium"],
+    })
+    assert r.status_code == 201
+    pid = r.json()["id"]
+    assert pid == "macro-alpha"  # slugified from the name
+    meta = {p["id"]: p for p in client.get("/portfolios").json()}[pid]
+    assert meta["firm_id"] == "IRIDIUM" and meta["lead_pm_ids"] == ["pm-iridium"]
+
+    # An empty book deletes cleanly and disappears from the switcher.
+    assert client.delete(f"/portfolios/{pid}").status_code == 200
+    assert pid not in {p["id"] for p in client.get("/portfolios").json()}
+
+
+def test_delete_portfolio_blocked_when_not_empty(client):
+    client.post("/portfolios", json={"id": "DEL-X", "name": "Del X"})
+    client.post("/portfolios/DEL-X/positions", json={
+        "ticker": "HELD", "side": "LONG", "notional": 50_000.0,
+    })
+    # A book that still holds exposure can't be deleted — flatten it first.
+    r = client.delete("/portfolios/DEL-X")
+    assert r.status_code == 409
+    assert "DEL-X" in {p["id"] for p in client.get("/portfolios").json()}
+
+
+def test_delete_rollup_and_missing_book(client):
+    assert client.delete("/portfolios/__consolidated__").status_code == 409
+    assert client.delete("/portfolios/does-not-exist").status_code == 404
+
+
+def test_consolidated_uses_firm_beta_tolerance(client):
+    # The Consolidated roll-up is a firm-level view → tighter ±0.030 limit; a single book → 0.05.
+    cons = client.get("/portfolios/__consolidated__/risk").json()
+    assert cons["firm_view"] is True
+    assert cons["beta_tol"] == 0.030
+    assert "factor_panel" in cons
+    book = client.get(f"/portfolios/{PID}/risk").json()
+    assert book["firm_view"] is False
+    assert book["beta_tol"] == 0.05
+
+
+def test_factor_monitor_endpoint_shape(client):
+    # Report-only monitor: with the synthetic fallback (no built panel) it's gracefully
+    # unavailable, but the endpoint always returns the stable shape.
+    r = client.get(f"/portfolios/{PID}/factor-monitor")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["portfolio_id"] == PID
+    assert set(body) >= {"available", "factors", "sectors", "long_aum"}
+
+
 def test_list_and_create_portfolios(client):
     # The seeded golden book is listed.
     ids = {p["id"] for p in client.get("/portfolios").json()}
@@ -348,3 +414,30 @@ def test_hedge_approve_books_systematic_shorts(client):
     # Consolidated is read-only — can't approve into it.
     assert client.post("/portfolios/__consolidated__/hedge/approve",
                        json={"shorts": []}).status_code == 409
+
+
+def test_hedge_reapprove_covers_stale_shorts_into_the_blotter(client):
+    """Re-approving a different hedge buys-to-cover the dropped name and sell-shorts the new one,
+    and both legs land in the blotter as HEDGE-origin trades (the close is a real cover, not a
+    silent delete)."""
+    client.post(f"/portfolios/{PID}/hedge/approve", json={
+        "shorts": [{"ticker": "HDGX", "shares": 1000, "price": 50.0}],
+    })
+    r = client.post(f"/portfolios/{PID}/hedge/approve", json={
+        "shorts": [{"ticker": "NEWX", "shares": 500, "price": 80.0}],
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert body["covered"] == 1 and body["opened"] == 1  # HDGX covered, NEWX opened
+
+    # HDGX is gone from the live book; NEWX is the systematic short now.
+    live = {p["ticker"]: p for p in client.get(f"/portfolios/{PID}/positions").json()
+            if p["notional"] != 0}
+    assert "HDGX" not in live
+    assert live["NEWX"]["short_type"] == "SYSTEMATIC"
+
+    # The blotter shows the cover (BUY) and the new short (SELL), both HEDGE-origin.
+    txs = client.get(f"/portfolios/{PID}/transactions").json()
+    hedge = [t for t in txs if t["origin"] == "HEDGE"]
+    assert any(t["ticker"] == "HDGX" and t["action"] == "BUY" for t in hedge)
+    assert any(t["ticker"] == "NEWX" and t["action"] == "SELL" for t in hedge)

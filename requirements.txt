@@ -23,6 +23,8 @@ cvxpy==1.9.1
 yfinance==0.2.66
 # Ken French factor panel (SMB/HML/MOM) is fetched from its published CSV zips with the
 # stdlib (urllib + zipfile) — no third-party reader, which keeps us off pandas-datareader.
+# Macro ingest (FRED/ALFRED) uses requests directly (imported lazily in macro/providers).
+requests>=2.31
 
 # --- Scheduling (always-on price refresh; imported lazily, degrades if absent) ---
 apscheduler==3.11.0

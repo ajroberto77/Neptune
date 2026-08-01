@@ -10,11 +10,14 @@ import pytest  # noqa: E402
 
 from neptune.config import settings  # noqa: E402
 from neptune.db.base import (  # noqa: E402
+    MacroSession,
     SecuritiesSession,
     SessionLocal,
     engine,
     init_db,
+    init_macro_db,
     init_securities_db,
+    macro_engine,
     securities_engine,
 )
 
@@ -56,4 +59,17 @@ def securities_session():
     SecuritiesBase.metadata.drop_all(bind=securities_engine)
     init_securities_db(securities_engine)
     with SecuritiesSession() as s:
+        yield s
+
+
+@pytest.fixture()
+def macro_session():
+    """A session against a freshly created in-memory macro schema (own engine/DB), dropped +
+    recreated per test so series/observations/vintages don't leak between tests."""
+    from neptune.db.base import MacroBase
+    from neptune.macro import models  # noqa: F401  (register mappers)
+
+    MacroBase.metadata.drop_all(bind=macro_engine)
+    init_macro_db(macro_engine)
+    with MacroSession() as s:
         yield s

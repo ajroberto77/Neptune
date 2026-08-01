@@ -34,6 +34,7 @@ export interface PositionRow {
   notional: number;
   quantity: number;
   price: number | null; // null when the name isn't priced yet
+  prev_close?: number | null; // prior completed close — denominator for the day's % move
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
   cost_basis_method?: string;
@@ -41,6 +42,20 @@ export interface PositionRow {
 }
 
 export type TradeAction = "BUY" | "SELL";
+
+export interface TransactionRow {
+  id: number | null;
+  portfolio_id: string | null;
+  ticker: string;
+  action: TradeAction;
+  quantity: number;
+  price: number;
+  trade_date: string;
+  short_type: string; // SYSTEMATIC / DISCRETIONARY / NA
+  origin: "MANUAL" | "HEDGE";
+  realized_pnl: number;
+  effect: string;
+}
 
 export interface TransactionInput {
   ticker: string;
@@ -70,13 +85,17 @@ export interface ProposedShort {
 /** An approved-but-not-yet-booked hedge basket, handed to the Trade tab for review + booking. */
 export interface PendingHedge {
   portfolioId: string;
+  // Delta-reconciliation legs vs. the live systematic book: SELL opens/increases a short,
+  // BUY covers/reduces one. Unchanged names are omitted (no churn).
   shorts: {
     ticker: string;
+    action: TradeAction;
     shares: number;
     price: number;
     sector: string | null;
     beta: number;
     notional: number;
+    kind: "open" | "increase" | "reduce" | "cover";
   }[];
 }
 
@@ -150,6 +169,11 @@ export interface ConnectionRow {
   has_password?: boolean;
   configured: boolean;
   bootstrap?: boolean;
+  source?: "stored" | "env" | "none";
+  // PORTFOLIO only: present on the response to a save that actually repointed the running
+  // app (see api/main.py's PORTFOLIO branch) -- every other role's save doesn't set these.
+  reconnected?: boolean;
+  env_updated?: boolean;
 }
 
 export interface ConnectionInput {
@@ -160,6 +184,17 @@ export interface ConnectionInput {
   password?: string | null;
   sslmode?: string | null;
   driver?: string | null;
+}
+
+/** Masked status of an external data-provider API key — never the key itself. */
+export interface CredentialRow {
+  provider: string;
+  has_key: boolean;
+  source: "stored" | "env" | "none";
+}
+
+export interface ApiKeyInput {
+  api_key: string;
 }
 
 export interface SyncResult {
@@ -230,6 +265,51 @@ export interface BetaHistory {
   net: { date: string; net_beta: number }[];
   net_stats: BetaStats | null;
   positions: BetaHistoryPosition[];
+}
+
+export interface HedgeBacktestPoint {
+  date: string;
+  target_net_beta: number;
+  realized_net_beta: number;
+  n_names: number;
+  turnover: number;
+}
+
+export interface HedgeBacktest {
+  portfolio_id: string;
+  tol: number;
+  rebalance_step: number;
+  rmse: number;
+  coverage: number;
+  mean_abs_realized: number;
+  mean_turnover: number;
+  n_rebalances: number;
+  points: HedgeBacktestPoint[];
+}
+
+export interface CalibrationRow {
+  beta_add_budget: number;
+  rmse: number;
+  coverage: number;
+  mean_abs_realized: number;
+  mean_turnover: number;
+  n_rebalances: number;
+}
+
+export interface HedgeCalibration {
+  portfolio_id: string;
+  tol: number;
+  current_budget: number;
+  grid: CalibrationRow[];
+}
+
+export interface FactorMonitor {
+  portfolio_id: string;
+  available: boolean;
+  long_aum: number;
+  // Report-only net exposures (the optimizer does NOT neutralize these).
+  factors: Record<string, number>;   // IVOL / BAB / AMIHUD -> net loading
+  sectors: Record<string, number>;   // sector -> net signed-notional weight
 }
 
 export interface BetaDiagnostics {
