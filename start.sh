@@ -17,5 +17,5 @@ if ! "$PY" -c "import fastapi, sqlalchemy, uvicorn, numpy, cvxpy" 2>/dev/null; t
     "$PY" -m pip install -r requirements.txt
 fi
 
-echo "[run] Neptune -> UI http://localhost:5173   API http://localhost:8000"
+echo "[run] Neptune -> UI http://localhost:5176   API http://localhost:8000"
 exec "$PY" run.py

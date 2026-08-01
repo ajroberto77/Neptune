@@ -21,5 +21,5 @@ if ($LASTEXITCODE -ne 0) {
     & $py -m pip install -r requirements.txt
 }
 
-Write-Host "[run] Neptune -> UI http://localhost:5173   API http://localhost:8000" -ForegroundColor Green
+Write-Host "[run] Neptune -> UI http://localhost:5176   API http://localhost:8000" -ForegroundColor Green
 & $py run.py

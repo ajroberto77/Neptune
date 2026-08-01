@@ -56,3 +56,34 @@ def test_no_dotenv_falls_back_to_default(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # empty dir, no .env
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert get_settings().database_url.startswith("sqlite")
+
+
+def test_api_host_and_port_default():
+    s = Settings()
+    assert s.api_host == "127.0.0.1"
+    assert s.api_port == 8000
+
+
+def test_api_port_honors_the_prefixed_env_var(monkeypatch):
+    # NEPTUNE_API_PORT works natively via pydantic-settings' env_prefix — no _URL_ENV
+    # entry needed for this form, only for the bare one below.
+    monkeypatch.setenv("NEPTUNE_API_PORT", "9100")
+    assert Settings().api_port == 9100
+
+
+def test_api_host_and_port_honor_the_bare_env_vars(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("API_HOST", raising=False)
+    monkeypatch.delenv("API_PORT", raising=False)
+    monkeypatch.setenv("API_HOST", "0.0.0.0")
+    monkeypatch.setenv("API_PORT", "9200")
+    s = get_settings()
+    assert s.api_host == "0.0.0.0"
+    assert s.api_port == 9200
+
+
+def test_api_port_bare_dotenv_value_is_honored(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("API_PORT", raising=False)
+    (tmp_path / ".env").write_text("API_PORT=9300\n")
+    assert get_settings().api_port == 9300

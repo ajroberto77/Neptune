@@ -2,7 +2,7 @@
 //
 // Forked from the Iridium Backend / Mercury shell: a GUI host that supervises the Python
 // FastAPI backend and drives it over IPC. Responsibilities:
-//   1. Create the application window (dev: Vite @ :5173, prod: built frontend/dist/).
+//   1. Create the application window (dev: Vite @ :5176, prod: built frontend/dist/).
 //   2. Spawn and supervise the Python FastAPI backend (scripts/neptune_api.py on :8433),
 //      injecting the database URLs + provider keys from saved settings.
 //   3. Expose IPC for the renderer (via preload.cjs → window.neptune):
@@ -226,7 +226,7 @@ function createWindow() {
   if (isDev) {
     // Single `npm run dev` starts Vite and Electron together; Electron can win the race, so
     // retry the dev-server URL until it answers instead of showing a failed-load page.
-    const DEV_URL = 'http://localhost:5173';
+    const DEV_URL = 'http://localhost:5176';
     const loadDev = () => mainWindow && mainWindow.loadURL(DEV_URL).catch(() => {});
     mainWindow.webContents.on('did-fail-load', () => {
       if (mainWindow && !mainWindow.isDestroyed()) setTimeout(loadDev, 500);

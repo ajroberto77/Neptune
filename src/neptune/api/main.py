@@ -296,7 +296,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Neptune", version="0.1.0", lifespan=lifespan)
 
 # When Neptune runs inside the Electron shell the renderer loads either from the Vite dev
-# server (http://localhost:5173) or, in a packaged build, from a ``file://`` origin — both
+# server (http://localhost:5176) or, in a packaged build, from a ``file://`` origin — both
 # are cross-origin to the FastAPI sidecar on 127.0.0.1:<port>. Allow them so the browser
 # doesn't block the calls. Running purely in a browser behind the Vite proxy is same-origin
 # and unaffected. (CORSMiddleware is imported lazily to keep the import block above intact.)

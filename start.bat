@@ -23,5 +23,5 @@ if errorlevel 1 (
     ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 )
 
-echo [run] Neptune  -  UI http://localhost:5173   API http://localhost:8000
+echo [run] Neptune  -  UI http://localhost:5176   API http://localhost:8000
 ".venv\Scripts\python.exe" run.py

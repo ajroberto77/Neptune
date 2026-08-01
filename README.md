@@ -44,10 +44,10 @@ python run.py
 ```
 
 Starts **both** servers and streams their logs together, then open the UI at
-http://localhost:5173:
+http://localhost:5176:
 
 * `[api]` FastAPI backend (uvicorn, `--reload`) on http://localhost:8000
-* `[web]` Vite frontend on http://localhost:5173 (proxies API calls to the backend)
+* `[web]` Vite frontend on http://localhost:5176 (proxies API calls to the backend)
 
 Press **Ctrl-C** once to stop both. Run it from your activated venv (so `uvicorn` resolves);
 first run auto-installs the frontend deps if `frontend/node_modules` is missing (`npm`
@@ -68,7 +68,7 @@ no PyInstaller.
 python3 -m venv venv && ./venv/bin/python -m pip install -e ".[dev]"
 npm install            # root: Electron shell deps (frontend deps install on first dev run)
 
-npm run dev            # Vite (:5173) + Electron, hot-reload; the renderer talks to :8433
+npm run dev            # Vite (:5176) + Electron, hot-reload; the renderer talks to :8433
 # or a production-style window (built frontend, no dev server):
 npm run build && npm run electron
 ```

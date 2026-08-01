@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     # synthetic CATALOG/universe is used instead, e.g. tests and offline dev).
     universe_database_url: str | None = None
 
+    # The API server's own bind address (uvicorn) — the single source of truth run.py's dev
+    # launcher and the Electron main process read to know where Neptune's API actually
+    # listens. Neptune's allocation is 8000 (unchanged); this just makes it configurable
+    # instead of hardcoded across launcher scripts, per-app port allocation for the
+    # upcoming identity service (OIDC loopback callbacks, JWT aud, CORS are all
+    # scheme+host+port-specific, so each Iridium-suite app needs a stable one).
+    api_host: str = "127.0.0.1"
+    api_port: int = 8000
+
     # --- Quant Engine constants (HARD invariants; see CLAUDE.md) ---
     ewma_lambda: float = 0.94          # EWMA decay for beta estimation
     beta_lookback: int = 252           # trading days in the estimation window
@@ -133,13 +142,17 @@ class Settings(BaseSettings):
 
 # Read the bare (un-prefixed) connection env vars for convenience/compat, so deployments
 # can set DATABASE_URL / PORTFOLIO_DATABASE_URL / SECURITIES_DATABASE_URL /
-# UNIVERSE_DATABASE_URL without the NEPTUNE_ prefix.
+# UNIVERSE_DATABASE_URL / API_HOST / API_PORT without the NEPTUNE_ prefix. (The prefixed
+# forms — NEPTUNE_API_HOST, NEPTUNE_API_PORT, etc. — already work natively via
+# ``env_prefix`` above; this dict only adds the unprefixed fallback on top.)
 _URL_ENV = {
     "database_url": "DATABASE_URL",
     "portfolio_database_url": "PORTFOLIO_DATABASE_URL",
     "securities_database_url": "SECURITIES_DATABASE_URL",
     "macro_database_url": "MACRO_DATABASE_URL",
     "universe_database_url": "UNIVERSE_DATABASE_URL",
+    "api_host": "API_HOST",
+    "api_port": "API_PORT",
 }
 
 # Bare (un-prefixed) env names for provider secrets, read the same way as the URLs above so a
@@ -150,11 +163,11 @@ _SECRET_ENV = {
 
 
 def _dotenv_values(path: str = ".env") -> dict[str, str]:
-    """Minimal ``.env`` parser for the bare connection names. pydantic-settings only reads
-    ``.env`` for the ``NEPTUNE_``-prefixed fields, so without this a ``.env`` copied from
-    ``.env.example`` (which uses bare ``DATABASE_URL=…``) would be silently ignored and the
-    app would keep using the in-memory SQLite default. No extra dependency — just the four
-    keys we care about.
+    """Minimal ``.env`` parser for the bare connection/API names. pydantic-settings only
+    reads ``.env`` for the ``NEPTUNE_``-prefixed fields, so without this a ``.env`` copied
+    from ``.env.example`` (which uses bare ``DATABASE_URL=…``) would be silently ignored and
+    the app would keep using the in-memory SQLite default. No extra dependency — just the
+    handful of keys in ``_URL_ENV``/``_SECRET_ENV`` we care about.
 
     Read as ``utf-8-sig`` so a BOM is stripped: PowerShell's ``Set-Content -Encoding UTF8``
     writes a BOM, which would otherwise corrupt the FIRST key (e.g. ``\\ufeffPORTFOLIO_DATABASE_URL``)
