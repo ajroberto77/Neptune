@@ -134,7 +134,7 @@ describe("Settings", () => {
     // Every member database is offered, including ones with no stored row yet.
     expect(screen.getByText("Portfolio (app)")).toBeInTheDocument();
     expect(screen.getByText("Securities (market data)")).toBeInTheDocument();
-    expect(screen.getByText("Macro (rates/credit + economic)")).toBeInTheDocument();
+    expect(screen.getByText("Macro (rates, credit, economic)")).toBeInTheDocument();
     expect(screen.getByText("Universe (cato_securities)")).toBeInTheDocument();
     // The portfolio DB is marked restart-only.
     expect(screen.getByText(/applies on restart/)).toBeInTheDocument();
@@ -155,13 +155,42 @@ describe("Settings", () => {
     render(<Settings />);
     gotoSection("Databases");
     await screen.findByText("CATO databases");
-    // Save the universe row without typing a password.
-    fireEvent.click(screen.getByLabelText("universe-save"));
+    // Edit something other than the password, then save from the header.
+    fireEvent.change(screen.getByLabelText("universe-database"), {
+      target: { value: "cato_securities_v2" },
+    });
+    fireEvent.click(screen.getByLabelText("save-settings"));
     await waitFor(() => expect(saveConnection).toHaveBeenCalled());
-    const [role, body] = saveConnection.mock.calls[0];
-    expect(role).toBe("UNIVERSE");
+    const call = saveConnection.mock.calls.find(([role]) => role === "UNIVERSE");
+    expect(call).toBeDefined();
+    const body = call![1] as { password: string | null; database: string };
     // Blank password is sent as null so the backend leaves the stored secret unchanged.
-    expect((body as { password: string | null }).password).toBeNull();
+    expect(body.password).toBeNull();
+    expect(body.database).toBe("cato_securities_v2");
+  });
+
+  it("fans a shared server out across every database in the family", async () => {
+    render(<Settings />);
+    gotoSection("Databases");
+    await screen.findByText("Neptune databases");
+    // One edit to the family server, not three edits to three cards.
+    fireEvent.change(screen.getByLabelText("neptune-shared-host"), {
+      target: { value: "pg-prod.internal" },
+    });
+    fireEvent.click(screen.getByLabelText("save-settings"));
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledTimes(3));
+    const saved = Object.fromEntries(
+      saveConnection.mock.calls.map(([role, body]) => [role, body as { host: string; database: string }]),
+    );
+    expect(Object.keys(saved).sort()).toEqual(["MACRO", "PORTFOLIO", "SECURITIES"]);
+    // Shared credential, but each database keeps its own name.
+    expect(saved.PORTFOLIO.host).toBe("pg-prod.internal");
+    expect(saved.SECURITIES.host).toBe("pg-prod.internal");
+    expect(saved.MACRO.host).toBe("pg-prod.internal");
+    expect(saved.PORTFOLIO.database).toBe("neptune_portfolios");
+    expect(saved.MACRO.database).toBe("neptune_macro");
+    // CATO is a different family and is untouched.
+    expect(saved.UNIVERSE).toBeUndefined();
   });
 
   it("disables Test connection on an edited row, since it tests the stored URL", async () => {
@@ -169,10 +198,36 @@ describe("Settings", () => {
     gotoSection("Databases");
     await screen.findByText("CATO databases");
     expect(screen.getByLabelText("universe-test")).toBeEnabled();
-    fireEvent.change(screen.getByLabelText("universe-host"), {
+    fireEvent.change(screen.getByLabelText("cato-shared-host"), {
       target: { value: "cato-prod.internal" },
     });
     expect(screen.getByLabelText("universe-test")).toBeDisabled();
+  });
+
+  it("warns before closing with unsaved changes", async () => {
+    const onClose = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<Settings onClose={onClose} />);
+    gotoSection("Databases");
+    await screen.findByText("Neptune databases");
+    fireEvent.change(screen.getByLabelText("neptune-shared-host"), {
+      target: { value: "somewhere-else" },
+    });
+    fireEvent.click(screen.getByText("✕ Close"));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled(); // the user declined
+    confirmSpy.mockRestore();
+  });
+
+  it("closes without prompting when nothing is dirty", async () => {
+    const onClose = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm");
+    render(<Settings onClose={onClose} />);
+    await screen.findByText("Settings");
+    fireEvent.click(screen.getByText("✕ Close"));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 
   it("syncs the universe and reports the count", async () => {
@@ -246,7 +301,7 @@ describe("Settings", () => {
     expect(screen.getByText(/fredaccount.stlouisfed.org\/apikeys/)).toBeInTheDocument();
     const input = screen.getByLabelText("FRED-api-key");
     fireEvent.change(input, { target: { value: "mysecretkey" } });
-    fireEvent.click(screen.getByText("Save key"));
+    fireEvent.click(screen.getByLabelText("save-settings"));
     await waitFor(() => expect(saveCredential).toHaveBeenCalledOnce());
     const [provider, body] = saveCredential.mock.calls[0];
     expect(provider).toBe("FRED");

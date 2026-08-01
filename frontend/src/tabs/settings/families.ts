@@ -56,7 +56,7 @@ export const DB_FAMILIES: DbFamily[] = [
       {
         role: "MACRO",
         electronKey: "macroDb",
-        label: "Macro (rates/credit + economic)",
+        label: "Macro (rates, credit, economic)",
         defaultDatabase: "neptune_macro",
       },
     ],

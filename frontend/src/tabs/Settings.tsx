@@ -16,11 +16,11 @@ import {
 } from "../api/client";
 import { BetaDiagPanel } from "./settings/BetaDiagPanel";
 import { DataHealth } from "./settings/DataHealth";
-import { DbCard } from "./settings/DbCard";
+import { DbFamilyCard, divergesFrom, familyBase } from "./settings/DbFamilyCard";
 import { PortfoliosPanel } from "./settings/PortfoliosPanel";
 import { Card, CardTitle, Field, SectionLabel } from "./settings/primitives";
 import { ALL_MEMBERS, DB_FAMILIES, EMPTY_CONN } from "./settings/families";
-import type { DbConn, DbRole } from "./settings/families";
+import type { DbConn, DbFamily, DbRole } from "./settings/families";
 
 const PROVIDER_LABELS: Record<string, string> = {
   FRED: "FRED / ALFRED — macro data (rates, credit, economic; one key serves both)",
@@ -42,6 +42,20 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "ingest", label: "Data Ingest" },
   { id: "diagnostics", label: "Diagnostics" },
 ];
+
+/** Which members already point somewhere other than their family's server, per the stored
+ *  config. Seeds the override checkboxes so an existing split (CATO commonly runs on its own
+ *  instance) shows up as such instead of being silently flattened onto the shared fields. */
+function seedOwnServer(conns: Record<string, DbConn>): Set<string> {
+  const out = new Set<string>();
+  for (const family of DB_FAMILIES) {
+    const base = familyBase(family, conns);
+    for (const m of family.members.slice(1)) {
+      if (divergesFrom(base, conns[m.role])) out.add(m.role);
+    }
+  }
+  return out;
+}
 
 function rowToConn(row: ConnectionRow): DbConn {
   return {
@@ -99,8 +113,16 @@ export function Settings({
   const [conns, setConns] = useState<Record<string, DbConn>>({});
   /** Roles edited since their last save — the API path can't test unsaved values. */
   const [dirtyRoles, setDirtyRoles] = useState<Set<string>>(new Set());
+  /** Members broken out onto their own server. Seeded from the stored config's divergence,
+   *  then owned by the checkbox — deriving it from the values would make the box un-check
+   *  itself the moment it was ticked (a fresh override still matches the shared server). */
+  const [ownServer, setOwnServer] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedNote, setSavedNote] = useState("");
+  /** Price-refresh interval waiting to be saved (null = unchanged). */
+  const [pendingMins, setPendingMins] = useState<number | null>(null);
 
   const [ingestTicker, setIngestTicker] = useState("");
   const [diagTicker, setDiagTicker] = useState("");
@@ -126,8 +148,10 @@ export function Settings({
         // still fetched for their badges (from .env / bootstrap), but must not clobber them.
         if (isElectron) return;
         const next: Record<string, DbConn> = {};
-        for (const r of rs) next[r.role] = r.configured ? rowToConn(r) : { ...EMPTY_CONN };
+        for (const m of ALL_MEMBERS) next[m.role] = { ...EMPTY_CONN };
+        for (const r of rs) if (r.configured) next[r.role] = rowToConn(r);
         setConns(next);
+        setOwnServer(seedOwnServer(next));
         setDirtyRoles(new Set());
       })
       .catch((e) => {
@@ -174,76 +198,154 @@ export function Settings({
           };
         }
         setConns(next);
+        setOwnServer(seedOwnServer(next));
         setDirtyRoles(new Set());
       })
       .catch(() => {});
   }, [isElectron]);
 
-  function updateConn(role: DbRole, patch: Partial<DbConn>) {
+  function markDirty(roles: string[]) {
+    setDirtyRoles((prev) => {
+      const next = new Set(prev);
+      for (const r of roles) next.add(r);
+      return next;
+    });
+  }
+
+  /** Edits every member that follows the family server, leaving broken-out ones alone. */
+  function updateShared(family: DbFamily, patch: Partial<DbConn>) {
+    const followers = family.members.filter((m) => !ownServer.has(m.role)).map((m) => m.role);
+    setConns((prev) => {
+      const next = { ...prev };
+      for (const role of followers) next[role] = { ...(next[role] ?? EMPTY_CONN), ...patch };
+      return next;
+    });
+    markDirty(followers);
+  }
+
+  function updateMember(role: DbRole, patch: Partial<DbConn>) {
     setConns((prev) => ({ ...prev, [role]: { ...(prev[role] ?? EMPTY_CONN), ...patch } }));
-    setDirtyRoles((prev) => new Set(prev).add(role));
+    markDirty([role]);
   }
 
-  async function handleSaveKey(provider: string) {
-    setError(null);
-    try {
-      const st = await saveCredential(provider, { api_key: keyInputs[provider] ?? "" });
-      setKeyStatus((s) => ({ ...s, [provider]: st.has_key ? "Key saved" : "Key cleared" }));
-      setKeyInputs((s) => ({ ...s, [provider]: "" })); // never keep the secret in component state
-      loadCreds();
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
-  async function handleSave(role: DbRole) {
-    setError(null);
-    const f = conns[role];
-    if (!f) return;
-    if (isElectron) {
-      if (!electronCfg) return;
-      const member = ALL_MEMBERS.find((m) => m.role === role)!;
-      const newCfg = {
-        ...electronCfg,
-        [member.electronKey]: {
-          host: f.host,
-          port: Number(f.port),
-          database: f.database,
-          user: f.username,
-          password: f.password,
-        },
-      };
-      setStatus((s) => ({ ...s, [role]: "Saving…" }));
-      try {
-        await window.neptune!.saveConfig(newCfg);
-        setElectronCfg(newCfg);
-        setDirtyRoles((prev) => {
-          const next = new Set(prev);
-          next.delete(role);
-          return next;
-        });
-        setStatus((s) => ({ ...s, [role]: "Saved — backend restarting…" }));
-        setTimeout(() => setStatus((s) => ({ ...s, [role]: "" })), 5000);
-      } catch (e) {
-        setStatus((s) => ({ ...s, [role]: `Error: ${String(e)}` }));
-      }
-      return;
-    }
-    try {
-      await saveConnection(role, {
-        host: f.host,
-        port: Number(f.port),
-        database: f.database,
-        username: f.username,
-        // Blank password => null, so the stored secret is preserved ("" would clear it).
-        password: f.password ? f.password : null,
-        sslmode: f.sslmode || null,
+  function toggleOverride(family: DbFamily, role: DbRole, own: boolean) {
+    setOwnServer((prev) => {
+      const next = new Set(prev);
+      if (own) next.add(role);
+      else next.delete(role);
+      return next;
+    });
+    if (!own) {
+      // Rejoining the family: adopt its server, keeping this database's own name.
+      setConns((prev) => {
+        const base = familyBase(family, prev);
+        const mine = prev[role] ?? EMPTY_CONN;
+        return {
+          ...prev,
+          [role]: {
+            ...base,
+            database: mine.database,
+            password: "", // the shared password applies; don't carry the old one over
+          },
+        };
       });
-      setStatus((s) => ({ ...s, [role]: "Saved" }));
-      load();
-    } catch (e) {
-      setError(String(e));
     }
+    markDirty([role]);
+  }
+
+  const dirtyKeyProviders = Object.keys(keyInputs).filter((p) => keyInputs[p]?.trim());
+  const dirtyCount = dirtyRoles.size + dirtyKeyProviders.length + (pendingMins !== null ? 1 : 0);
+  const isDirty = dirtyCount > 0;
+
+  /** Persists everything edited on the page. Databases fan out across the roles that make up
+   *  each family; in Electron they go in one config write (one backend restart) rather than
+   *  one per database. Failures are reported per item — there is no bulk endpoint, so a
+   *  partial save is possible and is better surfaced than hidden. */
+  async function handleSaveAll() {
+    if (!isDirty || saving) return;
+    setSaving(true);
+    setError(null);
+    setSavedNote("");
+    const failures: string[] = [];
+
+    if (dirtyRoles.size > 0) {
+      if (isElectron && electronCfg) {
+        const newCfg: Record<string, unknown> = { ...electronCfg };
+        for (const m of ALL_MEMBERS) {
+          if (!dirtyRoles.has(m.role)) continue;
+          const c = conns[m.role];
+          if (!c) continue;
+          newCfg[m.electronKey] = {
+            host: c.host,
+            port: Number(c.port),
+            database: c.database,
+            user: c.username,
+            password: c.password,
+          };
+        }
+        try {
+          await window.neptune!.saveConfig(newCfg);
+          setElectronCfg(newCfg);
+        } catch (e) {
+          failures.push(`Databases: ${String(e)}`);
+        }
+      } else {
+        for (const m of ALL_MEMBERS) {
+          if (!dirtyRoles.has(m.role)) continue;
+          const c = conns[m.role];
+          if (!c) continue;
+          try {
+            await saveConnection(m.role, {
+              host: c.host,
+              port: Number(c.port),
+              database: c.database,
+              username: c.username,
+              // Blank => null so the stored secret survives; "" would clear it.
+              password: c.password ? c.password : null,
+              // sslmode is written unconditionally by the backend, so always resend it.
+              sslmode: c.sslmode || null,
+            });
+          } catch (e) {
+            failures.push(`${m.label}: ${String(e)}`);
+          }
+        }
+      }
+    }
+
+    for (const provider of dirtyKeyProviders) {
+      try {
+        const st = await saveCredential(provider, { api_key: keyInputs[provider] });
+        setKeyStatus((s) => ({ ...s, [provider]: st.has_key ? "Key saved" : "Key cleared" }));
+        setKeyInputs((s) => ({ ...s, [provider]: "" })); // never keep the secret around
+      } catch (e) {
+        failures.push(`${provider} key: ${String(e)}`);
+      }
+    }
+
+    if (pendingMins !== null) {
+      try {
+        await onChangeMins?.(pendingMins);
+        setPendingMins(null);
+      } catch (e) {
+        failures.push(`Price refresh: ${String(e)}`);
+      }
+    }
+
+    if (failures.length) {
+      setError(`Some settings didn't save — ${failures.join("; ")}`);
+    } else {
+      setSavedNote(isElectron && dirtyRoles.size > 0 ? "Saved — backend restarting…" : "Saved");
+      setTimeout(() => setSavedNote(""), 4000);
+    }
+    setDirtyRoles(new Set());
+    setSaving(false);
+    if (!isElectron) load();
+    loadCreds();
+  }
+
+  function handleClose() {
+    if (isDirty && !window.confirm("Discard unsaved settings changes?")) return;
+    onClose?.();
   }
 
   async function handleTest(role: DbRole) {
@@ -345,7 +447,14 @@ export function Settings({
     }
   }
 
-  const rowFor = (role: string) => rows.find((r) => r.role === role);
+  // Badge data for the family card. Only meaningful on the API path — in Electron the config
+  // file is the source of truth and holds no env/stored distinction.
+  const rowMeta: Record<string, { fromEnv?: boolean; hasPassword?: boolean }> = {};
+  if (!isElectron) {
+    for (const r of rows) {
+      rowMeta[r.role] = { fromEnv: r.source === "env", hasPassword: r.has_password };
+    }
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -355,9 +464,24 @@ export function Settings({
           Settings
         </h2>
         <div className="ml-auto flex items-center gap-2">
+          {savedNote && <span className="text-xs text-status-ok">✓ {savedNote}</span>}
+          <button
+            onClick={handleSaveAll}
+            disabled={!isDirty || saving}
+            aria-label="save-settings"
+            className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-40"
+          >
+            {saving
+              ? "Saving…"
+              : isElectron && dirtyRoles.size > 0
+                ? `Save & restart backend (${dirtyCount})`
+                : isDirty
+                  ? `Save (${dirtyCount})`
+                  : "Save"}
+          </button>
           {onClose && (
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="rounded px-3 py-1.5 text-sm text-ocean-muted transition hover:bg-white/10 hover:text-white"
             >
               ✕ Close
@@ -457,8 +581,8 @@ export function Settings({
                       </p>
                       <div className="flex flex-wrap items-center gap-3 text-sm">
                         <select
-                          value={String(refreshMins ?? 0)}
-                          onChange={(e) => onChangeMins?.(Number(e.target.value))}
+                          value={String(pendingMins ?? refreshMins ?? 0)}
+                          onChange={(e) => setPendingMins(Number(e.target.value))}
                           className="np-input w-auto"
                           aria-label="price-refresh-interval"
                         >
@@ -500,33 +624,24 @@ export function Settings({
                 </p>
 
                 {DB_FAMILIES.map((family) => (
-                  <div key={family.id} className="space-y-3">
-                    <SectionLabel>{family.label}</SectionLabel>
-                    <p className="text-xs text-ocean-muted">{family.blurb}</p>
-                    {family.members.map((m) => {
-                      const row = rowFor(m.role);
-                      return (
-                        <DbCard
-                          key={m.role}
-                          member={m}
-                          value={conns[m.role] ?? EMPTY_CONN}
-                          onChange={(patch) => updateConn(m.role, patch)}
-                          onSave={() => handleSave(m.role)}
-                          onTest={() => handleTest(m.role)}
-                          status={status[m.role]}
-                          saveLabel={isElectron ? "Save & restart backend" : "Save"}
-                          fromEnv={!isElectron && row?.source === "env"}
-                          hasStoredPassword={!isElectron && row?.has_password}
-                          showSslmode={!isElectron}
-                          testDisabledReason={
-                            !isElectron && dirtyRoles.has(m.role)
-                              ? "Save first — this tests the stored connection, not the edits above."
-                              : undefined
-                          }
-                        />
-                      );
-                    })}
-                  </div>
+                  <DbFamilyCard
+                    key={family.id}
+                    family={family}
+                    conns={conns}
+                    overrides={ownServer}
+                    onChangeShared={(patch) => updateShared(family, patch)}
+                    onChangeMember={updateMember}
+                    onToggleOverride={(role, own) => toggleOverride(family, role, own)}
+                    onTest={handleTest}
+                    status={status}
+                    rowMeta={rowMeta}
+                    showSslmode={!isElectron}
+                    testDisabledFor={(role) =>
+                      !isElectron && dirtyRoles.has(role)
+                        ? "Save first — this tests the stored connection, not the edits above."
+                        : undefined
+                    }
+                  />
                 ))}
               </>
             )}
@@ -574,14 +689,10 @@ export function Settings({
                             />
                           </Field>
                         </div>
-                        <button
-                          onClick={() => handleSaveKey(c.provider)}
-                          className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-ocean-accent/80"
-                        >
-                          Save key
-                        </button>
                         {keyStatus[c.provider] && (
-                          <span className="text-sm text-ocean-muted">{keyStatus[c.provider]}</span>
+                          <span className="pb-2 text-sm text-ocean-muted">
+                            {keyStatus[c.provider]}
+                          </span>
                         )}
                       </div>
                     ))}
