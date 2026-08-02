@@ -230,7 +230,23 @@ first vertical slice · 🔵 LATER = deferred.
       now serves the full `{MKT,SMB,HML,MOM}` panel aligned to the market (MKT-only until
       the panel is fully loaded); `POST /factors/ingest` + Settings "Backfill factors".
       `test_factor_ingest.py` (incl. engine recovering a 0.8 SMB loading from stored data).
-- [ ] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`
+- [x] Alembic migration histories per Neptune DB; guarded TimescaleDB hypertable on `prices`.
+      `db/timescale.py::timescaledb_available(bind)` mirrors `db/base.py`'s
+      `_ensure_enum_values` dialect-check pattern, but also probes `pg_extension` (not just
+      "is this Postgres") — SQLite and a plain Postgres without `CREATE EXTENSION
+      timescaledb` both take the same safe no-op branch, exactly matching the design already
+      documented in `securities/models.py`'s module docstring. The migration
+      (`alembic/securities/versions/0855f9b8f0f6_...py`) widens `prices`' solo `id` PK to
+      `(id, ts)` first (Timescale requires the partitioning column in every unique/PK
+      constraint; confirmed nothing FKs to `prices.id`, so this is safe) then calls
+      `create_hypertable`. No live Postgres+Timescale was reachable in this sandbox to run
+      it for real — validated via `db/timescale.py`'s guard unit-tested directly against the
+      real SQLite test engine plus a mocked Postgres bind, and an offline
+      `alembic -n securities upgrade head --sql` render (clean, no errors, correctly emits
+      no hypertable DDL against the sandbox's SQLite target). A maintainer with Postgres
+      access should spot-check `alembic -n securities upgrade head` once against a real
+      Postgres+Timescale instance before relying on it in production.
+      `tests/test_timescale_guard.py`.
 
 ## Phase 1 — Position Manager 🟢
 
@@ -290,7 +306,8 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 Live wiring: synthetic market data (`data/market.py`) → pipeline over the book
       (`risk/analytics.py`); forward override per position, Vasicek prior from the book
       cross-section; betas surfaced in `/positions` and `/risk` (`test_analytics.py`)
-- [ ] 🔵 yfinance ingestion, nightly Celery schedule, `beta_snapshots` hypertable
+- [ ] 🔵 Nightly Celery schedule, `beta_snapshots` hypertable (yfinance ingestion itself is
+      done — see `securities/ingest.py`/`securities/providers.py` in Phase 1).
 - [ ] 🔵 Kalman filter beta (Phase 3+)
 
 ## Phase 3 — Factor Decomposition 🟢
@@ -300,7 +317,10 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 Tests on synthetic factor-driven returns (`test_factors.py`)
 - [x] 🟢 Live wiring: per-position loadings from returns; net style-factor exposure
       (SMB/HML/MOM) surfaced in `/risk`; live universe loadings feed the optimizer
-- [ ] 🔵 Ken French Data Library ingestion; `factor_exposures` table
+- [x] Ken French Data Library ingestion; `factor_exposures` table — stale duplicate line:
+      ingestion is already done (Phase 0.5, `factor_returns` table + `KenFrenchProvider`,
+      checked off above), and `factor_exposures` is superseded by the already-built
+      `factor_loadings` table — no separate table is needed.
 
 ## Phase 4 — Hedge Optimizer 🟢
 
