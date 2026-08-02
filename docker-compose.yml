@@ -1,9 +1,14 @@
 # Neptune local dev stack. Postgres is the canonical database; the app connects via
-# DATABASE_URL. SQLite (in-memory) is used only for fast tests behind the same ORM.
+# PORTFOLIO_/SECURITIES_/MACRO_DATABASE_URL (each falling back to DATABASE_URL — see
+# src/neptune/config.py). SQLite (in-memory) is used only for fast tests behind the same ORM.
 #
 #   docker compose up -d
-#   export DATABASE_URL=postgresql+psycopg://neptune:neptune@localhost:5432/neptune
-#   alembic upgrade head    # (once migrations exist)
+#   export PORTFOLIO_DATABASE_URL=postgresql+psycopg://neptune:neptune@localhost:5432/neptune_portfolios
+#   export SECURITIES_DATABASE_URL=postgresql+psycopg://neptune:neptune@localhost:5432/neptune_securities
+#   export MACRO_DATABASE_URL=postgresql+psycopg://neptune:neptune@localhost:5432/neptune_macro
+#   alembic -n portfolio upgrade head
+#   alembic -n securities upgrade head
+#   alembic -n macro upgrade head
 
 services:
   db:
@@ -16,6 +21,10 @@ services:
       - "5432:5432"
     volumes:
       - neptune_pgdata:/var/lib/postgresql/data
+      # Runs once, automatically, only on a genuinely fresh data volume — creates the three
+      # databases the app's three-DB topology expects (POSTGRES_DB above is a fourth,
+      # unused-by-the-app database the image requires at boot; harmless to leave in place).
+      - ./scripts/docker-init-dbs.sql:/docker-entrypoint-initdb.d/init-neptune-dbs.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neptune"]
       interval: 5s
