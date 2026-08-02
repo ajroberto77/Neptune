@@ -34,6 +34,14 @@ const SECTOR_SOURCE_LABELS: Record<string, string> = {
   KENFRENCH_12: "Ken French 12-industry (via CATO)",
 };
 
+// Reserved in CATO's schema (entity_classifications.scheme) but not yet populated -- stubbed
+// pending a licensed GICS/BICS feed Iridium doesn't have yet. Listed disabled so PMs can see
+// they're planned without being able to select a source with no data behind it.
+const PENDING_SECTOR_SOURCES: { scheme: string; label: string }[] = [
+  { scheme: "GICS", label: "GICS (coming soon — pending licensed feed)" },
+  { scheme: "BICS", label: "BICS (coming soon — pending licensed feed)" },
+];
+
 type SectionId =
   | "general"
   | "databases"
@@ -653,7 +661,8 @@ export function Settings({
                     sector-concentration cap and the sector panels. YAHOO (Neptune's own
                     long-standing source) stays the default; SIC/Ken French 12-industry are
                     read-only imports from CATO's universe, available but never auto-switched
-                    to -- see docs/database_interactions.md. */}
+                    to -- see docs/database_interactions.md. GICS/BICS are listed disabled:
+                    CATO's schema reserves those scheme values but has no data behind them yet. */}
                 <SectionLabel>Sector classification</SectionLabel>
                 <Card>
                   <div className="mb-1">
@@ -676,6 +685,11 @@ export function Settings({
                       {sectorSource.available.map((scheme) => (
                         <option key={scheme} value={scheme}>
                           {SECTOR_SOURCE_LABELS[scheme] ?? scheme}
+                        </option>
+                      ))}
+                      {PENDING_SECTOR_SOURCES.map(({ scheme, label }) => (
+                        <option key={scheme} value={scheme} disabled>
+                          {label}
                         </option>
                       ))}
                     </select>

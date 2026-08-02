@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Settings } from "./Settings";
 import type { ConnectionRow } from "../types";
 
@@ -242,6 +242,15 @@ describe("Settings", () => {
 
     fireEvent.change(select, { target: { value: "KENFRENCH_12" } });
     await waitFor(() => expect((select as HTMLSelectElement).value).toBe("KENFRENCH_12"));
+  });
+
+  it("lists GICS/BICS as disabled options -- no CATO data behind them yet", async () => {
+    render(<Settings />);
+    const select = await screen.findByLabelText("sector-source");
+    const gics = within(select).getByText(/^GICS/) as HTMLOptionElement;
+    const bics = within(select).getByText(/^BICS/) as HTMLOptionElement;
+    expect(gics.disabled).toBe(true);
+    expect(bics.disabled).toBe(true);
   });
 
   it("warns before closing with unsaved changes", async () => {

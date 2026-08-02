@@ -164,6 +164,13 @@ first vertical slice · 🔵 LATER = deferred.
         construction is affected. CATO's new `entity_classification_history` table is the
         path that would make this fixable (join classification-as-of each return's date
         instead of today's), if it's ever worth revisiting.
+      - GICS/BICS listed in the Settings dropdown as **disabled** placeholders
+        (`PENDING_SECTOR_SOURCES` in `Settings.tsx`) — CATO's `entity_classifications`
+        schema reserves those scheme values but has no data behind them yet (`is_restricted
+        = TRUE`, "stubbed pending a licensed source Iridium doesn't have"). Deliberately
+        NOT added to the backend's `SECTOR_SOURCES`/`_CLASSIFICATION_SCHEMES` — selecting a
+        scheme with zero rows would silently leave every position unclassified. Add them to
+        both once CATO confirms real data is populated.
 - [x] Configurable DB connections + Settings page: `settings_store` (write-only password,
       URL builder, env fallback), `db_connections` table, `/settings/connections` CRUD +
       `/test` + `/settings/universe/sync` endpoints, and a React Settings tab (all three

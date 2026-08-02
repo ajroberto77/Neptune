@@ -20,6 +20,11 @@ _SECTOR_SOURCE_KEY = "sector_source"
 # Security.sector), with securities/ingest.py's own yfinance fetch as a fallback for names
 # CATO hasn't covered. SIC/KENFRENCH_12 are read-only imports from cato_securities'
 # entity_classifications (see neptune.universe), selectable but never auto-switched to.
+#
+# GICS/BICS are NOT in this tuple yet — cato_securities' entity_classifications schema
+# reserves those scheme values, but CATO hasn't populated them (stubbed pending a licensed
+# feed Iridium doesn't have). The Settings UI lists them as disabled placeholders; add them
+# here (and to neptune.universe.sql's _CLASSIFICATION_SCHEMES) once CATO confirms real data.
 SECTOR_SOURCES = ("YAHOO", "SIC", "KENFRENCH_12")
 DEFAULT_SECTOR_SOURCE = "YAHOO"
 
