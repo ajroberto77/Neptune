@@ -31,6 +31,7 @@ export interface PositionRow {
   side: "LONG" | "SHORT";
   short_type: string;
   book: string;
+  instrument: "CASH" | "SWAP";
   notional: number;
   quantity: number;
   price: number | null; // null when the name isn't priced yet
@@ -65,6 +66,7 @@ export interface TransactionInput {
   fee_per_share?: number; // transaction fee per share
   trade_date: string; // YYYY-MM-DD
   sector?: string | null;
+  instrument?: "CASH" | "SWAP"; // defaults to CASH server-side; pure metadata
 }
 
 export interface PortfolioPnL {

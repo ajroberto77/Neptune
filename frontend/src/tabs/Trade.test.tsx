@@ -86,4 +86,26 @@ describe("Trade grid", () => {
     await waitFor(() => expect(screen.getAllByLabelText("Ticker")).toHaveLength(1));
     expect((screen.getByLabelText("Ticker") as HTMLInputElement).value).toBe("bad");
   });
+
+  it("defaults the instrument to CASH and includes SWAP in the submitted payload when chosen", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <Trade
+        portfolios={PORTFOLIOS}
+        defaultPortfolioId="P-A"
+        onSubmit={onSubmit}
+        onAfterBatch={vi.fn().mockResolvedValue(undefined)}
+        busy={false}
+      />,
+    );
+    const row = screen.getByLabelText("Ticker").closest("tr")!;
+    expect((within(row).getByLabelText("Instrument") as HTMLSelectElement).value).toBe("CASH");
+
+    fillRow(row, { ticker: "aapl", qty: "10", price: "200" });
+    fireEvent.change(within(row).getByLabelText("Instrument"), { target: { value: "SWAP" } });
+    fireEvent.click(screen.getByText("Submit all"));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(onSubmit.mock.calls[0][1]).toMatchObject({ ticker: "AAPL", instrument: "SWAP" });
+  });
 });

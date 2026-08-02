@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from neptune.domain.models import Side, ShortType, TradeAction
+from neptune.domain.models import Instrument, Side, ShortType, TradeAction
 from neptune.positions.service import ConflictError, PositionService
 
 D = date(2026, 1, 2)
@@ -125,6 +125,66 @@ def test_close_scales_notional_to_zero(session):
     pos = svc.get_position(pid)
     assert pos.notional == pytest.approx(0.0)
     assert pos.quantity == 0
+
+
+# --- CASH/SWAP instrument tag (pure metadata) --------------------------------------
+
+def test_book_trade_defaults_to_cash(session):
+    svc = _service(session)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 100, 50.0, D)
+    pos = _only(svc, "AAPL")[0]
+    assert pos.instrument is Instrument.CASH
+
+
+def test_swap_position_round_trips_and_never_merges_with_cash(session):
+    # A CASH and a SWAP holding of the same ticker/side are genuinely separate positions --
+    # repeat trades of each aggregate into their own, never into the other's.
+    svc = _service(session)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 100, 50.0, D, instrument=Instrument.CASH)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 40, 55.0, D, instrument=Instrument.SWAP)
+    svc.book_trade("BOOK", "AAPL", TradeAction.BUY, 10, 60.0, D, instrument=Instrument.SWAP)
+
+    positions = {p.instrument: p for p in _only(svc, "AAPL")}
+    assert set(positions) == {Instrument.CASH, Instrument.SWAP}
+    assert positions[Instrument.CASH].quantity == 100
+    assert positions[Instrument.SWAP].quantity == 50  # 40 + 10, aggregated into one SWAP lot set
+
+
+def test_swap_tag_never_affects_beta_or_net_exposure(session):
+    """The one CLAUDE.md-adjacent check for this feature: instrument is pure metadata and
+    must not leak into beta or net-exposure math. A CASH-tagged and a SWAP-tagged position,
+    identical in every other respect, must compute IDENTICAL beta and net beta-adjusted
+    exposure -- proven, not just assumed."""
+    from neptune.data.market import SyntheticMarketData
+    from neptune.risk import analytics
+
+    md = SyntheticMarketData()
+
+    svc_cash = _service(session)
+    svc_cash.book_trade("BOOK", "AAPL", TradeAction.BUY, 100, 50.0, D, instrument=Instrument.CASH)
+    cash_book = svc_cash.get_portfolio("BOOK")
+    cash_metrics = analytics.compute_metrics(cash_book, md)
+
+    session2 = session  # same in-memory DB fixture; use a second portfolio for isolation
+    svc_swap = PositionService(session2)
+    svc_swap.create_portfolio("BOOK2", "Swap Book")
+    svc_swap.book_trade("BOOK2", "AAPL", TradeAction.BUY, 100, 50.0, D, instrument=Instrument.SWAP)
+    swap_book = svc_swap.get_portfolio("BOOK2")
+    swap_metrics = analytics.compute_metrics(swap_book, md)
+
+    cash_pos = cash_book.positions[0]
+    swap_pos = swap_book.positions[0]
+    assert swap_pos.instrument is Instrument.SWAP  # sanity: the tag actually differs
+    assert cash_metrics[cash_pos.ticker].beta == pytest.approx(swap_metrics[swap_pos.ticker].beta)
+    assert cash_metrics[cash_pos.ticker].beta_method == swap_metrics[swap_pos.ticker].beta_method
+
+    net_beta_cash = sum(
+        p.signed_notional * cash_metrics[p.ticker].beta for p in cash_book.positions
+    )
+    net_beta_swap = sum(
+        p.signed_notional * swap_metrics[p.ticker].beta for p in swap_book.positions
+    )
+    assert net_beta_cash == pytest.approx(net_beta_swap)
 
 
 def test_transaction_endpoint_records_and_lists():

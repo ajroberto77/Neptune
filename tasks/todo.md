@@ -361,9 +361,25 @@ first vertical slice · 🔵 LATER = deferred.
       hidden. Day P&L = Unrealized for same-day trades (pass `as_of`); realized P&L survives a
       full close. "unrealized"/"realized" spelling at the API + UI. (`test_trade.py`,
       `test_analytics.py`, `Portfolio.test.tsx`, `Trade.test.tsx`.)
-- [ ] **Phase 2: Cash vs Swap instrument + swap financing.** Add an `instrument` field
-      (needs a schema migration — no Alembic yet) and model swap funding/borrow accrual in the
-      P&L engine. Deferred from Phase 1 to avoid breaking existing DBs.
+- [x] **Phase 2a: Cash vs Swap instrument tag (metadata only).** `Instrument` enum
+      (CASH default / SWAP) on `Position`/`PositionORM`, `native_enum=False` (matches
+      `TransactionORM`'s convention, not this table's other native-enum columns — a real
+      Postgres schema migration now exists for it, `alembic/portfolio/versions/
+      0161b14dbf59_add_instrument_to_positions.py`, the first real incremental migration
+      since the Alembic baselines). Threaded through `record_trade`/`book_trade`/
+      `find_position_id` (part of the position-identity key, so a CASH and a SWAP holding
+      of the same name/side never silently merge); systematic hedge-leg booking
+      (`apply_systematic_hedge`/`apply_hedge_legs`) stays hardcoded CASH — a hedge leg is
+      never a swap. Trade ticket gets a CASH/SWAP selector (disabled on systematic rows);
+      Portfolio table tags SWAP positions inline (CASH shows nothing, no clutter).
+      `test_trade.py` (default-CASH backward compat, CASH/SWAP never merge, and a beta-
+      equivalence proof: a CASH- and SWAP-tagged position with identical inputs compute
+      IDENTICAL beta and net beta-adjusted exposure), `Trade.test.tsx`.
+- [ ] **Phase 2b: Swap financing accrual — NOT built, needs a spec first.** Modeling swap
+      funding/borrow accrual in the P&L engine requires a rate source, spread, reset
+      frequency, day-count convention, and payer/receiver direction — none of which are
+      specified anywhere in the repo. Deliberately not guessed at; raise with the desk/PM
+      before attempting.
 
 ## Factor program (PM, 2026-06) — see the factor-research brief
 

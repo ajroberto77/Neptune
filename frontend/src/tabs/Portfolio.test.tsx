@@ -10,6 +10,7 @@ function pos(over: Partial<PositionRow>): PositionRow {
     side: "LONG",
     short_type: "NA",
     book: "LONG",
+    instrument: "CASH",
     notional: 1_000_000,
     quantity: 1000,
     price: 204.13,

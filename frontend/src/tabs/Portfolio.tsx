@@ -131,6 +131,13 @@ function betaFlag(p: PositionRow) {
   return null;
 }
 
+// SWAP-held positions get a small tag; the common CASH case shows nothing (no clutter).
+function instrumentFlag(p: PositionRow) {
+  if (p.instrument === "SWAP")
+    return <span className="ml-2 text-[10px] uppercase text-ocean-accent">swap</span>;
+  return null;
+}
+
 /** One position row, shared by Longs and both Shorts subgroups so every table lines up. */
 function PositionTr({ p }: { p: PositionRow }) {
   return (
@@ -138,6 +145,7 @@ function PositionTr({ p }: { p: PositionRow }) {
       <td className="truncate py-2 font-mono">
         {p.ticker}
         {betaFlag(p)}
+        {instrumentFlag(p)}
       </td>
       <td className="py-2 text-right font-mono">{p.price == null ? "—" : price(p.price)}</td>
       <td className="py-2 text-right font-mono">

@@ -8,6 +8,11 @@ const ACTIONS: { value: TradeAction; label: string }[] = [
   { value: "SELL", label: "Sell" },
 ];
 
+const INSTRUMENTS: { value: "CASH" | "SWAP"; label: string }[] = [
+  { value: "CASH", label: "Cash" },
+  { value: "SWAP", label: "Swap" },
+];
+
 const today = () => new Date().toISOString().slice(0, 10);
 
 interface Row {
@@ -18,6 +23,7 @@ interface Row {
   quantity: number;
   price: number;
   fees: number;
+  instrument: "CASH" | "SWAP";
   trade_date: string;
   systematic?: boolean; // a row inserted from an approved hedge — books as a systematic short
   error?: string;
@@ -72,6 +78,7 @@ export function Trade({
     quantity: 0,
     price: 0,
     fees: 0,
+    instrument: "CASH",
     trade_date: today(),
   });
 
@@ -94,6 +101,7 @@ export function Trade({
       quantity: s.shares,
       price: s.price,
       fees: 0,
+      instrument: "CASH", // systematic hedge legs are always CASH — never a swap
       trade_date: today(),
       systematic: true,
     }));
@@ -177,6 +185,7 @@ export function Trade({
           price: r.price,
           fee_per_share: r.fees,
           trade_date: r.trade_date,
+          instrument: r.instrument,
         }, false);
         ok += 1;
       } catch (e) {
@@ -252,6 +261,7 @@ export function Trade({
             <th className="pb-2 font-medium">Quantity</th>
             <th className="pb-2 font-medium">Avg Price</th>
             <th className="pb-2 font-medium">Txn Fee/sh</th>
+            <th className="pb-2 font-medium">Instrument</th>
             <th className="pb-2 text-right font-medium">Total Cost</th>
             <th className="pb-2 font-medium">Trade Date</th>
             <th className="pb-2 font-medium">Portfolio</th>
@@ -322,6 +332,21 @@ export function Trade({
                   value={r.fees || ""}
                   onChange={(e) => update(r.key, { fees: Number(e.target.value) })}
                 />
+              </td>
+              <td className="py-2 pr-2">
+                <select
+                  className="np-input py-1"
+                  aria-label="Instrument"
+                  value={r.instrument}
+                  disabled={r.systematic}
+                  onChange={(e) => update(r.key, { instrument: e.target.value as "CASH" | "SWAP" })}
+                >
+                  {INSTRUMENTS.map((i) => (
+                    <option key={i.value} value={i.value}>
+                      {i.label}
+                    </option>
+                  ))}
+                </select>
               </td>
               <td className="py-2 pr-2 text-right font-mono" aria-label="Total Cost">
                 {money(totalCost(r))}
