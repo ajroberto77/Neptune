@@ -57,6 +57,18 @@ class BookType(str, Enum):
     DISCRETIONARY_SHORT = "DISCRETIONARY_SHORT"
 
 
+class Instrument(str, Enum):
+    """How a position is held. CASH is a normal cash-market holding (the default, and the
+    only kind Neptune trades today). SWAP tags a position held via a total-return swap
+    instead — a pure metadata distinction; it does NOT change notional, beta, or P&L math
+    (a TRS's market exposure equals its underlying's). Swap financing accrual (rate, spread,
+    reset frequency, day-count, payer/receiver) is NOT modeled — no specification exists for
+    it yet; this tag is deliberately metadata-only until one does."""
+
+    CASH = "CASH"
+    SWAP = "SWAP"
+
+
 class Mandate(str, Enum):
     """A portfolio's shorting mandate. LONG_SHORT books carry a hedge and must hold to the
     net-beta constraint; LONG_ONLY books may NOT short at all (no systematic hedge, no
@@ -99,6 +111,7 @@ class Position:
     side: Side
     notional: float
     short_type: ShortType = ShortType.NA
+    instrument: Instrument = Instrument.CASH
     forward_beta: float | None = None
     sector: str | None = None
     cost_basis_method: CostBasisMethod | None = None

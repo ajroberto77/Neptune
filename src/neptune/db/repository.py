@@ -15,6 +15,7 @@ from neptune.db.models import (
     TransactionORM,
 )
 from neptune.domain.models import (
+    Instrument,
     LotEntry,
     Mandate,
     Portfolio,
@@ -33,6 +34,7 @@ def _to_domain_position(row: PositionORM) -> Position:
         side=row.side,
         notional=row.notional,
         short_type=row.short_type,
+        instrument=getattr(row, "instrument", None) or Instrument.CASH,
         forward_beta=row.forward_beta,
         sector=row.sector,
         cost_basis_method=row.cost_basis_method,
@@ -100,6 +102,7 @@ class PositionRepository:
             side=position.side,
             notional=position.notional,
             short_type=position.short_type,
+            instrument=position.instrument,
             forward_beta=position.forward_beta,
             sector=position.sector,
             pm_id=position.pm_id,
@@ -129,16 +132,24 @@ class PositionRepository:
         return [_to_domain_position(r) for r in rows]
 
     def find_position_id(
-        self, portfolio_id: str, ticker: str, side: Side, short_type: ShortType
+        self,
+        portfolio_id: str,
+        ticker: str,
+        side: Side,
+        short_type: ShortType,
+        instrument: Instrument = Instrument.CASH,
     ) -> int | None:
-        """The id of the open position for a (ticker, side, short_type) in a portfolio, or
-        None. Used to aggregate repeat trades of the same name+book into one position."""
+        """The id of the open position for a (ticker, side, short_type, instrument) in a
+        portfolio, or None. Used to aggregate repeat trades of the same name+book into one
+        position. ``instrument`` is part of the identity key so a CASH and a SWAP holding of
+        the same name/side never silently merge into one position."""
         row = self.session.scalars(
             select(PositionORM).where(
                 PositionORM.portfolio_id == portfolio_id,
                 PositionORM.ticker == ticker,
                 PositionORM.side == side,
                 PositionORM.short_type == short_type,
+                PositionORM.instrument == instrument,
             )
         ).first()
         return row.id if row else None

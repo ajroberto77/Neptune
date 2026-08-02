@@ -26,7 +26,7 @@ from neptune.db.base import Base
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod
 from neptune.settings_store import ConnectionRole
-from neptune.domain.models import Side, ShortType, TradeAction, TradeOrigin
+from neptune.domain.models import Instrument, Side, ShortType, TradeAction, TradeOrigin
 
 
 class ManagementFirmORM(Base):
@@ -137,6 +137,13 @@ class PositionORM(Base):
     side: Mapped[Side] = mapped_column(SAEnum(Side), nullable=False)
     notional: Mapped[float] = mapped_column(Float, nullable=False)
     short_type: Mapped[ShortType] = mapped_column(SAEnum(ShortType), default=ShortType.NA)
+    # native_enum=False (unlike side/short_type above, native Postgres enums): a deliberate
+    # deviation from this table's other enum columns, matching TransactionORM's convention
+    # instead — adding a future value (e.g. a third instrument kind) never needs a Postgres
+    # ALTER TYPE migration. See docs/database_interactions.md.
+    instrument: Mapped[Instrument] = mapped_column(
+        SAEnum(Instrument, native_enum=False), nullable=False, default=Instrument.CASH
+    )
     forward_beta: Mapped[float | None] = mapped_column(Float, nullable=True)
     sector: Mapped[str | None] = mapped_column(String, nullable=True)
     # Per-name coverage — firm staff assigned to this name (optional; PM falls back to the
