@@ -33,7 +33,7 @@ from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.data.db_market import DbMarketData, TickerNotFound
 from neptune.scheduling import scheduler as price_scheduler
 from neptune.scheduling.scheduler import shutdown_scheduler, start_scheduler
-from neptune.settings_store.app_settings import AppSettingsService
+from neptune.settings_store.app_settings import AppSettingsService, SECTOR_SOURCES
 from neptune.db.base import (
     SessionLocal,
     init_db,
@@ -111,8 +111,11 @@ def market_data_for(session: Session, portfolio):
     the offline test harness). The securities session is held open because reads are lazy."""
     sec_cm = securities_session(session)
     sec = sec_cm.__enter__()
+    sector_source = AppSettingsService(session).get_sector_source()
     try:
-        md = DbMarketData(sec, benchmark=settings.benchmark)  # raises iff benchmark unpriced
+        md = DbMarketData(  # raises iff benchmark unpriced
+            sec, benchmark=settings.benchmark, sector_source=sector_source
+        )
     except TickerNotFound:
         sec_cm.__exit__(None, None, None)
         yield MARKET_DATA  # no real benchmark → synthetic (fresh DB / tests only)
@@ -1587,6 +1590,31 @@ def set_price_refresh(body: PriceRefreshIn, session: Session = Depends(get_sessi
     return {"minutes": minutes}
 
 
+class SectorSourceIn(BaseModel):
+    scheme: str
+
+
+@app.get("/settings/sector-source")
+def get_sector_source(session: Session = Depends(get_session)):
+    """Which classification scheme currently drives the sector-concentration cap (default
+    YAHOO), plus every scheme available to choose from."""
+    return {
+        "scheme": AppSettingsService(session).get_sector_source(),
+        "available": list(SECTOR_SOURCES),
+    }
+
+
+@app.put("/settings/sector-source")
+def set_sector_source(body: SectorSourceIn, session: Session = Depends(get_session)):
+    """Persist which scheme drives the sector cap. Takes effect on the next risk/hedge
+    computation — nothing to restart."""
+    try:
+        scheme = AppSettingsService(session).set_sector_source(body.scheme)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"scheme": scheme}
+
+
 @app.get("/settings/connections")
 def list_connections(session: Session = Depends(get_session)):
     """All configured DB connections, password-masked. Each role reflects the EFFECTIVE
@@ -1790,7 +1818,10 @@ def ingest_prices(
                 # universe (not just the freshly ingested names); after betas so BAB has them.
                 from neptune.risk.factor_build import build_neptune_factors
 
-                build_neptune_factors(sec_session, benchmark=settings.benchmark)
+                build_neptune_factors(
+                    sec_session, benchmark=settings.benchmark,
+                    sector_source=AppSettingsService(session).get_sector_source(),
+                )
         except Exception:  # noqa: BLE001 — never fail an ingest because a sweep hiccuped
             betas_written = 0
     return {

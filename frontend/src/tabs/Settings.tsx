@@ -6,11 +6,13 @@ import {
   fetchConnections,
   fetchCredentials,
   fetchMacroCatalog,
+  getSectorSource,
   ingestFactors,
   ingestMacro,
   ingestPrices,
   saveConnection,
   saveCredential,
+  setSectorSource,
   syncUniverse,
   testConnection,
 } from "../api/client";
@@ -24,6 +26,12 @@ import type { DbConn, DbFamily, DbRole } from "./settings/families";
 
 const PROVIDER_LABELS: Record<string, string> = {
   FRED: "FRED / ALFRED — macro data (rates, credit, economic; one key serves both)",
+};
+
+const SECTOR_SOURCE_LABELS: Record<string, string> = {
+  YAHOO: "Yahoo Finance (default)",
+  SIC: "SIC code (SEC EDGAR, via CATO)",
+  KENFRENCH_12: "Ken French 12-industry (via CATO)",
 };
 
 type SectionId =
@@ -134,6 +142,28 @@ export function Settings({
   const [keyStatus, setKeyStatus] = useState<Record<string, string>>({});
   const [catalog, setCatalog] = useState<MacroCatalogRow[]>([]);
 
+  // Which classification scheme drives the sector-concentration cap (default YAHOO).
+  // Plain REST, unlike DB connections -- no Electron/browser split, no staging behind Save.
+  const [sectorSource, setSectorSourceLocal] = useState<{ scheme: string; available: string[] }>({
+    scheme: "YAHOO", available: ["YAHOO"],
+  });
+  const [sectorSourceSaving, setSectorSourceSaving] = useState(false);
+
+  function loadSectorSource() {
+    getSectorSource().then(setSectorSourceLocal).catch(() => {});
+  }
+
+  async function handleSectorSourceChange(scheme: string) {
+    setSectorSourceSaving(true);
+    try {
+      const res = await setSectorSource(scheme);
+      setSectorSourceLocal((s) => ({ ...s, scheme: res.scheme }));
+    } catch (e) {
+      setError(String(e));
+    }
+    setSectorSourceSaving(false);
+  }
+
   // Electron IPC-based DB config: reads/writes the local neptune-config.json in Electron's
   // userData directory, which determines which Postgres the backend sidecar connects to.
   // This path works even when the backend is completely offline (no chicken-and-egg problem).
@@ -177,6 +207,7 @@ export function Settings({
     load();
     loadCreds();
     loadCatalog();
+    loadSectorSource();
   }, []);
 
   useEffect(() => {
@@ -617,6 +648,42 @@ export function Settings({
                     </Card>
                   </>
                 )}
+
+                {/* Which classification scheme groups names for the hedge optimizer's hard
+                    sector-concentration cap and the sector panels. YAHOO (Neptune's own
+                    long-standing source) stays the default; SIC/Ken French 12-industry are
+                    read-only imports from CATO's universe, available but never auto-switched
+                    to -- see docs/database_interactions.md. */}
+                <SectionLabel>Sector classification</SectionLabel>
+                <Card>
+                  <div className="mb-1">
+                    <CardTitle>Sector source</CardTitle>
+                  </div>
+                  <p className="mb-3 text-xs text-ocean-muted">
+                    Which classification drives the hedge optimizer&apos;s sector-concentration
+                    cap and the sector panels. Yahoo Finance is Neptune&apos;s own long-standing
+                    source; SIC and Ken French 12-industry are read-only imports from CATO&apos;s
+                    securities master, synced by Backfill/Universe sync.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <select
+                      value={sectorSource.scheme}
+                      onChange={(e) => handleSectorSourceChange(e.target.value)}
+                      disabled={sectorSourceSaving}
+                      className="np-input w-auto"
+                      aria-label="sector-source"
+                    >
+                      {sectorSource.available.map((scheme) => (
+                        <option key={scheme} value={scheme}>
+                          {SECTOR_SOURCE_LABELS[scheme] ?? scheme}
+                        </option>
+                      ))}
+                    </select>
+                    {sectorSourceSaving && (
+                      <span className="text-xs text-ocean-muted">Saving…</span>
+                    )}
+                  </div>
+                </Card>
               </>
             )}
 

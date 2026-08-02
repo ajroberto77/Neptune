@@ -113,6 +113,33 @@ first vertical slice · 🔵 LATER = deferred.
       `SqlUniverse` (text() SELECTs against cato_securities, keyed on `instrument_id`),
       `RecordedUniverse` (offline fixtures), and `sync_universe_projection` upserting the
       identity slice into `securities` (`test_universe.py`)
+- [x] **CATO issuer classification (SIC / Ken French 12-industry), read-only.** CATO added
+      `entity_classifications` (SIC + a derived Ken French 12-industry bucket, joined via
+      `legal_entities.entity_cik`) to `cato_securities`. Extended the universe channel to
+      pull it, but did NOT swap Neptune's default sector source — YAHOO (the existing
+      `Security.sector`, from `securities/providers.py`'s yfinance fetch) stays the default
+      and is byte-for-byte unchanged; SIC/KENFRENCH_12 are new, selectable alternatives.
+      - New `Security.entity_cik` column + `security_classifications` table
+        (`(instrument_id, scheme, level)`, mirroring CATO's own shape) in `neptune_securities`.
+      - `SqlUniverse` extended: `entity_cik` via a LEFT JOIN to `legal_entities`, plus a new
+        `classifications(ciks)` method (batched `IN` query, SIC + KENFRENCH_12 only — CATO's
+        own YAHOO fallback tier is skipped since Neptune already sources that directly).
+        `sync_universe_projection` writes both. `RecordedUniverse` extended to match.
+      - New `sector_source` app setting (`YAHOO`/`SIC`/`KENFRENCH_12`, default `YAHOO`),
+        `GET/PUT /settings/sector-source`, and a Settings dropdown (General section) —
+        applies live, no restart, no Save-button staging.
+      - `DbMarketData.sector()` resolves through whichever scheme is active; the caller
+        (`market_data_for` in `api/main.py`, plus `build_neptune_factors`'s ingest-time
+        SECTOR_* factor construction) resolves the app setting and passes it in — `DbMarketData`
+        itself has no portfolio-DB session to look it up with.
+      - The Ken French 12-industry SIC-range table CATO derived was independently verified
+        against two separate public reimplementations of Ken French's own definitions before
+        being trusted here (zero overlaps, correct on real spot-checks) — CATO's own handoff
+        doc had flagged it as not yet diffed against the live source.
+      - `test_universe.py` (CIK + classification sync, idempotency), `test_sector_source.py`
+        (setting persistence/validation, endpoints, `DbMarketData.sector()` per scheme),
+        `Settings.test.tsx`. Verified live against a real Postgres DB shaped like
+        `cato_securities` (LEFT JOIN + `IN`-list bindparams), not just unit tests.
 - [x] Configurable DB connections + Settings page: `settings_store` (write-only password,
       URL builder, env fallback), `db_connections` table, `/settings/connections` CRUD +
       `/test` + `/settings/universe/sync` endpoints, and a React Settings tab (all three

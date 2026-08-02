@@ -113,6 +113,8 @@ vi.mock("../api/client", () => ({
       ],
       total: 1,
     }),
+  getSectorSource: () => Promise.resolve({ scheme: "YAHOO", available: ["YAHOO", "SIC", "KENFRENCH_12"] }),
+  setSectorSource: (scheme: string) => Promise.resolve({ scheme }),
 }));
 
 /** Settings is sidebar-navigated: only the active section is mounted, so a test has to click
@@ -231,6 +233,15 @@ describe("Settings", () => {
       target: { value: "cato-prod.internal" },
     });
     expect(screen.getByLabelText("universe-test")).toBeDisabled();
+  });
+
+  it("loads the sector source and saves a change immediately (no Save button needed)", async () => {
+    render(<Settings />);
+    const select = await screen.findByLabelText("sector-source");
+    expect((select as HTMLSelectElement).value).toBe("YAHOO");
+
+    fireEvent.change(select, { target: { value: "KENFRENCH_12" } });
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe("KENFRENCH_12"));
   });
 
   it("warns before closing with unsaved changes", async () => {

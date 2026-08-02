@@ -36,6 +36,24 @@ class UniverseSecurity:
     composite_figi: str | None = None
     primary_exch_code: str | None = None
     is_investable: bool = True
+    # legal_entities.entity_cik (10-digit, zero-padded) — the join key into
+    # entity_classifications. None if the instrument's issuer hasn't been enriched upstream.
+    entity_cik: str | None = None
+
+
+@dataclass(frozen=True)
+class ClassificationRecord:
+    """One issuer-classification value from ``cato_securities.entity_classifications``,
+    keyed by CIK (not instrument_id — classification is per-issuer, an instrument's own
+    identity is resolved back to it by the caller). Mirrors CATO's own ``(scheme, level)``
+    shape: multiple records per CIK are expected and normal (e.g. one for SIC, one for
+    KENFRENCH_12)."""
+
+    entity_cik: str
+    scheme: str
+    level: str
+    code: str | None
+    description: str | None
 
 
 class UniverseSource(Protocol):
@@ -49,6 +67,12 @@ class UniverseSource(Protocol):
         """All instruments Neptune may trade/short (the optimizer's candidate set)."""
         ...
 
+    def classifications(self, ciks: list[str]) -> list[ClassificationRecord]:
+        """Issuer classifications (SIC, Ken French 12-industry) for the given CIKs. Only
+        ever called with CIKs already resolved from this same source's own
+        ``investable_universe()``/``resolve_ticker()`` results."""
+        ...
+
 
 from neptune.universe.recorded import RecordedUniverse  # noqa: E402
 from neptune.universe.sql import SqlUniverse  # noqa: E402
@@ -56,6 +80,7 @@ from neptune.universe.sync import sync_universe_projection  # noqa: E402
 
 __all__ = [
     "UniverseSecurity",
+    "ClassificationRecord",
     "UniverseSource",
     "RecordedUniverse",
     "SqlUniverse",

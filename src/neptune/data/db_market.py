@@ -28,7 +28,12 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from neptune.securities.models import FactorReturn, Price, Security
+from neptune.securities.models import FactorReturn, Price, Security, SecurityClassification
+
+# Which SecurityClassification (scheme, level) a non-YAHOO sector_source resolves to.
+# Matches cato_securities' own entity_classifications convention (see the CATO handoff doc):
+# SIC codes are stored at level='code', the Ken French 12-industry bucket at level='group'.
+_CLASSIFICATION_LEVEL = {"SIC": "code", "KENFRENCH_12": "group"}
 
 # The style factors Neptune sources from Ken French (MKT comes from the SPY benchmark).
 # ALL must be present for the panel to be considered loaded — a partial factor model is worse
@@ -63,11 +68,18 @@ class DbMarketData:
         lookback: int | None = None,
         source: str | None = None,
         promoted_factors: tuple[str, ...] | None = None,
+        sector_source: str = "YAHOO",
     ):
         self.session = session
         self.benchmark = benchmark
         self.lookback = lookback
         self.source = source
+        # Which classification scheme .sector() resolves through — YAHOO (default) reads
+        # Security.sector exactly as always; SIC/KENFRENCH_12 read the cato_securities-derived
+        # security_classifications table instead. The caller resolves the active choice (a
+        # per-portfolio-DB app setting) and passes it in — this class has no portfolio-DB
+        # session of its own to look it up.
+        self.sector_source = sector_source
         # Monitor factors PROMOTED into the neutralized model (default from settings). When
         # non-empty, factor_returns() includes them so the loadings regression + optimizer pick
         # them up; empty → the optimizer's factor set is exactly FF5+MOM (no behavior change).
@@ -321,9 +333,22 @@ class DbMarketData:
         return sorted(t for (t,) in rows)
 
     def sector(self, ticker: str) -> str | None:
-        """The Security's stored sector (None until enriched), for the sector cap."""
+        """The ticker's sector per the active classification source, for the sector cap and
+        the SECTOR_* factors — None until enriched (never a hard error; an unknown sector
+        just leaves that name uncapped, see optimizer.py)."""
+        if self.sector_source == "YAHOO":
+            return self.session.scalar(
+                select(Security.sector).where(Security.ticker == ticker)
+            )
+        level = _CLASSIFICATION_LEVEL[self.sector_source]
         return self.session.scalar(
-            select(Security.sector).where(Security.ticker == ticker)
+            select(SecurityClassification.code)
+            .join(Security, Security.instrument_id == SecurityClassification.instrument_id)
+            .where(
+                Security.ticker == ticker,
+                SecurityClassification.scheme == self.sector_source,
+                SecurityClassification.level == level,
+            )
         )
 
     def average_dollar_volume(self, ticker: str, window: int = 63) -> float | None:

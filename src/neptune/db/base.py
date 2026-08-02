@@ -144,7 +144,7 @@ def init_securities_db(target_engine=securities_engine) -> None:
     SecuritiesBase.metadata.create_all(bind=target_engine)
     # No Alembic yet: `create_all` won't add columns to an EXISTING table. Bridge that for
     # additive columns so a deployed securities DB picks up new fields without a manual migration.
-    _ensure_columns(target_engine, "securities", {"sector": "VARCHAR"})
+    _ensure_columns(target_engine, "securities", {"sector": "VARCHAR", "entity_cik": "VARCHAR"})
 
 
 def init_macro_db(target_engine=macro_engine) -> None:

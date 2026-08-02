@@ -12,20 +12,28 @@ revisit when the universe gains an explicit flag.
 """
 from __future__ import annotations
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
-from neptune.universe import UniverseSecurity
+from neptune.universe import ClassificationRecord, UniverseSecurity
 
-# Selecting the identity slice we project. Joins are intentionally avoided (single table)
-# so this stays cheap; name/exchange come straight off ``instruments``.
+# Selecting the identity slice we project. One LEFT JOIN to legal_entities for entity_cik
+# (a single scalar per instrument, cheap); everything else stays a single-table SELECT off
+# ``instruments`` as before.
 _SELECT_COLS = """
-    instrument_id, ticker, security_name, security_type,
-    cusip, isin, composite_figi, primary_exch_code
+    i.instrument_id, i.ticker, i.security_name, i.security_type,
+    i.cusip, i.isin, i.composite_figi, i.primary_exch_code, le.entity_cik
 """
+_FROM_INSTRUMENTS = "FROM instruments i LEFT JOIN legal_entities le ON le.entity_id = i.entity_id"
 
 # "Investable" predicate — see module docstring. Common stock with a ticker.
-_INVESTABLE_PREDICATE = "ticker IS NOT NULL AND security_type = 'Common Stock'"
+_INVESTABLE_PREDICATE = "i.ticker IS NOT NULL AND i.security_type = 'Common Stock'"
+
+# Only classification schemes Neptune actually surfaces as selectable sector sources
+# (see settings_store's sector_source setting). CATO's own YAHOO fallback tier is skipped —
+# Neptune already sources Yahoo sector data directly (securities/providers.py), so pulling
+# CATO's copy of the same thing would just be a second, redundant path to the same value.
+_CLASSIFICATION_SCHEMES = ("SIC", "KENFRENCH_12")
 
 
 def _row_to_security(row, *, is_investable: bool) -> UniverseSecurity:
@@ -40,6 +48,7 @@ def _row_to_security(row, *, is_investable: bool) -> UniverseSecurity:
         composite_figi=m["composite_figi"],
         primary_exch_code=m["primary_exch_code"],
         is_investable=is_investable,
+        entity_cik=m["entity_cik"],
     )
 
 
@@ -51,7 +60,7 @@ class SqlUniverse:
 
     def resolve_ticker(self, ticker: str) -> UniverseSecurity | None:
         sql = text(
-            f"SELECT {_SELECT_COLS} FROM instruments WHERE ticker = :t LIMIT 1"
+            f"SELECT {_SELECT_COLS} {_FROM_INSTRUMENTS} WHERE i.ticker = :t LIMIT 1"
         )
         with self.engine.connect() as conn:
             row = conn.execute(sql, {"t": ticker}).fetchone()
@@ -66,8 +75,33 @@ class SqlUniverse:
 
     def investable_universe(self) -> list[UniverseSecurity]:
         sql = text(
-            f"SELECT {_SELECT_COLS} FROM instruments WHERE {_INVESTABLE_PREDICATE}"
+            f"SELECT {_SELECT_COLS} {_FROM_INSTRUMENTS} WHERE {_INVESTABLE_PREDICATE}"
         )
         with self.engine.connect() as conn:
             rows = conn.execute(sql).fetchall()
         return [_row_to_security(r, is_investable=True) for r in rows]
+
+    def classifications(self, ciks: list[str]) -> list[ClassificationRecord]:
+        if not ciks:
+            return []
+        sql = text(
+            "SELECT le.entity_cik AS entity_cik, ec.scheme AS scheme, ec.level AS level, "
+            "ec.code AS code, ec.description AS description "
+            "FROM entity_classifications ec "
+            "JOIN legal_entities le ON le.entity_id = ec.entity_id "
+            "WHERE le.entity_cik IN :ciks AND ec.scheme IN :schemes"
+        ).bindparams(bindparam("ciks", expanding=True), bindparam("schemes", expanding=True))
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                sql, {"ciks": list(ciks), "schemes": list(_CLASSIFICATION_SCHEMES)}
+            ).fetchall()
+        return [
+            ClassificationRecord(
+                entity_cik=r._mapping["entity_cik"],
+                scheme=r._mapping["scheme"],
+                level=r._mapping["level"],
+                code=r._mapping["code"],
+                description=r._mapping["description"],
+            )
+            for r in rows
+        ]

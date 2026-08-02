@@ -79,6 +79,10 @@ class Security(SecuritiesBase):
     isin: Mapped[str | None] = mapped_column(String, nullable=True)
     composite_figi: Mapped[str | None] = mapped_column(String, nullable=True)
     primary_exch_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    # cato_securities.legal_entities.entity_cik (10-digit, zero-padded) — the join key into
+    # entity_classifications for SIC/Ken French 12-industry/etc. Distinct from instrument_id:
+    # one issuer (entity) can have multiple instruments (share classes, listings).
+    entity_cik: Mapped[str | None] = mapped_column(String, nullable=True)
     currency: Mapped[str] = mapped_column(String, default="USD")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # False once delisted
     # Provenance of the projection sync.
@@ -94,6 +98,42 @@ class Security(SecuritiesBase):
     corporate_actions: Mapped[list["CorporateAction"]] = relationship(
         back_populates="security"
     )
+    classifications: Mapped[list["SecurityClassification"]] = relationship(
+        back_populates="security"
+    )
+
+
+class SecurityClassification(SecuritiesBase):
+    """One issuer-classification value, projected from ``cato_securities.entity_classifications``
+    (joined via ``Security.entity_cik`` → ``legal_entities.entity_cik``). Mirrors CATO's own
+    ``(entity_id, scheme, level)`` shape so multiple schemes coexist per security exactly as
+    they do upstream — e.g. ``scheme='SIC', level='code'`` and ``scheme='KENFRENCH_12',
+    level='group'`` for the same security at once. Neptune only ever READS this scheme; it
+    never derives or writes a classification value itself (that logic lives in CATO).
+
+    Which scheme actually drives Neptune's sector-concentration cap is a runtime choice (the
+    ``sector_source`` app setting, default ``YAHOO`` — Neptune's own pre-existing source,
+    read straight off ``Security.sector``, not from this table at all), not fixed at ingest
+    time — so this table just holds whatever schemes have been synced, available to select."""
+
+    __tablename__ = "security_classifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id", "scheme", "level", name="uq_classification_inst_scheme_level"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    instrument_id: Mapped[int] = mapped_column(
+        ForeignKey("securities.instrument_id"), nullable=False, index=True
+    )
+    scheme: Mapped[str] = mapped_column(String, nullable=False)   # 'SIC' | 'KENFRENCH_12'
+    level: Mapped[str] = mapped_column(String, nullable=False)    # 'code' | 'group'
+    code: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="cato_securities")
+
+    security: Mapped[Security] = relationship(back_populates="classifications")
 
 
 class Price(SecuritiesBase):

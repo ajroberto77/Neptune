@@ -90,12 +90,15 @@ def build_neptune_factors(
     window: int = DEFAULT_WINDOW,
     frac: float = DEFAULT_FRAC,
     tickers: list[str] | None = None,
+    sector_source: str = "YAHOO",
 ) -> dict[str, int]:
     """Build and persist IVOL, BAB, AMIHUD, and per-sector SECTOR_* factor-return series.
 
-    Returns ``{factor: rows_written}`` (a factor absent from the map was skipped — e.g. BAB with
-    no materialized betas, or a sector with no members)."""
-    md = DbMarketData(session, benchmark=benchmark)
+    ``sector_source`` picks which classification scheme groups the SECTOR_* baskets (YAHOO
+    default; the caller resolves the active app setting — this function has no portfolio-DB
+    session to look it up itself). Returns ``{factor: rows_written}`` (a factor absent from
+    the map was skipped — e.g. BAB with no materialized betas, or a sector with no members)."""
+    md = DbMarketData(session, benchmark=benchmark, sector_source=sector_source)
     dates = md.return_dates()
     names = tickers if tickers is not None else md.available_tickers()
     names = [t for t in names if t != benchmark]

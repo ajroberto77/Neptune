@@ -7,6 +7,39 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-08-02 — Adding a new upstream data source doesn't mean switching the default to it
+
+**Pattern (CATO issuer-classification handoff):** CATO added SIC/Ken French 12-industry
+classification to `cato_securities`, read-only for Neptune, explicitly flagged as "the one
+most likely to matter for Neptune's own work" (it feeds the same factor model Neptune
+already trusts Ken French for). The natural-seeming move would have been to make it the
+new sector source for the hedge optimizer's hard concentration cap. The user was explicit:
+**keep Yahoo as the default, make the new schemes selectable, don't auto-switch anything.**
+Built accordingly — `sector_source` is a runtime app setting, default `YAHOO`, with
+`DbMarketData.sector()` resolving through whichever scheme is active; the existing Yahoo
+write/read path is completely untouched.
+
+**Also:** the handoff doc itself flagged its own data quality gap — the Ken French
+12-industry SIC-range mapping was reconstructed from public definitions without live
+network access to diff against the authoritative source, "worth an actual verification
+pass... before leaning on it for anything that feeds a live model." Rather than take that
+on faith (or skip verification and just note the caveat), fetched two independently
+maintained public reimplementations of Ken French's real definitions (separate GitHub
+repos, both derived from his own SAS macros) via WebFetch, confirmed they agree exactly on
+all 49 SIC ranges, ran an overlap check, and spot-checked 8 well-known companies' real SIC
+codes against the result — all before writing a single line that would let this scheme
+feed the optimizer.
+
+**Pattern:** When a new upstream data source becomes available and it visibly overlaps with
+something Neptune already computes, the default question isn't "should we switch to it" —
+it's "should this be available, and what should stay the default until told otherwise."
+Don't let architectural elegance (one true source) override an explicit user call on
+rollout risk. And when a data-quality caveat is handed to you along with the data, verify
+it independently before it touches anything hard-constraint-adjacent — a caveat that's
+merely noted and then relied upon anyway isn't actually addressed.
+
+---
+
 ## 2026-07-11 — Construct providers via factory, never inside route handlers or job bodies
 
 **Pattern (architecture audit):** When a `Protocol` exists for an external-data service

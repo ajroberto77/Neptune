@@ -272,6 +272,18 @@ export function setPriceRefresh(minutes: number): Promise<{ minutes: number }> {
   });
 }
 
+export function getSectorSource(): Promise<{ scheme: string; available: string[] }> {
+  return getJSON("/settings/sector-source");
+}
+
+export function setSectorSource(scheme: string): Promise<{ scheme: string }> {
+  return getJSON("/settings/sector-source", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scheme }),
+  });
+}
+
 // --- Settings: configurable DB connections ---
 import type {
   ConnectionRow,

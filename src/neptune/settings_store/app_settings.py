@@ -1,7 +1,8 @@
 """Persisted runtime app settings (key→value rows in the portfolio DB).
 
-Currently the price-refresh interval (minutes) for the always-on scheduler. The stored value
-overrides ``config.settings.price_refresh_minutes`` (the env/default); absent → the default.
+Currently: the price-refresh interval (minutes) for the always-on scheduler, and which
+classification scheme drives the sector-concentration cap. Each stored value overrides its
+``config.settings`` default; absent → the default.
 """
 from __future__ import annotations
 
@@ -11,6 +12,14 @@ from neptune.config import settings
 from neptune.db.models import AppSettingORM
 
 _PRICE_REFRESH_KEY = "price_refresh_minutes"
+_SECTOR_SOURCE_KEY = "sector_source"
+
+# Which classification schemes can drive the hedge optimizer's sector-concentration cap.
+# YAHOO is Neptune's own long-standing source (securities/providers.py's fetch_sector) and
+# stays the default — SIC/KENFRENCH_12 are read-only imports from cato_securities'
+# entity_classifications (see neptune.universe), selectable but never auto-switched to.
+SECTOR_SOURCES = ("YAHOO", "SIC", "KENFRENCH_12")
+DEFAULT_SECTOR_SOURCE = "YAHOO"
 
 
 class AppSettingsService:
@@ -37,3 +46,23 @@ class AppSettingsService:
             row.value = str(minutes)
         self.session.commit()
         return minutes
+
+    def get_sector_source(self) -> str:
+        """Which classification scheme resolves Security.sector for the hedge optimizer's
+        cap and the sector panels. Persisted if set and still valid, else the default."""
+        row = self.session.get(AppSettingORM, _SECTOR_SOURCE_KEY)
+        if row is None or row.value not in SECTOR_SOURCES:
+            return DEFAULT_SECTOR_SOURCE
+        return row.value
+
+    def set_sector_source(self, scheme: str) -> str:
+        """Persist which scheme drives the sector cap. Returns the stored value."""
+        if scheme not in SECTOR_SOURCES:
+            raise ValueError(f"unknown sector source {scheme!r} — must be one of {SECTOR_SOURCES}")
+        row = self.session.get(AppSettingORM, _SECTOR_SOURCE_KEY)
+        if row is None:
+            self.session.add(AppSettingORM(key=_SECTOR_SOURCE_KEY, value=scheme))
+        else:
+            row.value = scheme
+        self.session.commit()
+        return scheme
