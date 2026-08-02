@@ -186,6 +186,20 @@ class PositionRepository:
         self.session.commit()
         return True
 
+    def delete_positions_by_ticker(self, portfolio_id: str, tickers: set[str]) -> int:
+        """Delete every position in ``portfolio_id`` whose ticker is in ``tickers`` (lots
+        cascade with each position). Idempotent — a ticker with no matching position is a
+        no-op. Returns the count removed."""
+        rows = self.session.scalars(
+            select(PositionORM).where(
+                PositionORM.portfolio_id == portfolio_id, PositionORM.ticker.in_(tickers)
+            )
+        ).all()
+        for row in rows:
+            self.session.delete(row)
+        self.session.commit()
+        return len(rows)
+
     def delete_portfolio(self, portfolio_id: str) -> bool:
         """Delete a book and everything that hangs off it. Positions→lots and book_manager
         links cascade via the ORM relationships; the blotter (``transactions``) references the

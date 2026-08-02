@@ -64,6 +64,12 @@ class PositionService:
             )
         return self.repo.delete_portfolio(portfolio_id)
 
+    def remove_positions_by_ticker(self, portfolio_id: str, tickers: set[str]) -> int:
+        """Delete every position in ``portfolio_id`` whose ticker is in ``tickers`` (lots
+        cascade). Used to clean up the seeded golden DEMO positions when demo seeding is
+        turned off. Returns the count removed."""
+        return self.repo.delete_positions_by_ticker(portfolio_id, tickers)
+
     # --- Organization / ownership -------------------------------------------------
     def create_firm(self, firm_id: str, name: str, **kwargs):
         return self.org.create_firm(firm_id, name, **kwargs)

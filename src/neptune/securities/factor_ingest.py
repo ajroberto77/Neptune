@@ -9,11 +9,17 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from neptune.securities.factor_providers import FactorProvider
 from neptune.securities.models import FactorReturn
+
+
+def latest_factor_date(session: Session) -> date | None:
+    """The most recent date any factor return is stored for — used to gauge whether the
+    panel is stale relative to the price series (see api/main.py's risk_summary)."""
+    return session.scalar(select(func.max(FactorReturn.ts)))
 
 
 def ingest_factors(

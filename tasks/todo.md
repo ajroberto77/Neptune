@@ -39,6 +39,43 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] Fix `scheduling/scheduler.py` to call `build_price_provider(session)` instead of
       constructing `YFinanceProvider()` directly in the job body
 
+### Modularity — DB-access + Electron-IPC audit (Phase 2, done)
+
+> Goal: audit the DB-access and Electron-IPC boundaries with the same "swap plausible vs.
+> speculative complexity" judgment Phase 1 used. Honest finding: **no new Protocol/factory
+> pattern was warranted for either boundary** — there's no plausible second backend for
+> positions/portfolios/settings storage (unlike the yfinance→Bloomberg case Phase 1 had),
+> and Electron-vs-browser isn't a runtime-swapped axis, just a static fact known once at
+> page load. The real, scoped work found instead:
+
+- [x] Move 5 inline SQLAlchemy queries out of `api/main.py` into the repository/service
+      layer, so no route handler constructs a query directly (same discipline Phase 1
+      applied to providers, applied here to queries): `has_sufficient_history`,
+      `count_projected_securities`, `tickers_with_min_bars`, `projected_tickers` (all new,
+      in `securities/ingest.py`), `latest_factor_date` (new, in `securities/factor_ingest.py`),
+      `PositionRepository.delete_positions_by_ticker` / `PositionService.remove_positions_by_ticker`
+      (new, in `db/repository.py` / `positions/service.py`). `api/main.py` now has zero
+      `select()`/`func.`/direct-ORM-class usage — only `Session` (DI type hints), `text`
+      (the trivial connectivity ping), and `IntegrityError` (constraint→422 translation).
+- [x] **Fixed a real correctness bug**, not just an organization one: `neptune-config.json`
+      (Electron) and the portfolio DB's `db_connections` table (web path) could silently
+      diverge — `resolve_url()` makes a stored row win over env *unconditionally* for
+      SECURITIES/MACRO/UNIVERSE, so a row left over from an earlier session could silently
+      override what Electron's Settings UI had just configured, with no error and no UI
+      signal. Fixed in `main.js`: after every non-test-mode API (re)start, wait for the
+      backend to come up (`waitForApiHealth`) and push the current SECURITIES/MACRO/UNIVERSE
+      config into the stored rows too (`syncStoredConnections`), so "stored row wins" is
+      always correct-by-construction. PORTFOLIO stays env-only (unchanged, by necessity).
+      Verified end-to-end against a real Postgres DB + live uvicorn (not just unit-level).
+- [x] Removed 5 dead IPC channels with zero call sites anywhere in `frontend/src`
+      (`lastConfig`, `onConfigChanged`, `onApiLog`, `openExternal`, `pickFile`) from
+      `main.js`/`preload.cjs`, including the now-pointless `broadcastConfig`/`window._lastCfg`
+      injection. The `NeptuneBridge` TypeScript interface in `api/client.ts` already matched
+      the trimmed set exactly — no changes needed there.
+- [ ] 🔵 Not done, deliberately: a formal `PlatformBridge` TS interface with
+      electron/browser-stub implementations. Would be manufactured symmetry for a boundary
+      that isn't actually runtime-swapped by any caller.
+
 ### Unified identity & access (cross-platform) 🔵
 
 > **Decision (2026-06-01):** platform users, roles, and access are NOT built per-app. A

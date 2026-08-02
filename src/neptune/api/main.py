@@ -25,8 +25,6 @@ from sqlalchemy.orm import Session
 
 from datetime import date, timedelta
 
-from sqlalchemy import select
-
 from neptune.config import settings, write_env_var
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
@@ -41,7 +39,6 @@ from neptune.db.base import (
     init_securities_db,
     make_engine,
 )
-from neptune.db.models import PositionORM
 from neptune.db.runtime import macro_session, repoint_portfolio, securities_session
 from neptune.domain.models import (
     BookType, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
@@ -72,10 +69,14 @@ from neptune.macro.catalog import seed_catalog as seed_macro_catalog
 from neptune.macro.providers import MacroProvider
 from neptune.providers import build_factor_provider, build_macro_provider, build_price_provider
 from neptune.securities.factor_providers import FactorProvider
-from neptune.securities.ingest import ingest_ticker
-from neptune.securities.factor_ingest import ingest_factors
-from neptune.securities.models import Price, Security
-from neptune.securities.models import FactorReturn
+from neptune.securities.ingest import (
+    count_projected_securities,
+    has_sufficient_history,
+    ingest_ticker,
+    projected_tickers,
+    tickers_with_min_bars,
+)
+from neptune.securities.factor_ingest import ingest_factors, latest_factor_date
 from neptune.securities.providers import PriceProvider
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
@@ -128,21 +129,14 @@ def _try_backfill_prices(session: Session, *tickers: str) -> None:
     REAL market data instead of silently falling back to synthetic when a fresh ticker is added.
     Idempotent and non-fatal: names already well-priced are skipped, and any feed/network/
     missing-yfinance failure is swallowed (the trade is booked; pricing retries from Settings)."""
-    from sqlalchemy import func
-
     end = date.today()
     start = end - timedelta(days=DEFAULT_BACKFILL_DAYS)
     provider = build_price_provider(session)
     try:
         with securities_session(session) as sec:
             for t in dict.fromkeys(tickers):
-                iid = sec.scalar(select(Security.instrument_id).where(Security.ticker == t))
-                if iid is not None:
-                    bars = sec.scalar(
-                        select(func.count(Price.ts)).where(Price.instrument_id == iid)
-                    ) or 0
-                    if bars >= 200:
-                        continue  # already has enough history — don't re-pull
+                if has_sufficient_history(sec, t):
+                    continue  # already has enough history — don't re-pull
                 try:
                     ingest_ticker(sec, provider, t, start, end, create_if_missing=True)
                 except Exception:  # noqa: BLE001 — per-ticker feed error, non-fatal
@@ -261,15 +255,7 @@ def remove_demo_positions(session: Session) -> int:
     (lots cascade-delete with the position)."""
     pid = GOLDEN_PORTFOLIO["portfolio_id"]
     demo_tickers = {p.ticker for p in golden_positions()}
-    rows = (
-        session.query(PositionORM)
-        .filter(PositionORM.portfolio_id == pid, PositionORM.ticker.in_(demo_tickers))
-        .all()
-    )
-    for row in rows:
-        session.delete(row)
-    session.commit()
-    return len(rows)
+    return PositionService(session).remove_positions_by_ticker(pid, demo_tickers)
 
 
 @asynccontextmanager
@@ -525,15 +511,8 @@ def _universe_diag(sec: Session, portfolio) -> dict:
     out: dict = {}
     # Raw projection∩prices count (independent of the benchmark), so we can report the real
     # universe size even when the benchmark itself is unpriced.
-    out["securities_projected"] = sec.scalar(select(func.count(Security.instrument_id))) or 0
-    usable = sec.execute(
-        select(Security.ticker)
-        .join(Price, Price.instrument_id == Security.instrument_id)
-        .where(Security.ticker.isnot(None), Security.ticker != settings.benchmark)
-        .group_by(Security.ticker)
-        .having(func.count(Price.ts) >= 30)
-    ).all()
-    usable_tickers = sorted(t for (t,) in usable)
+    out["securities_projected"] = count_projected_securities(sec)
+    usable_tickers = tickers_with_min_bars(sec, min_bars=30, exclude=settings.benchmark)
     out["names_with_30plus_bars"] = len(usable_tickers)
     out["sample"] = usable_tickers[:25]
 
@@ -990,7 +969,7 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
         elif sess is None:
             panel["stale"] = False  # synthetic/fallback: factors present, can't be stale
         else:
-            last = sess.scalar(select(func.max(FactorReturn.ts)))
+            last = latest_factor_date(sess)
             rdates = md.return_dates() if hasattr(md, "return_dates") else []
             panel["last_date"] = last.isoformat() if last else None
             panel["stale"] = bool(last is None or (rdates and (rdates[-1] - last).days > 7))
@@ -1736,12 +1715,7 @@ def ingest_prices(
     start = body.start or (end - timedelta(days=days))
     results = []
     with securities_session(session) as sec_session:
-        tickers = body.tickers or [
-            s.ticker
-            for s in sec_session.scalars(
-                select(Security).where(Security.ticker.is_not(None))
-            ).all()
-        ]
+        tickers = body.tickers or projected_tickers(sec_session)
         if not tickers:
             raise HTTPException(
                 status_code=409, detail="no securities to ingest — sync the universe first"
