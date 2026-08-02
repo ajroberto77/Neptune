@@ -7,6 +7,48 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-08-02 — Re-verify a "clean merge" right before you execute it, not just when you first checked
+
+**Context (unattended overnight run: merge two branches, then build three follow-up items):**
+Earlier in the same session, `claude/alembic-migrations` and `claude/modularity-phase2` were
+both confirmed to be clean fast-forwards onto `main` — zero divergence, no conflicts. By the
+time the user actually said "merge branches," `main` had moved (a third, unrelated branch had
+landed in between). A dedicated planning agent re-ran the exact same `git merge-base`/
+`git merge-tree` checks fresh, right before the merge would execute, and found the picture had
+changed: neither merge was a fast-forward anymore, and `modularity-phase2` now had one real
+conflict (`tasks/lessons.md` — both sides had independently appended a new dated entry at the
+same insertion point). The conflict turned out to be a trivial, safe-to-resolve append-only
+case, not a semantic disagreement, but it would NOT have been if the earlier "clean" verdict
+had been trusted uncritically going into an unattended run.
+
+**Pattern:** A verification result ("this merges cleanly") is only true as of the moment it was
+checked, not a durable fact about the branch. Once other work lands on the base branch —
+especially across a "come back to this later" gap, or before handing execution to something
+unattended — re-run the check immediately before acting on it, don't reuse an earlier answer.
+The cost of re-checking is seconds; the cost of an unattended merge silently doing something
+different than what was verified is much higher.
+
+---
+
+## 2026-08-02 — Build the metadata half of a bundled todo item; flag the unspecified business-logic half instead of guessing it
+
+**Context (same overnight run, "Cash vs Swap instrument + swap financing"):** The original
+todo bullet bundled two things under one line: tagging a position CASH vs SWAP, and modeling
+swap financing accrual in the P&L engine. The first is pure, safe metadata — a swap's market
+exposure equals its underlying's, so the tag provably doesn't touch beta or notional (proved
+with an explicit test, not just asserted). The second requires a rate source, spread, reset
+frequency, day-count convention, and payer/receiver direction — none of which exist anywhere
+in the repo. Building it would mean inventing real trading-desk business logic with no spec,
+during a run with nobody available to catch a wrong guess.
+
+**Pattern:** When a todo item bundles a safe, well-scoped piece with a piece that has no
+specification, don't treat "the todo said to build it" as license to invent the missing spec.
+Split the item, build what's genuinely buildable, and leave the rest explicitly `[ ]` with a
+note naming exactly what input is needed before it can be attempted — visible and actionable
+for whoever reviews it, rather than either silently skipped or silently fabricated.
+
+---
+
 ## 2026-08-02 — Not every boundary needs a Protocol; only build one where a swap is real
 
 **Pattern (architecture audit, Phase 2):** Asked to audit the DB-access and Electron-IPC
