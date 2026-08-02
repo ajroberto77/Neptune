@@ -328,7 +328,15 @@ first vertical slice · 🔵 LATER = deferred.
 - [x] 🟢 FastAPI: positions CRUD, `/risk`, `/hedge/propose` (+ `test_api.py`)
 - [x] Blotter shows per-name current price (from the active market-data source — synthetic
       until the `DbMarketData` flip, then the real backfilled mark).
-- [ ] 🔵 Customizable blotter columns (user can add/remove/reorder columns, persisted).
+- [x] Customizable blotter columns (user can add/remove/reorder columns, persisted).
+      Frontend-only: `blotterColumns.ts` (registry of the 8 existing columns, versioned
+      localStorage persistence, defensive parsing so a malformed/stale blob falls back to
+      defaults instead of a blank header), `BlotterColumnPicker.tsx` (show/hide + reorder
+      checklist, no new UI library), `Trade.tsx`'s `Blotter` refactored onto a
+      `CELL_RENDERERS`/`HEAD_CLASS`/`CELL_CLASS` lookup so a column's markup lives in one
+      place. First-run behavior is byte-identical to before (all 8 columns, original order).
+      `blotterColumns.test.ts`, `Blotter.test.tsx` (default-unchanged regression guard,
+      toggle, reorder, persists across remount).
       Deferred — current price landed first per user priority (2026-06-01).
 - [ ] 🔵 WebSocket price pipeline (<400ms); full P&L columns; Electron shell (fast-follow)
 

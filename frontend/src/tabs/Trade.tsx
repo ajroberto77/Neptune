@@ -1,7 +1,11 @@
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { PendingHedge, TradeAction, TransactionInput, TransactionRow } from "../types";
 import { money, pnlColor, signedMoney } from "../format";
 import { fetchTransactions } from "../api/client";
+import type { ColumnKey } from "./blotterColumns";
+import { ALL_COLUMNS, loadBlotterColumns, saveBlotterColumns } from "./blotterColumns";
+import { BlotterColumnPicker } from "./BlotterColumnPicker";
 
 const ACTIONS: { value: TradeAction; label: string }[] = [
   { value: "BUY", label: "Buy" },
@@ -389,11 +393,67 @@ export function Trade({
   );
 }
 
+// One renderer per column, keyed the same as ALL_COLUMNS — the Head/Cell pair for a column
+// lives in exactly one place, so the picker can reorder/hide them by just filtering/mapping
+// this list instead of duplicating markup per combination.
+const HEAD_CLASS: Record<ColumnKey, string> = {
+  date: "px-3 py-2",
+  ticker: "px-3 py-2",
+  action: "px-3 py-2",
+  shares: "px-3 py-2 text-right",
+  price: "px-3 py-2 text-right",
+  effect: "px-3 py-2",
+  realized_pnl: "px-3 py-2 text-right",
+  origin: "px-3 py-2",
+};
+
+const CELL_RENDERERS: Record<ColumnKey, (t: TransactionRow) => ReactNode> = {
+  date: (t) => <span className="text-ocean-muted">{t.trade_date}</span>,
+  ticker: (t) => t.ticker,
+  action: (t) => (
+    <span className={t.action === "BUY" ? "text-status-ok" : "text-status-breach"}>
+      {t.action}
+    </span>
+  ),
+  shares: (t) => t.quantity.toLocaleString(undefined, { maximumFractionDigits: 0 }),
+  price: (t) => money(t.price),
+  effect: (t) => <span className="text-ocean-muted">{t.effect}</span>,
+  realized_pnl: (t) => (
+    <span className={pnlColor(t.realized_pnl)}>
+      {t.realized_pnl ? signedMoney(t.realized_pnl) : "—"}
+    </span>
+  ),
+  origin: (t) => (
+    <span
+      className={`rounded px-2 py-0.5 text-xs ${
+        t.origin === "HEDGE"
+          ? "bg-ocean-accent/20 text-ocean-accent"
+          : "bg-ocean-border/40 text-ocean-muted"
+      }`}
+    >
+      {t.origin === "HEDGE" ? "Hedge" : "Manual"}
+    </span>
+  ),
+};
+
+const CELL_CLASS: Record<ColumnKey, string> = {
+  date: "px-3 py-1.5 font-mono",
+  ticker: "px-3 py-1.5 font-mono",
+  action: "px-3 py-1.5 font-medium",
+  shares: "px-3 py-1.5 text-right font-mono",
+  price: "px-3 py-1.5 text-right font-mono",
+  effect: "px-3 py-1.5",
+  realized_pnl: "px-3 py-1.5 text-right font-mono",
+  origin: "px-3 py-1.5",
+};
+
 /** Executed-trade ledger for the active book: desk Buy/Sells and the buy-to-cover / sell-short
- *  legs booked when a hedge is approved. Read-only history — Neptune records, never routes. */
-function Blotter({ portfolioId, reloadKey }: { portfolioId: string; reloadKey: number }) {
+ *  legs booked when a hedge is approved. Read-only history — Neptune records, never routes.
+ *  Columns are user-customizable (show/hide, reorder) via BlotterColumnPicker, persisted. */
+export function Blotter({ portfolioId, reloadKey }: { portfolioId: string; reloadKey: number }) {
   const [rows, setRows] = useState<TransactionRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [columns, setColumns] = useState<ColumnKey[]>(() => loadBlotterColumns());
 
   useEffect(() => {
     if (!portfolioId) return;
@@ -402,11 +462,19 @@ function Blotter({ portfolioId, reloadKey }: { portfolioId: string; reloadKey: n
       .catch((e) => setErr(String(e)));
   }, [portfolioId, reloadKey]);
 
+  function handleColumnsChange(next: ColumnKey[]) {
+    setColumns(next);
+    saveBlotterColumns(next);
+  }
+
   return (
     <div className="mt-8">
-      <h3 className="mb-3 font-display text-sm uppercase tracking-wide text-ocean-muted">
-        Blotter <span className="text-ocean-faint">(executed trades)</span>
-      </h3>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-display text-sm uppercase tracking-wide text-ocean-muted">
+          Blotter <span className="text-ocean-faint">(executed trades)</span>
+        </h3>
+        <BlotterColumnPicker columns={columns} onChange={handleColumnsChange} />
+      </div>
       {err && <p className="text-sm text-status-breach">{err}</p>}
       {rows.length === 0 ? (
         <p className="text-sm text-ocean-muted">No trades booked yet.</p>
@@ -415,47 +483,21 @@ function Blotter({ portfolioId, reloadKey }: { portfolioId: string; reloadKey: n
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 bg-ocean-bg text-xs uppercase text-ocean-muted">
               <tr>
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Ticker</th>
-                <th className="px-3 py-2">Action</th>
-                <th className="px-3 py-2 text-right">Shares</th>
-                <th className="px-3 py-2 text-right">Price</th>
-                <th className="px-3 py-2">Effect</th>
-                <th className="px-3 py-2 text-right">Realized P&L</th>
-                <th className="px-3 py-2">Origin</th>
+                {columns.map((key) => (
+                  <th key={key} className={HEAD_CLASS[key]}>
+                    {ALL_COLUMNS.find((c) => c.key === key)?.label ?? key}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((t) => (
                 <tr key={t.id} className="border-t border-ocean-border/70">
-                  <td className="px-3 py-1.5 font-mono text-ocean-muted">{t.trade_date}</td>
-                  <td className="px-3 py-1.5 font-mono">{t.ticker}</td>
-                  <td
-                    className={`px-3 py-1.5 font-medium ${
-                      t.action === "BUY" ? "text-status-ok" : "text-status-breach"
-                    }`}
-                  >
-                    {t.action}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">
-                    {t.quantity.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">{money(t.price)}</td>
-                  <td className="px-3 py-1.5 text-ocean-muted">{t.effect}</td>
-                  <td className={`px-3 py-1.5 text-right font-mono ${pnlColor(t.realized_pnl)}`}>
-                    {t.realized_pnl ? signedMoney(t.realized_pnl) : "—"}
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <span
-                      className={`rounded px-2 py-0.5 text-xs ${
-                        t.origin === "HEDGE"
-                          ? "bg-ocean-accent/20 text-ocean-accent"
-                          : "bg-ocean-border/40 text-ocean-muted"
-                      }`}
-                    >
-                      {t.origin === "HEDGE" ? "Hedge" : "Manual"}
-                    </span>
-                  </td>
+                  {columns.map((key) => (
+                    <td key={key} className={CELL_CLASS[key]}>
+                      {CELL_RENDERERS[key](t)}
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
