@@ -218,12 +218,14 @@ first vertical slice · 🔵 LATER = deferred.
       (upsert keyed on `(instrument_id, …, source)`, I-07), `POST /securities/ingest`
       (resilient per-ticker errors; 503 when yfinance absent), Settings "Backfill prices"
       button. `test_ingest.py` + endpoint tests. Live backfill itself runs off-sandbox.
-- [~] `MarketData` protocol + `DbMarketData`: protocol in `data/source.py`; `DbMarketData`
+- [x] `MarketData` protocol + `DbMarketData`: protocol in `data/source.py`; `DbMarketData`
       (`data/db_market.py`) reads `adj_close` from `neptune_securities`, aligns every ticker
       to the benchmark (SPY) date index, recovers real `market_returns`/`ticker_returns`
       (tested: raw beta pipeline recovers ~1.2 from stored prices). Raw `close` for P&L
-      marks; deterministic multi-source dedup; optional `lookback`. REMAINING to go live:
-      flip the API constructor from `SyntheticMarketData` to `DbMarketData` (behind config).
+      marks; deterministic multi-source dedup; optional `lookback`. Live via
+      `market_data_for()` (see the two `DbMarketData flip` bullets below) — every endpoint,
+      including the hedge optimizer, resolves through it; no synthetic constructor remains
+      wired to a real request path.
 - [x] Ken French factor ingestion: `factor_returns` table; `factor_providers.py`
       (`KenFrenchProvider` lazy `pandas_datareader`, `RecordedFactorProvider`);
       `factor_ingest.py` (idempotent `(factor,ts,source)` upsert, I-07); `DbMarketData`
@@ -256,14 +258,17 @@ first vertical slice · 🔵 LATER = deferred.
       module-level `SyntheticMarketData()` singleton for scenarios and VaR. Now uses
       `market_data_for(session, portfolio)` like every other risk endpoint — real prices when
       the benchmark is ingested, synthetic only as a fallback (fresh DB / tests).
-- [~] **DbMarketData flip** (fix for nonsense P&L/price on real tickers): `market_data_for()`
+- [x] **DbMarketData flip** (fix for nonsense P&L/price on real tickers): `market_data_for()`
       picks real `DbMarketData` when the benchmark + EVERY portfolio ticker have stored prices,
       else synthetic (all-or-nothing per book — a real benchmark can't price a synthetic name;
       keeps the seeded demo + tests synthetic). Wired into `/positions`, `/risk`, `/pnl`, `/stress`.
       Benchmark **SPY** ingestable via `create_if_missing` (negative instrument_id, outside the
       universe); `NEPTUNE_BENCHMARK` configurable. `test_market_flip.py`.
-      REMAINING: flip the hedge optimizer once a REAL shortable universe replaces
-      the synthetic `live_universe` candidate set.
+      The hedge optimizer is flipped too: propose/frontier both resolve `md` via
+      `market_data_for()` then dispatch through `_shortable_universe()` (`api/main.py`) —
+      `analytics.db_universe(md)` for a real book, `analytics.live_universe()` synthetic
+      fallback only. This was actually completed alongside the real shortable-universe work
+      (`db_universe`) earlier; this note was just never updated to say so.
 - [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
       it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show
       the fee-inclusive blended basis. (Avg execution price already shown.)

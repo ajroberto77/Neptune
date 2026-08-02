@@ -400,7 +400,7 @@ def securities_health(session: Session = Depends(get_session)):
     empty = Portfolio(id="__health__", name="health", positions=[])
     with securities_session(session) as sec:
         out = {"benchmark": settings.benchmark}
-        out.update(_universe_diag(sec, empty))
+        out.update(_universe_diag(sec, empty, session))
         return out
 
 
@@ -501,11 +501,11 @@ def hedge_diagnostics(portfolio_id: str, session: Session = Depends(get_session)
     portfolio = _resolve_portfolio(service, portfolio_id)
     out = {"portfolio_id": portfolio_id, "benchmark": settings.benchmark}
     with securities_session(session) as sec:
-        out.update(_universe_diag(sec, portfolio))
+        out.update(_universe_diag(sec, portfolio, session))
     return out
 
 
-def _universe_diag(sec: Session, portfolio) -> dict:
+def _universe_diag(sec: Session, portfolio, session: Session) -> dict:
     """The universe gate, made visible: which market-data source is in force and why, plus
     the candidate counts. Takes an open securities session; pure read."""
     from sqlalchemy import func
@@ -519,8 +519,11 @@ def _universe_diag(sec: Session, portfolio) -> dict:
     out["names_with_30plus_bars"] = len(usable_tickers)
     out["sample"] = usable_tickers[:25]
 
+    # Same sector_source resolution market_data_for() uses, so db_universe()'s sector-cap
+    # reporting here is consistent with what a real hedge propose/frontier call would see.
+    sector_source = AppSettingsService(session).get_sector_source()
     try:
-        md = DbMarketData(sec, benchmark=settings.benchmark)
+        md = DbMarketData(sec, benchmark=settings.benchmark, sector_source=sector_source)
     except TickerNotFound as exc:
         out["source"] = "synthetic"
         out["reason"] = (
@@ -577,7 +580,7 @@ def _universe_diag_suffix(session: Session, portfolio) -> str:
     """A one-line diagnostic to append to an empty-universe hedge error."""
     try:
         with securities_session(session) as sec:
-            d = _universe_diag(sec, portfolio)
+            d = _universe_diag(sec, portfolio, session)
     except Exception:  # noqa: BLE001 — diagnostics must never mask the original error
         return ""
     return (
