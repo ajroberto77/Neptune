@@ -23,6 +23,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 
@@ -177,11 +178,54 @@ function backendEnv(cfg) {
 
 // ── Python FastAPI backend lifecycle ──────────────────────────────────────────
 
+// The in-flight (or most recent) resolution of the backend's actual port — usually
+// cfg.api.port, but can differ when that port was already taken (see findFreePort below),
+// e.g. a stale sidecar from a prior run still holding it. app:getApiBaseUrl must await this
+// rather than reading cfg.api.port directly, since the renderer's first health poll fires
+// immediately on window load and could otherwise race ahead of port resolution and cache
+// the wrong (configured, not actual) port for the whole session.
+let portResolutionPromise = null;
+
+// Probe for a free port starting at startPort, trying up to maxAttempts sequential ports.
+// Binds a throwaway server to each candidate to test it, then releases it immediately — a
+// small window exists between release and the real backend binding, but that's fine here:
+// the failure mode this fixes is a *stale* leftover process, not live contention.
+function findFreePort(startPort, host, maxAttempts = 20) {
+  return new Promise((resolve, reject) => {
+    const tryPort = (port, attemptsLeft) => {
+      const tester = net.createServer();
+      tester.once('error', (err) => {
+        if (err.code === 'EADDRINUSE' && attemptsLeft > 0) {
+          tester.close(() => tryPort(port + 1, attemptsLeft - 1));
+        } else {
+          reject(err);
+        }
+      });
+      tester.once('listening', () => {
+        tester.close(() => resolve(port));
+      });
+      tester.listen(port, host);
+    };
+    tryPort(startPort, maxAttempts);
+  });
+}
+
 async function startApi(cfg) {
   stopApi();
+
+  portResolutionPromise = findFreePort(cfg.api.port, cfg.api.host).catch((err) => {
+    console.warn(`[neptune] could not find a free port near ${cfg.api.port}: ${err.message}`);
+    return cfg.api.port;
+  });
+  const port = await portResolutionPromise;
+  if (port !== cfg.api.port) {
+    console.warn(`[neptune] port ${cfg.api.port} is in use; falling back to ${port}`);
+  }
+  const effectiveCfg = { ...cfg, api: { ...cfg.api, port } };
+
   const py = resolvePython(cfg);
   console.log(`[neptune] starting API: ${py} ${API_SCRIPT}`);
-  apiProcess = spawn(py, [API_SCRIPT], { cwd: __dirname, env: backendEnv(cfg) });
+  apiProcess = spawn(py, [API_SCRIPT], { cwd: __dirname, env: backendEnv(effectiveCfg) });
 
   const relay = (stream) => {
     stream.setEncoding('utf-8');
@@ -202,9 +246,9 @@ async function startApi(cfg) {
 
   // Test Mode's throwaway SQLite has no real db_connections table worth protecting.
   if (!testMode) {
-    const healthy = await waitForApiHealth(cfg);
+    const healthy = await waitForApiHealth(effectiveCfg);
     if (healthy) {
-      await syncStoredConnections(cfg);
+      await syncStoredConnections(effectiveCfg);
     } else {
       console.warn('[neptune] API did not become healthy in time; skipping connection sync');
     }
@@ -327,7 +371,14 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle('app:getApiBaseUrl', () => apiBaseUrl(loadConfig()));
+  ipcMain.handle('app:getApiBaseUrl', async () => {
+    const cfg = loadConfig();
+    if (portResolutionPromise) {
+      const port = await portResolutionPromise.catch(() => cfg.api.port);
+      return apiBaseUrl({ ...cfg, api: { ...cfg.api, port } });
+    }
+    return apiBaseUrl(cfg);
+  });
 
   // Test Mode: relaunch the backend on throwaway SQLite (+ seeded demo book) or back on the
   // configured Postgres. Returns the resulting mode so the renderer can reflect it.
