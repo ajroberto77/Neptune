@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from neptune.db.repository import OrgRepository, PositionRepository, TransactionRepository
 from neptune.domain.models import (
-    LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction, TradeOrigin,
-    Transaction,
+    Instrument, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
+    TradeOrigin, Transaction,
 )
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, Lot, reduce_position
@@ -136,16 +136,20 @@ class PositionService:
         thesis: str | None = None,
         target: str | None = None,
         fee_per_share: float = 0.0,
+        instrument: Instrument = Instrument.CASH,
     ) -> int:
-        """Record an executed trade as a lot on the (ticker, side, short_type) position,
-        aggregating into the open position for that name+book if one exists, else opening a
-        new one. ``notional`` grows by the executed value (quantity × price), so it tracks
-        book exposure for trade-tab positions. Returns the position id.
+        """Record an executed trade as a lot on the (ticker, side, short_type, instrument)
+        position, aggregating into the open position for that name+book+instrument if one
+        exists, else opening a new one. ``notional`` grows by the executed value
+        (quantity × price), so it tracks book exposure for trade-tab positions. Returns the
+        position id.
 
         This is the single entry path for ALL executions, including systematic-short hedges
         once approved: recording an execution is not auto-execution (no broker routing), and
         the book tag (``short_type``) keeps systematic and discretionary shorts distinct
-        (I-03)."""
+        (I-03). ``instrument`` is pure metadata (CASH vs SWAP) — it never affects beta,
+        exposure, or the long/short conflict check, only which position a trade aggregates
+        onto (a CASH and a SWAP holding of the same name/side never silently merge)."""
         if side is Side.SHORT:
             book = self.repo.get_portfolio(portfolio_id)
             if book is not None and book.mandate is Mandate.LONG_ONLY:
@@ -161,7 +165,9 @@ class PositionService:
         )
         self._check_long_short_conflict(probe, existing)
 
-        position_id = self.repo.find_position_id(portfolio_id, ticker, side, short_type)
+        position_id = self.repo.find_position_id(
+            portfolio_id, ticker, side, short_type, instrument
+        )
         if position_id is not None:
             current = self.repo.get_position(position_id)
             self.repo.append_lot(position_id, lot, current.notional + quantity * price)
@@ -174,6 +180,7 @@ class PositionService:
                 side=side,
                 notional=quantity * price,
                 short_type=short_type,
+                instrument=instrument,
                 sector=sector,
                 forward_beta=forward_beta,
                 lots=[lot],
@@ -317,6 +324,7 @@ class PositionService:
         thesis: str | None = None,
         target: str | None = None,
         fee_per_share: float = 0.0,
+        instrument: Instrument = Instrument.CASH,
     ) -> int:
         """Book a manual Buy/Sell. Direction is DERIVED from the current holding (netting),
         so the desk never picks a side or a "book":
@@ -329,19 +337,21 @@ class PositionService:
         Manual trades only ever touch the long or the *discretionary* short — systematic
         shorts are the optimizer's hedge and are booked only via the hedge-approval path
         (invariant I-03). Returns the id of the position the remainder landed on (or the one
-        that was reduced if the trade only closed).
+        that was reduced if the trade only closed). ``instrument`` (CASH/SWAP) is pure
+        metadata, threaded through so a CASH and a SWAP holding of the same name/side never
+        aggregate into one position; it plays no role in the netting logic itself.
         """
         if quantity <= 0:
             raise ValueError("quantity must be positive")
         remaining = quantity
         if action is TradeAction.BUY:
             opposite = self.repo.find_position_id(
-                portfolio_id, ticker, Side.SHORT, ShortType.DISCRETIONARY
+                portfolio_id, ticker, Side.SHORT, ShortType.DISCRETIONARY, instrument
             )
             open_side, open_short = Side.LONG, ShortType.NA
         else:
             opposite = self.repo.find_position_id(
-                portfolio_id, ticker, Side.LONG, ShortType.NA
+                portfolio_id, ticker, Side.LONG, ShortType.NA, instrument
             )
             open_side, open_short = Side.SHORT, ShortType.DISCRETIONARY
 
@@ -364,6 +374,7 @@ class PositionService:
             landed = self.record_trade(
                 portfolio_id, ticker, open_side, open_short, remaining, price, trade_date,
                 sector=sector, thesis=thesis, target=target, fee_per_share=fee_per_share,
+                instrument=instrument,
             )
 
         # Blotter row for the whole ticket: the book it touched is the side the remainder

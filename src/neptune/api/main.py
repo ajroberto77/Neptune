@@ -41,8 +41,8 @@ from neptune.db.base import (
 )
 from neptune.db.runtime import macro_session, repoint_portfolio, securities_session
 from neptune.domain.models import (
-    BookType, LotEntry, Mandate, Portfolio, Position, Side, ShortType, TradeAction,
-    TradeOrigin,
+    BookType, Instrument, LotEntry, Mandate, Portfolio, Position, Side, ShortType,
+    TradeAction, TradeOrigin,
 )
 from neptune.domain.org import PersonRole
 from neptune.pnl import CostBasisMethod, PnL
@@ -760,6 +760,7 @@ class TransactionIn(BaseModel):
     sector: str | None = None
     thesis: str | None = None
     target: str | None = None
+    instrument: Instrument = Instrument.CASH  # CASH (default) or SWAP — pure metadata
 
 
 @app.post("/portfolios/{portfolio_id}/transactions", status_code=201)
@@ -775,7 +776,7 @@ def record_transaction(
         position_id = service.book_trade(
             portfolio_id, body.ticker, body.action, body.quantity, body.price,
             body.trade_date, sector=body.sector, thesis=body.thesis, target=body.target,
-            fee_per_share=body.fee_per_share,
+            fee_per_share=body.fee_per_share, instrument=body.instrument,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -799,6 +800,7 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
                 "side": p.side.value,
                 "short_type": p.short_type.value,
                 "book": p.book.value,
+                "instrument": p.instrument.value,
                 "notional": p.notional,
                 "quantity": p.quantity,
                 "price": _safe_price(md, p.ticker),
