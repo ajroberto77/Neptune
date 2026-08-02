@@ -29,6 +29,7 @@ from neptune.config import settings, write_env_var
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
 from neptune.data.db_market import DbMarketData, TickerNotFound
+from neptune.scheduling import factor_scheduler
 from neptune.scheduling import scheduler as price_scheduler
 from neptune.scheduling.scheduler import shutdown_scheduler, start_scheduler
 from neptune.settings_store.app_settings import AppSettingsService, SECTOR_SOURCES
@@ -76,8 +77,8 @@ from neptune.securities.ingest import (
     projected_tickers,
     tickers_with_min_bars,
 )
-from neptune.securities.factor_ingest import ingest_factors, latest_factor_date
 from neptune.securities.providers import PriceProvider
+from neptune.scheduling.factors import refresh_factor_panel
 from neptune.universe import RecordedUniverse, SqlUniverse, UniverseSecurity, sync_universe_projection
 
 # Synthetic market data — the fallback (and the candidate-universe source for hedging,
@@ -280,8 +281,10 @@ async def lifespan(app: FastAPI):
             if removed:
                 logging.getLogger(__name__).info("removed %d demo position(s)", removed)
     start_scheduler()  # always-on price refresh (no-op if apscheduler isn't installed)
+    factor_scheduler.start_scheduler()  # always-on factor-panel refresh (same guard)
     yield
     shutdown_scheduler()
+    factor_scheduler.shutdown_scheduler()
 
 
 app = FastAPI(title="Neptune", version="0.1.0", lifespan=lifespan)
@@ -535,6 +538,10 @@ def _universe_diag(sec: Session, portfolio) -> dict:
     unpriced = sorted({p.ticker for p in portfolio.positions if _ticker_unpriced(md, p.ticker)})
     out["unpriced_positions"] = unpriced
     out["factor_panel"] = ("MKT+" + "+".join(STYLE_FACTORS)) if md._style_factors() else "MKT-only"
+    # Additive: a loaded panel ("MKT+...") can still be STALE — this field is what lets a
+    # caller tell "genuinely unfilled" apart from "loaded but hasn't refreshed," which the
+    # bare factor_panel string above cannot distinguish on its own (see analytics.factor_panel_status).
+    out["factor_panel_stale"] = analytics.factor_panel_status(md)["stale"]
 
     # The TRUE shortable universe: names whose beta regression actually fits against the
     # benchmark — not merely names with >=30 of their own bars. The gap between these two is
@@ -956,7 +963,6 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
     is_firm_view = portfolio_id in (CONSOLIDATED_ID, LONGSHORT_GROUP_ID)
     tol = settings.firm_beta_tol if is_firm_view else settings.beta_tol
 
-    panel = {"loaded": False, "last_date": None, "stale": True}
     with market_data_for(session, beta_portfolio) as md:
         metrics = analytics.compute_metrics(beta_portfolio, md)
         # The neutralized factor set: FF5+MOM plus any PROMOTED monitor factors.
@@ -964,18 +970,7 @@ def risk_summary(portfolio_id: str, session: Session = Depends(get_session)):
         known_factors = analytics.all_factors(md)
         # Stale-panel guard: if the style-factor panel isn't loaded (or lags the prices), the
         # hedge is effectively BETA-ONLY — surface it rather than silently matching nothing.
-        factors_present = md.factor_returns()
-        panel["loaded"] = all(f in factors_present for f in STYLE_FACTORS)
-        sess = getattr(md, "session", None)
-        if not panel["loaded"]:
-            panel["stale"] = True
-        elif sess is None:
-            panel["stale"] = False  # synthetic/fallback: factors present, can't be stale
-        else:
-            last = latest_factor_date(sess)
-            rdates = md.return_dates() if hasattr(md, "return_dates") else []
-            panel["last_date"] = last.isoformat() if last else None
-            panel["stale"] = bool(last is None or (rdates and (rdates[-1] - last).days > 7))
+        panel = analytics.factor_panel_status(md)
     net_beta, net_factors = analytics.net_metrics(
         beta_portfolio, metrics, factors=known_factors
     )
@@ -1569,6 +1564,28 @@ def set_price_refresh(body: PriceRefreshIn, session: Session = Depends(get_sessi
     return {"minutes": minutes}
 
 
+class FactorRefreshIn(BaseModel):
+    """The always-on factor-panel refresh interval in minutes (0 = disabled, max 1 week —
+    the Ken French panel publishes far less often than prices, so a longer ceiling than
+    price-refresh's 1-day cap is appropriate here)."""
+
+    minutes: int = Field(ge=0, le=10080)
+
+
+@app.get("/settings/factor-refresh")
+def get_factor_refresh(session: Session = Depends(get_session)):
+    """Current server-side factor-panel refresh interval (minutes; 0 = off)."""
+    return {"minutes": AppSettingsService(session).get_factor_refresh_minutes()}
+
+
+@app.put("/settings/factor-refresh")
+def set_factor_refresh(body: FactorRefreshIn, session: Session = Depends(get_session)):
+    """Persist the interval and reschedule the running job (live, no restart)."""
+    minutes = AppSettingsService(session).set_factor_refresh_minutes(body.minutes)
+    factor_scheduler.reschedule(minutes)
+    return {"minutes": minutes}
+
+
 class SectorSourceIn(BaseModel):
     scheme: str
 
@@ -1827,18 +1844,13 @@ def ingest_factor_panel(
     start = body.start or (end - timedelta(days=DEFAULT_BACKFILL_DAYS))
     with securities_session(session) as sec_session:
         try:
-            counts = ingest_factors(sec_session, provider, start, end)
+            result = refresh_factor_panel(
+                sec_session, provider, start, end, benchmark=settings.benchmark
+            )
         except RuntimeError as exc:  # pandas-datareader not installed
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 — feed/network error, sanitized
             raise HTTPException(
                 status_code=502, detail=f"factor ingest failed: {type(exc).__name__}"
             ) from exc
-        # The panel just changed → (re)materialize style loadings for the whole universe.
-        loadings_written = 0
-        try:
-            loadings_written = beta_store.rebuild_loadings(sec_session, benchmark=settings.benchmark)
-        except Exception:  # noqa: BLE001 — never fail the panel ingest on a loadings hiccup
-            loadings_written = 0
-    return {"start": start.isoformat(), "end": end.isoformat(), "counts": counts,
-            "loadings_written": loadings_written}
+    return {"start": start.isoformat(), "end": end.isoformat(), **result}

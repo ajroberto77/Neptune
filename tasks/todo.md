@@ -405,8 +405,19 @@ first vertical slice · 🔵 LATER = deferred.
       Interim: pull shares-outstanding / basic fundamentals (yfinance) to enable VW sector +
       characteristic scores; replace with the Mercury feed when available. Point-in-time
       correctness matters (avoid look-ahead) — Mercury > yfinance for that.
-- [ ] 🔵 Ingest the Ken French FF5+MOM panel operationally + a **stale-panel guard** (Risk
-      Interface) so the hedge never silently degrades to beta-only.
+- [x] Ingest the Ken French FF5+MOM panel operationally + a **stale-panel guard** (Risk
+      Interface) so the hedge never silently degrades to beta-only. The `/risk` half of the
+      guard (`panel.stale`, degrading the headline to "BETA-ONLY") had already landed
+      separately — this closed the two remaining gaps: (1) `analytics.factor_panel_status()`
+      centralizes that logic so `/hedge/diagnostics`/`/securities/health` (`_universe_diag`)
+      report `factor_panel_stale` too, instead of only exposing the bare `factor_panel`
+      string with no staleness distinction — proven by a test where a LOADED panel
+      simultaneously reports `stale=True`; (2) `scheduling/factor_scheduler.py` (mirroring
+      the price-refresh scheduler exactly) automates `POST /factors/ingest` via a new
+      `factor_refresh_minutes` setting (default once/day) and `GET/PUT /settings/factor-refresh`.
+      The manual endpoint and the scheduled job share one implementation
+      (`scheduling/factors.py::refresh_factor_panel`) so they can never drift apart.
+      `test_factor_panel_status.py`, `test_factor_scheduler.py`, `DataHealth.test.tsx`.
 - [ ] 🔵 Loading-window decision: decouple the style-loading window from the 252-day market beta
       (research flagged 60 daily obs as thin for 6 slopes); consider shrinkage on the loadings.
 

@@ -23,6 +23,9 @@ export function DataHealth() {
   const bars = h?.benchmark_bars;
   const benchOk = bars != null && bars >= 200; // ~250 trading days = healthy benchmark
   const factorsLoaded = h?.factor_panel && h.factor_panel !== "MKT-only";
+  // A loaded panel can still be STALE (hasn't refreshed recently) — must not read as
+  // healthy just because it's present. Distinct from "not loaded" (no data at all).
+  const factorsStale = !!factorsLoaded && !!h?.factor_panel_stale;
 
   return (
     <Card>
@@ -61,8 +64,14 @@ export function DataHealth() {
             <Metric
               label="Factor panel"
               value={h.factor_panel ?? "—"}
-              ok={!!factorsLoaded}
-              hint={factorsLoaded ? undefined : "load Ken French to enable factor hedges"}
+              ok={!!factorsLoaded && !factorsStale}
+              hint={
+                factorsStale
+                  ? "panel loaded but stale — hasn't refreshed in over a week"
+                  : factorsLoaded
+                    ? undefined
+                    : "load Ken French to enable factor hedges"
+              }
             />
           </div>
           <p className="mt-3 text-xs text-ocean-muted">

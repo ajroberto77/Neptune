@@ -34,6 +34,7 @@ from neptune.quant.factors import (
     residual_variance,
 )
 from neptune.quant.optimizer import Candidate, compute_residual
+from neptune.securities.factor_ingest import latest_factor_date
 
 # The Vasicek shrinkage prior variance — a FIXED, market-level constant (cross-sectional beta
 # dispersion across equities, σ≈0.5 ⇒ var≈0.25). It is deliberately NOT estimated from the
@@ -150,6 +151,32 @@ def hedge_factor_set(market_data) -> tuple[str, ...]:
     promoted = tuple(getattr(market_data, "promoted_factors", ()) or ())
     present = tuple(f for f in (*STYLE_FACTORS, *promoted) if f in factors)
     return present or STYLE_FACTORS
+
+
+def factor_panel_status(market_data) -> dict:
+    """``{"loaded": bool, "last_date": str|None, "stale": bool}`` — whether the style-factor
+    panel is present and, if so, whether it's fresh. Centralizes the stale-panel guard so
+    every caller (``/risk``, ``/hedge/diagnostics``, ``/securities/health``) agrees on what
+    "stale" means, instead of each computing it (or not) independently.
+
+    ``loaded=False`` means the panel isn't there at all (beta-only, not a staleness question).
+    ``stale=True`` on a LOADED panel means real style loadings exist but are more than 7 days
+    older than the market's latest return date — a real gap distinct from "not loaded," and
+    one that must never be silently reported as fine just because ``loaded`` is True."""
+    panel = {"loaded": False, "last_date": None, "stale": True}
+    factors_present = market_data.factor_returns()
+    panel["loaded"] = all(f in factors_present for f in STYLE_FACTORS)
+    sess = getattr(market_data, "session", None)
+    if not panel["loaded"]:
+        panel["stale"] = True
+    elif sess is None:
+        panel["stale"] = False  # synthetic/fallback: factors present, can't be stale
+    else:
+        last = latest_factor_date(sess)
+        rdates = market_data.return_dates() if hasattr(market_data, "return_dates") else []
+        panel["last_date"] = last.isoformat() if last else None
+        panel["stale"] = bool(last is None or (rdates and (rdates[-1] - last).days > 7))
+    return panel
 
 
 def factor_cov_for(market_data, hedge_factors: tuple[str, ...]) -> np.ndarray | None:

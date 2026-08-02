@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     # Always-on price refresh: the server re-pulls latest prices every N minutes (0 = off).
     # Runtime-overridable + persisted via /settings/price-refresh; this is the default.
     price_refresh_minutes: int = 10
+    # Always-on factor-panel refresh (Ken French FF5+MOM): much lower frequency than prices
+    # since the panel publishes far less often. Runtime-overridable + persisted via
+    # /settings/factor-refresh; this is the default (once/day, 0 = off).
+    factor_refresh_minutes: int = 1440
     # Seed the golden DEMO positions (AAA/BBB/CCC/DDD) on startup. True for first-run/tests.
     # Set NEPTUNE_SEED_DEMO_POSITIONS=false for a real book: stops seeding AND removes any
     # existing demo names (so a real benchmark can price the whole book — see market_data_for).

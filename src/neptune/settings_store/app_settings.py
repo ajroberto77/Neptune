@@ -12,6 +12,7 @@ from neptune.config import settings
 from neptune.db.models import AppSettingORM
 
 _PRICE_REFRESH_KEY = "price_refresh_minutes"
+_FACTOR_REFRESH_KEY = "factor_refresh_minutes"
 _SECTOR_SOURCE_KEY = "sector_source"
 
 # Which classification schemes can drive the hedge optimizer's sector-concentration cap.
@@ -49,6 +50,27 @@ class AppSettingsService:
         row = self.session.get(AppSettingORM, _PRICE_REFRESH_KEY)
         if row is None:
             self.session.add(AppSettingORM(key=_PRICE_REFRESH_KEY, value=str(minutes)))
+        else:
+            row.value = str(minutes)
+        self.session.commit()
+        return minutes
+
+    def get_factor_refresh_minutes(self) -> int:
+        """Persisted interval if set, else the configured default. 0 = scheduler off."""
+        row = self.session.get(AppSettingORM, _FACTOR_REFRESH_KEY)
+        if row is None:
+            return settings.factor_refresh_minutes
+        try:
+            return int(row.value)
+        except ValueError:
+            return settings.factor_refresh_minutes
+
+    def set_factor_refresh_minutes(self, minutes: int) -> int:
+        """Persist the interval (clamped to ≥ 0). Returns the stored value."""
+        minutes = max(0, int(minutes))
+        row = self.session.get(AppSettingORM, _FACTOR_REFRESH_KEY)
+        if row is None:
+            self.session.add(AppSettingORM(key=_FACTOR_REFRESH_KEY, value=str(minutes)))
         else:
             row.value = str(minutes)
         self.session.commit()

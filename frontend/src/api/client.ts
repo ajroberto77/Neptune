@@ -252,6 +252,7 @@ export interface SecuritiesHealth {
   names_with_30plus_bars: number;
   names_with_computable_beta?: number;
   factor_panel?: string;
+  factor_panel_stale?: boolean; // true if factor_panel is loaded but hasn't refreshed recently
   source: string;
   reason: string;
 }
