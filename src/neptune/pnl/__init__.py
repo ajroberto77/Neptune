@@ -82,6 +82,17 @@ def open_quantity(lots: list[Lot]) -> float:
     return sum(lot.quantity for lot in lots)
 
 
+def blended_cost_basis(lots: list[Lot], direction: int) -> float | None:
+    """The fee-inclusive, quantity-weighted average cost basis across open lots — the same
+    average AVCO collapses onto when a partial reduction leaves a remainder (see
+    ``_reduce_avco``). ``None`` for a flat position (no open lots), not ``0.0`` — there is no
+    basis to report, not a basis of zero."""
+    total_qty = open_quantity(lots)
+    if total_qty <= 0:
+        return None
+    return sum(lot.quantity * cost_basis(lot, direction) for lot in lots) / total_qty
+
+
 def unrealised_pnl(lots: list[Lot], current_price: float, direction: int) -> float:
     """Mark-to-market on open lots: qty * (current - cost_basis) * direction (fee-inclusive)."""
     return sum(
@@ -196,7 +207,7 @@ def _reduce_specific(lots, quantity, exit_price, direction, specific_index, exit
 
 def _reduce_avco(lots, quantity, exit_price, direction, exit_fee_per_share=0.0):
     total_qty = open_quantity(lots)
-    avg_basis = sum(lot.quantity * cost_basis(lot, direction) for lot in lots) / total_qty
+    avg_basis = blended_cost_basis(lots, direction)
     realised = quantity * (exit_price - avg_basis) * direction - quantity * exit_fee_per_share
     leftover = total_qty - quantity
     if leftover <= 1e-12:

@@ -264,9 +264,16 @@ first vertical slice · 🔵 LATER = deferred.
       universe); `NEPTUNE_BENCHMARK` configurable. `test_market_flip.py`.
       REMAINING: flip the hedge optimizer once a REAL shortable universe replaces
       the synthetic `live_universe` candidate set.
-- [ ] Trade: **transaction fees → blended basis.** Add a fee input on the transaction; fold
-      it into cost basis (correctly for longs AND shorts — fees always reduce P&L), and show
-      the fee-inclusive blended basis. (Avg execution price already shown.)
+- [x] Trade: **transaction fees → blended basis.** The fee input, direction-aware cost-basis
+      fold (`pnl.cost_basis`), and booking were already correct and tested — the only real
+      gap was the read side: nothing computed/showed the fee-inclusive blended basis. Added
+      `pnl.blended_cost_basis(lots, direction)` (shared with `_reduce_avco`'s existing AVCO
+      collapse, one implementation now, not two) and `Position.avg_cost_basis`
+      (`domain/models.py`), exposed as `avg_cost_basis` in `GET /portfolios/{id}/positions`
+      (`None`, not `0.0`, for a flat/notional-only position). Frontend: a "Basis" column in
+      `Portfolio.tsx` (em-dash fallback), `PositionRow.avg_cost_basis` in `types.ts`.
+      `test_positions.py`/`test_api.py` (hand-computed long + short values, end-to-end
+      through the API, `None` for a flat position), `Portfolio.test.tsx`.
 - [x] **Live pricing — manual + always-on.** `POST /portfolios/{id}/refresh-prices` re-pulls
       a recent window for the book's tickers + benchmark (updates today's live bar). An
       always-on server-side scheduler (APScheduler, lazy/optional — degrades cleanly if absent)

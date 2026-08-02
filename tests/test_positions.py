@@ -219,3 +219,33 @@ def test_fee_per_share_is_stored_and_in_cost_basis(session):
     # Realized cost basis is 52 for a long: marking at the $50 execution price loses the fee.
     pnl = unrealised_pnl([Lot(100, 50.0, date.today(), 2.0)], current_price=50.0, direction=1)
     assert pnl == pytest.approx(-200.0)             # 100 * (50 - 52)
+
+
+def test_avg_cost_basis_is_fee_inclusive_and_direction_adjusted(session):
+    """Position.avg_cost_basis is the fee-inclusive, quantity-weighted basis across open lots
+    -- fee raises a long's basis (paid up), lowers a short's (proceeds reduced), and a flat
+    position (no lots) reports None, not a misleading 0.0."""
+    from datetime import date
+    from neptune.domain.models import TradeAction
+
+    service = PositionService(session)
+    service.create_portfolio("PB", "Basis Book")
+
+    # Long: two lots at different prices/fees. Cost basis per lot = entry_price + fee (long).
+    # Lot 1: 100 sh @ $50 + $2/sh fee -> cost basis 52. Lot 2: 100 sh @ $60 + $2/sh fee -> 62.
+    # Weighted avg = (100*52 + 100*62) / 200 = 57.0
+    service.book_trade("PB", "LNG", TradeAction.BUY, 100, 50.0, date.today(), fee_per_share=2.0)
+    service.book_trade("PB", "LNG", TradeAction.BUY, 100, 60.0, date.today(), fee_per_share=2.0)
+    long_pos = next(p for p in service.list_positions("PB") if p.ticker == "LNG")
+    assert long_pos.avg_cost_basis == pytest.approx(57.0)
+
+    # Short: one lot, 100 sh @ $50 + $1/sh fee -> cost basis = 50 - 1 = 49 (fee reduces proceeds).
+    service.book_trade("PB", "SHT", TradeAction.SELL, 100, 50.0, date.today(), fee_per_share=1.0)
+    short_pos = next(p for p in service.list_positions("PB") if p.ticker == "SHT")
+    assert short_pos.side.value == "SHORT"
+    assert short_pos.avg_cost_basis == pytest.approx(49.0)
+
+    # Flat (notional-only, no lots): None, not 0.0.
+    service.add_position("PB", Position("FLT", Side.LONG, 100_000))
+    flat_pos = next(p for p in service.list_positions("PB") if p.ticker == "FLT")
+    assert flat_pos.avg_cost_basis is None

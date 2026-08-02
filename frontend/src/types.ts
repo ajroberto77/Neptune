@@ -38,6 +38,7 @@ export interface PositionRow {
   beta: number;
   beta_method?: string; // "pipeline" or "forward_override"
   cost_basis_method?: string;
+  avg_cost_basis?: number | null; // fee-inclusive blended basis; null for a flat position
   pnl: PnL;
 }
 

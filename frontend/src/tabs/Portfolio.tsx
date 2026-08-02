@@ -68,6 +68,7 @@ function Head() {
       <tr className="text-left text-xs uppercase text-ocean-muted">
         <th className="pb-2 font-medium">Ticker</th>
         <th className="pb-2 text-right font-medium">Price</th>
+        <th className="pb-2 text-right font-medium">Basis</th>
         <th className="pb-2 text-right font-medium">Shares</th>
         <th className="pb-2 text-right font-medium">Notional</th>
         <th className="pb-2 text-right font-medium">Beta-Adj Notional</th>
@@ -110,6 +111,7 @@ function TotalsRow({
       <td className="py-2 text-xs uppercase text-ocean-muted">{label}</td>
       <td></td>
       <td></td>
+      <td></td>
       <td className="py-2 text-right font-mono">{label.startsWith("Net") ? signedMoney(notional) : money(notional)}</td>
       <td className="py-2 text-right font-mono">{signedMoney(ba)}</td>
       <td className={`py-2 text-right font-mono ${pnlColor(t.day)}`}>{signedMoney(t.day)}</td>
@@ -141,6 +143,9 @@ function PositionTr({ p }: { p: PositionRow }) {
       </td>
       <td className="py-2 text-right font-mono">{p.price == null ? "—" : price(p.price)}</td>
       <td className="py-2 text-right font-mono">
+        {p.avg_cost_basis == null ? "—" : price(p.avg_cost_basis)}
+      </td>
+      <td className="py-2 text-right font-mono">
         {p.quantity ? p.quantity.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"}
       </td>
       <td className="py-2 text-right font-mono">{money(p.notional)}</td>
@@ -159,7 +164,7 @@ function PositionTr({ p }: { p: PositionRow }) {
 function SubHeader({ label, count }: { label: string; count: number }) {
   return (
     <tr>
-      <td colSpan={11} className="pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-ocean-muted">
+      <td colSpan={12} className="pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-ocean-muted">
         {label} <span className="text-ocean-faint">({count})</span>
       </td>
     </tr>

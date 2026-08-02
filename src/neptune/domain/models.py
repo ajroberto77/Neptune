@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
 
-from neptune.pnl import CostBasisMethod
+from neptune.pnl import CostBasisMethod, Lot, blended_cost_basis
 
 
 class Side(str, Enum):
@@ -119,6 +119,13 @@ class Position:
     def quantity(self) -> float:
         """Total open quantity across lots (0 for notional-only positions)."""
         return sum(l.quantity for l in self.lots)
+
+    @property
+    def avg_cost_basis(self) -> float | None:
+        """Fee-inclusive, direction-adjusted weighted-average cost basis across open lots.
+        ``None`` for a flat/notional-only position (no open lots) — no basis to report."""
+        lots = [Lot(l.quantity, l.entry_price, l.entry_date, l.fee_per_share) for l in self.lots]
+        return blended_cost_basis(lots, self.direction)
 
     def __post_init__(self) -> None:
         if self.notional < 0:

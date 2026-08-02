@@ -289,6 +289,30 @@ def test_positions_include_pnl_and_book(client):
     assert any(abs(p["pnl"]["unrealized"]) > 0 for p in listing)
 
 
+def test_positions_expose_fee_inclusive_avg_cost_basis(client):
+    # Two lots on a fresh ticker: 100 sh @ $50 + $2/sh fee, then 100 sh @ $60 + $2/sh fee.
+    # Cost basis per lot (long) = entry + fee -> 52 and 62; weighted avg = 57.0.
+    client.post(f"/portfolios/{PID}/transactions", json={
+        "ticker": "BASIS1", "action": "BUY", "quantity": 100, "price": 50.0,
+        "fee_per_share": 2.0, "trade_date": "2026-01-02",
+    })
+    client.post(f"/portfolios/{PID}/transactions", json={
+        "ticker": "BASIS1", "action": "BUY", "quantity": 100, "price": 60.0,
+        "fee_per_share": 2.0, "trade_date": "2026-01-03",
+    })
+    listing = client.get(f"/portfolios/{PID}/positions").json()
+    basis1 = next(p for p in listing if p["ticker"] == "BASIS1")
+    assert basis1["avg_cost_basis"] == pytest.approx(57.0)
+
+    # A notional-only position (no lots) reports None, not a misleading 0.0.
+    client.post(f"/portfolios/{PID}/positions", json={
+        "ticker": "NOLOT", "side": "LONG", "notional": 100_000,
+    })
+    nolot = next(p for p in client.get(f"/portfolios/{PID}/positions").json()
+                 if p["ticker"] == "NOLOT")
+    assert nolot["avg_cost_basis"] is None
+
+
 def test_portfolio_pnl_splits_by_book(client):
     body = client.get(f"/portfolios/{PID}/pnl").json()
     assert {"day", "total", "unrealized", "realized"} <= body["total"].keys()

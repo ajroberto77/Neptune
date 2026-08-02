@@ -80,4 +80,18 @@ describe("Portfolio", () => {
     // Only the Shorts section is empty.
     expect(screen.getAllByText("No positions.").length).toBe(1);
   });
+
+  it("renders the fee-inclusive blended basis, with an em-dash for a flat position", () => {
+    render(
+      <Portfolio
+        positions={[
+          pos({ ticker: "AAA", avg_cost_basis: 201.5 }),
+          pos({ ticker: "FLAT", avg_cost_basis: null }),
+        ]}
+      />,
+    );
+    expect(screen.getByText("$201.50")).toBeInTheDocument();
+    // FLAT's basis cell (no lots) falls back to an em-dash, not a misleading $0.00.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -806,6 +806,9 @@ def list_positions(portfolio_id: str, session: Session = Depends(get_session)):
                 "beta": round(metrics[p.ticker].beta, 4),
                 "beta_method": metrics[p.ticker].beta_method,
                 "cost_basis_method": (p.cost_basis_method or CostBasisMethod.FIFO).value,
+                "avg_cost_basis": (
+                    round(p.avg_cost_basis, 4) if p.avg_cost_basis is not None else None
+                ),
                 # Per-name coverage; pm falls back to the book's lead PM.
                 "pm_id": p.pm_id or lead_pm,
                 "analyst_id": p.analyst_id,
