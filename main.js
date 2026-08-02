@@ -20,7 +20,7 @@
 // those are written by Iridium Backend. The default API port is 8433 so Neptune and Iridium
 // Backend (8432) can run side-by-side.
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import net from 'net';
@@ -32,6 +32,8 @@ const __dirname  = path.dirname(__filename);
 
 const isDev      = process.env.NODE_ENV === 'development';
 const API_SCRIPT = path.join(__dirname, 'scripts', 'neptune_api.py');
+// .ico renders crisper in the Windows title bar/taskbar; every other platform takes the PNG.
+const ICON_PATH  = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 
 let mainWindow = null;
 let apiProcess = null;
@@ -331,6 +333,7 @@ function createWindow() {
     width: 1280,
     height: 860,
     backgroundColor: '#0e1b2a',
+    icon: ICON_PATH,
     // Frameless: the app draws its own TitleBar (with window controls) like the rest of the
     // Iridium suite. `-webkit-app-region: drag` on that bar moves the window.
     frame: false,
@@ -428,6 +431,12 @@ function registerIpc() {
 // ── App lifecycle ──────────────────────────────────────────────────────────────
 
 app.on('ready', () => {
+  // BrowserWindow's `icon` option doesn't reach the macOS Dock for an unpackaged (`electron .`)
+  // run — that needs setting explicitly. A packaged build would instead take its icon from the
+  // app bundle at build time.
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(nativeImage.createFromPath(ICON_PATH));
+  }
   registerIpc();
   startApi(loadConfig());
   createWindow();
