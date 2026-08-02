@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Protocol
 
 FRED_BASE = "https://api.stlouisfed.org/fred"
 # ALFRED realtime bounds: the FRED-documented earliest/longest range → all vintages.
@@ -34,6 +35,50 @@ class VintagePoint:
     reference_date: date
     vintage_date: date
     value: float
+
+
+class MacroProvider(Protocol):
+    """Fetch macro time-series from an external data source (FRED/ALFRED today; extensible)."""
+
+    def observations(
+        self, series_id: str, *, start: date | None = None, end: date | None = None
+    ) -> list[ObservationPoint]: ...
+
+    def vintage_observations(
+        self, series_id: str, *, start: date | None = None, end: date | None = None
+    ) -> list[VintagePoint]: ...
+
+
+class RecordedMacroProvider:
+    """In-memory macro provider for offline dev/tests."""
+
+    def __init__(
+        self,
+        observations: dict[str, list[ObservationPoint]] | None = None,
+        vintages: dict[str, list[VintagePoint]] | None = None,
+    ):
+        self._observations = observations or {}
+        self._vintages = vintages or {}
+
+    def observations(
+        self, series_id: str, *, start: date | None = None, end: date | None = None
+    ) -> list[ObservationPoint]:
+        pts = self._observations.get(series_id, [])
+        if start is not None:
+            pts = [p for p in pts if p.obs_date >= start]
+        if end is not None:
+            pts = [p for p in pts if p.obs_date <= end]
+        return pts
+
+    def vintage_observations(
+        self, series_id: str, *, start: date | None = None, end: date | None = None
+    ) -> list[VintagePoint]:
+        pts = self._vintages.get(series_id, [])
+        if start is not None:
+            pts = [p for p in pts if p.reference_date >= start]
+        if end is not None:
+            pts = [p for p in pts if p.reference_date <= end]
+        return pts
 
 
 class FredProvider:
