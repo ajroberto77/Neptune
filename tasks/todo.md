@@ -140,6 +140,30 @@ first vertical slice · 🔵 LATER = deferred.
         (setting persistence/validation, endpoints, `DbMarketData.sector()` per scheme),
         `Settings.test.tsx`. Verified live against a real Postgres DB shaped like
         `cato_securities` (LEFT JOIN + `IN`-list bindparams), not just unit tests.
+      - CATO's own sync now writes its Yahoo-tier classification straight into
+        `Security.sector` (the same column, not a new one); `securities/ingest.py`'s
+        yfinance `fetch_sector` call is kept but demoted to a **fallback that only fires
+        when `Security.sector is None`** — i.e. only for names CATO hasn't covered (an
+        out-of-universe benchmark/ETF, or a ticker that hasn't been through a universe
+        sync yet). Two directions tested: CATO's value is never overwritten by the
+        fallback (`test_ingest_ticker_never_overwrites_a_sector_cato_already_provided`),
+        and a re-sync with no CATO Yahoo record never blanks a sector already set
+        (`test_sync_never_blanks_an_existing_sector_when_cato_has_no_yahoo_value`).
+      - 🔵 **Known limitation, accepted (not fixed): `SECTOR_*` factors are not
+        point-in-time correct.** `build_neptune_factors()` (`risk/factor_build.py`,
+        `sector_by_ticker = {t: md.sector(t) for t in names}`) tags a name's *entire*
+        historical return window with its *current* sector/classification before
+        computing the equal-weight sector-basket-minus-market factor — so a name that
+        was reclassified mid-window has its pre-reclassification returns misattributed
+        to its new sector. This is a real but slow-moving gap (SIC/Ken French/Yahoo
+        reclassifications are infrequent); accepted for now rather than built, per PM
+        direction. Note this is narrower than it first looked: the hedge optimizer's
+        *live* candidate sector-concentration cap (`db_universe()` in `risk/analytics.py`)
+        is correctly current-value-only by design — it sizes a *current* proposal, so
+        there's no "point in time" to get wrong — only the historical `SECTOR_*` factor
+        construction is affected. CATO's new `entity_classification_history` table is the
+        path that would make this fixable (join classification-as-of each return's date
+        instead of today's), if it's ever worth revisiting.
 - [x] Configurable DB connections + Settings page: `settings_store` (write-only password,
       URL builder, env fallback), `db_connections` table, `/settings/connections` CRUD +
       `/test` + `/settings/universe/sync` endpoints, and a React Settings tab (all three

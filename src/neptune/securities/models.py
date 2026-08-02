@@ -71,8 +71,13 @@ class Security(SecuritiesBase):
     ticker: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
     security_name: Mapped[str | None] = mapped_column(String, nullable=True)
     security_type: Mapped[str | None] = mapped_column(String, nullable=True)  # 'Common Stock'…
-    # GICS-like sector for the hard sector-concentration cap. Populated from yfinance for now
-    # (Yahoo taxonomy); a licensed GICS feed can repopulate this column later.
+    # Yahoo-taxonomy sector for the hard sector-concentration cap (the sector_source app
+    # setting's YAHOO default reads this directly — see data/db_market.py). Primary source is
+    # now CATO's own Yahoo-tier classification, projected here by
+    # neptune.universe.sync_universe_projection; yfinance (securities/ingest.py's
+    # fetch_sector) only fills this in when CATO hasn't covered a name. SIC/Ken French
+    # 12-industry are selectable alternatives stored separately, in
+    # ``security_classifications`` below — this column stays Yahoo-only.
     sector: Mapped[str | None] = mapped_column(String, nullable=True)
     # Identifiers carried for cross-reference (all nullable; upstream may not have enriched).
     cusip: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -29,11 +29,14 @@ _FROM_INSTRUMENTS = "FROM instruments i LEFT JOIN legal_entities le ON le.entity
 # "Investable" predicate — see module docstring. Common stock with a ticker.
 _INVESTABLE_PREDICATE = "i.ticker IS NOT NULL AND i.security_type = 'Common Stock'"
 
-# Only classification schemes Neptune actually surfaces as selectable sector sources
-# (see settings_store's sector_source setting). CATO's own YAHOO fallback tier is skipped —
-# Neptune already sources Yahoo sector data directly (securities/providers.py), so pulling
-# CATO's copy of the same thing would just be a second, redundant path to the same value.
-_CLASSIFICATION_SCHEMES = ("SIC", "KENFRENCH_12")
+# Classification schemes pulled from CATO. SIC/KENFRENCH_12 are selectable sector sources
+# (see settings_store's sector_source setting, default YAHOO). YAHOO is different: it's not
+# a selectable scheme itself — it's CATO's own copy of the same Yahoo Finance sector value
+# Neptune has always sourced directly (securities/providers.py). Pulling it lets Neptune's
+# own yfinance fetch (securities/ingest.py's fetch_sector) become a fallback that only fires
+# for names CATO hasn't covered yet, instead of always re-fetching independently — see
+# universe/sync.py's _sync_classifications for exactly how it's applied.
+_CLASSIFICATION_SCHEMES = ("SIC", "KENFRENCH_12", "YAHOO")
 
 
 def _row_to_security(row, *, is_investable: bool) -> UniverseSecurity:

@@ -15,8 +15,10 @@ _PRICE_REFRESH_KEY = "price_refresh_minutes"
 _SECTOR_SOURCE_KEY = "sector_source"
 
 # Which classification schemes can drive the hedge optimizer's sector-concentration cap.
-# YAHOO is Neptune's own long-standing source (securities/providers.py's fetch_sector) and
-# stays the default — SIC/KENFRENCH_12 are read-only imports from cato_securities'
+# YAHOO is Neptune's own long-standing source and stays the default — now primarily
+# projected from cato_securities' own Yahoo-tier classification (securities/models.py's
+# Security.sector), with securities/ingest.py's own yfinance fetch as a fallback for names
+# CATO hasn't covered. SIC/KENFRENCH_12 are read-only imports from cato_securities'
 # entity_classifications (see neptune.universe), selectable but never auto-switched to.
 SECTOR_SOURCES = ("YAHOO", "SIC", "KENFRENCH_12")
 DEFAULT_SECTOR_SOURCE = "YAHOO"

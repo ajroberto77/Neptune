@@ -149,7 +149,11 @@ def ingest_ticker(
         session.add(security)
         session.commit()
     # Enrich the sector (best-effort) for the hard sector-concentration cap, if the provider
-    # supports it and we don't already have one. Never fatal to the price ingest.
+    # supports it and we don't already have one. This is now a FALLBACK, not the primary
+    # source: neptune.universe.sync_universe_projection already fills this in from CATO's own
+    # Yahoo-tier classification when it has one (see that module's docstring) — this only
+    # fires for names CATO hasn't covered (e.g. benchmarks/ETFs outside the universe) or a
+    # ticker that hasn't been through a universe sync yet. Never fatal to the price ingest.
     if security.sector is None and hasattr(provider, "fetch_sector"):
         sector = provider.fetch_sector(ticker)
         if sector:

@@ -144,6 +144,41 @@ def test_ingest_ticker_unknown_raises(securities_session):
         ingest_ticker(securities_session, provider, "NOPE", date(2026, 1, 1), date(2026, 1, 2))
 
 
+class _ProviderWithSector(RecordedProvider):
+    """RecordedProvider plus a controllable fetch_sector, to exercise ingest_ticker's own
+    Yahoo-sector fallback (RecordedProvider itself has no fetch_sector at all -- the
+    hasattr() guard would just skip the block entirely)."""
+
+    def __init__(self, histories, sector):
+        super().__init__(histories)
+        self._sector = sector
+
+    def fetch_sector(self, ticker):
+        return self._sector
+
+
+def test_ingest_ticker_fetches_sector_only_when_not_already_set(securities_session):
+    """The fallback guard (security.sector is None) is what makes this a fallback rather
+    than a second, uncoordinated writer of the same column CATO's universe sync also
+    populates (see universe/sync.py) -- prove both halves of that guard."""
+    _seed_security(securities_session, instrument_id=320193, ticker="AAPL")
+    provider = _ProviderWithSector({"AAPL": _history()}, sector="Technology")
+    ingest_ticker(securities_session, provider, "AAPL", date(2026, 1, 1), date(2026, 1, 31))
+    assert securities_session.get(Security, 320193).sector == "Technology"
+
+
+def test_ingest_ticker_never_overwrites_a_sector_cato_already_provided(securities_session):
+    sec = _seed_security(securities_session, instrument_id=789019, ticker="MSFT")
+    sec.sector = "Business Equipment"  # as if CATO's universe sync already set this
+    securities_session.commit()
+
+    provider = _ProviderWithSector({"MSFT": _history()}, sector="Technology")
+    ingest_ticker(securities_session, provider, "MSFT", date(2026, 1, 1), date(2026, 1, 31))
+
+    # Neptune's own fetch never ran -- CATO's value stands.
+    assert securities_session.get(Security, 789019).sector == "Business Equipment"
+
+
 def test_recorded_provider_filters_to_window(securities_session):
     provider = RecordedProvider({"AAPL": _history()})
     h = provider.fetch("AAPL", date(2026, 1, 1), date(2026, 1, 2))

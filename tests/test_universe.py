@@ -37,6 +37,10 @@ CLASSIFICATIONS = [
     ClassificationRecord("9999999999", "SIC", "code", "0100", "Agriculture"),
 ]
 
+CLASSIFICATIONS_WITH_YAHOO = CLASSIFICATIONS + [
+    ClassificationRecord("0000320193", "YAHOO", "sector", "Technology", "Technology"),
+]
+
 
 def test_recorded_universe_resolves_and_filters():
     u = RecordedUniverse(UNIVERSE)
@@ -112,3 +116,39 @@ def test_sync_classifications_idempotent_updates_in_place(securities_session):
     ).all()
     assert len(rows) == 1
     assert rows[0].description == "Electronic Computers, Revised"
+
+
+def test_sync_writes_cato_yahoo_tier_into_security_sector_not_a_classification_row(securities_session):
+    """YAHOO isn't a selectable scheme -- it fills the pre-existing Security.sector column
+    directly (so it's what securities/ingest.py's own fallback checks), never gets its own
+    security_classifications row (that would just duplicate the same value in two places)."""
+    source = RecordedUniverse(UNIVERSE_WITH_CIKS, CLASSIFICATIONS_WITH_YAHOO)
+    sync_universe_projection(securities_session, source)
+
+    assert securities_session.get(Security, 320193).sector == "Technology"
+
+    yahoo_rows = securities_session.scalars(
+        select(SecurityClassification).where(SecurityClassification.scheme == "YAHOO")
+    ).all()
+    assert yahoo_rows == []  # no security_classifications row for YAHOO, by design
+
+    # SIC/KENFRENCH_12 rows still land as usual, unaffected.
+    sic_kf12 = securities_session.scalars(
+        select(SecurityClassification).where(SecurityClassification.instrument_id == 320193)
+    ).all()
+    assert {r.scheme for r in sic_kf12} == {"SIC", "KENFRENCH_12"}
+
+
+def test_sync_never_blanks_an_existing_sector_when_cato_has_no_yahoo_value(securities_session):
+    """A security that already has a sector (e.g. from Neptune's own yfinance fallback, or a
+    prior sync) must keep it across a re-sync where CATO's classifications list has no YAHOO
+    record for that CIK -- a naive unconditional overwrite would silently blank real data."""
+    sync_universe_projection(securities_session, RecordedUniverse(UNIVERSE_WITH_CIKS))
+    securities_session.get(Security, 320193).sector = "Technology"  # simulate the fallback
+    securities_session.commit()
+
+    # Re-sync with classifications that say nothing about YAHOO for this CIK.
+    sync_universe_projection(
+        securities_session, RecordedUniverse(UNIVERSE_WITH_CIKS, CLASSIFICATIONS)
+    )
+    assert securities_session.get(Security, 320193).sector == "Technology"
