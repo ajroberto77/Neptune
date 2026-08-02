@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from neptune.securities.adjust import reconstruct_adj_close
@@ -119,6 +119,49 @@ def ingest_history(
 
     session.commit()
     return result
+
+
+def has_sufficient_history(session: Session, ticker: str, min_bars: int = 200) -> bool:
+    """Whether ``ticker`` already has at least ``min_bars`` stored price rows — used to skip
+    a redundant re-pull when a name is already well-priced."""
+    iid = session.scalar(select(Security.instrument_id).where(Security.ticker == ticker))
+    if iid is None:
+        return False
+    bars = session.scalar(select(func.count(Price.ts)).where(Price.instrument_id == iid)) or 0
+    return bars >= min_bars
+
+
+def count_projected_securities(session: Session) -> int:
+    """How many securities exist in the local projection, independent of pricing."""
+    return session.scalar(select(func.count(Security.instrument_id))) or 0
+
+
+def projected_tickers(session: Session) -> list[str]:
+    """Every ticker in the local projection (no pricing requirement) — the default backfill
+    target when a caller doesn't name specific tickers."""
+    return [
+        t for (t,) in session.execute(
+            select(Security.ticker).where(Security.ticker.is_not(None))
+        ).all()
+    ]
+
+
+def tickers_with_min_bars(
+    session: Session, *, min_bars: int = 30, exclude: str | None = None
+) -> list[str]:
+    """Tickers (sorted) with at least ``min_bars`` stored price rows, optionally excluding one
+    (e.g. the benchmark, reported separately in the caller's diagnostics)."""
+    stmt = (
+        select(Security.ticker)
+        .join(Price, Price.instrument_id == Security.instrument_id)
+        .where(Security.ticker.isnot(None))
+        .group_by(Security.ticker)
+        .having(func.count(Price.ts) >= min_bars)
+    )
+    if exclude is not None:
+        stmt = stmt.where(Security.ticker != exclude)
+    rows = session.execute(stmt).all()
+    return sorted(t for (t,) in rows)
 
 
 def ingest_ticker(

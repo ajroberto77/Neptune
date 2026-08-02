@@ -7,6 +7,43 @@ don't repeat the mistake. Newest first.
 
 ---
 
+## 2026-08-02 — Not every boundary needs a Protocol; only build one where a swap is real
+
+**Pattern (architecture audit, Phase 2):** Asked to audit the DB-access and Electron-IPC
+boundaries the same way Phase 1 (provider DI, below) audited data sources. The honest
+finding for BOTH was "don't build a Protocol here":
+
+- **DB access**: `PositionService`/`ConnectionSettingsService`/`macro/repository.py` already
+  sit between the API and the ORM, and route handlers correctly call into them for the bulk
+  of the CRUD surface. There's no second storage backend anywhere in sight — no comment, no
+  partial implementation, no roadmap doc suggesting positions/portfolios/settings might move
+  off SQLAlchemy/Postgres. Building a `PositionStore` Protocol with a `RecordedPositionStore`
+  fixture, when the real implementation would just wrap the same SQLAlchemy repository
+  internally, is speculative complexity with no plausible second backend.
+- **Electron IPC**: `isElectron`/bridge-existence checks are already concentrated in one file
+  (`Settings.tsx`) plus three small, self-contained satellites — not smeared across the UI.
+  Electron-vs-browser is a static fact known once at page load, not a runtime-swapped axis
+  any caller chooses between. A formal `PlatformBridge` interface with two class
+  implementations would formalize something nothing actually varies along.
+
+**What WAS real, in both cases, was narrower and different in kind than a missing interface:**
+a handful of inline SQL queries in `api/main.py` that should've been in the repository layer
+(mechanical — move the code, no new abstraction), and a genuine correctness bug (the
+`neptune-config.json` vs `db_connections`-table duality silently letting a stale stored row
+override a fresh config with zero error or UI signal — a real bug, not a modularity nicety).
+
+**Pattern:** When auditing a codebase for "should this be behind an interface," the
+deciding question is Phase 1's own test — is there a *plausible second implementation*, not
+just "is this code technically coupled to one library." A repository class being internally
+SQLAlchemy-specific is fine as long as callers don't know that. Don't manufacture interface
+ceremony for symmetry with a DIFFERENT boundary that legitimately needed one. And always
+verify a "fix" that spans processes (here: Electron main process → spawned Python sidecar →
+Postgres) against the REAL stack, not just by reading the code — the config-sync fix was
+tested by actually starting uvicorn against a real Postgres DB and confirming the rows landed
+correctly, not just by trusting the code looked right.
+
+---
+
 ## 2026-08-02 — Adding a new upstream data source doesn't mean switching the default to it
 
 **Pattern (CATO issuer-classification handoff):** CATO added SIC/Ken French 12-industry

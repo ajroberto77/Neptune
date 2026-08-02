@@ -8,14 +8,19 @@
 //   3. Expose IPC for the renderer (via preload.cjs → window.neptune):
 //        - config get/save (local bootstrap config in userData)
 //        - database connection test
-//        - external links, file pickers
+//        - frameless-window controls
 //   4. Broadcast the current config to the renderer as window._lastCfg on load and after save.
+//   5. After every non-test-mode (re)start, wait for the backend to come up and push the
+//      current SECURITIES/MACRO/UNIVERSE config into the portfolio DB's stored connection
+//      rows too — those resolve live from the stored row, which wins over env unconditionally,
+//      so without this a stale row from an earlier session could silently override what this
+//      one just configured (see syncStoredConnections below).
 //
 // Neptune owns the *portfolio* database (read-write) and reads securities/macro read-only —
 // those are written by Iridium Backend. The default API port is 8433 so Neptune and Iridium
 // Backend (8432) can run side-by-side.
 
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -172,7 +177,7 @@ function backendEnv(cfg) {
 
 // ── Python FastAPI backend lifecycle ──────────────────────────────────────────
 
-function startApi(cfg) {
+async function startApi(cfg) {
   stopApi();
   const py = resolvePython(cfg);
   console.log(`[neptune] starting API: ${py} ${API_SCRIPT}`);
@@ -182,9 +187,6 @@ function startApi(cfg) {
     stream.setEncoding('utf-8');
     stream.on('data', (chunk) => {
       process.stdout.write(`[api] ${chunk}`);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('api:log', chunk.toString());
-      }
     });
   };
   relay(apiProcess.stdout);
@@ -197,12 +199,84 @@ function startApi(cfg) {
   apiProcess.on('error', (err) => {
     console.error(`[neptune] failed to start API: ${err.message}`);
   });
+
+  // Test Mode's throwaway SQLite has no real db_connections table worth protecting.
+  if (!testMode) {
+    const healthy = await waitForApiHealth(cfg);
+    if (healthy) {
+      await syncStoredConnections(cfg);
+    } else {
+      console.warn('[neptune] API did not become healthy in time; skipping connection sync');
+    }
+  }
 }
 
 function stopApi() {
   if (apiProcess) {
     apiProcess.kill();
     apiProcess = null;
+  }
+}
+
+// ── Keeping the stored connection rows in sync ────────────────────────────────
+//
+// SECURITIES/MACRO/UNIVERSE resolve live from a `db_connections` row stored IN the
+// portfolio Postgres DB when one exists — it wins over env UNCONDITIONALLY (see
+// settings_store/service.py's resolve_url()). Electron's own source of truth is
+// neptune-config.json, injected as env vars on every spawn — but nothing kept the
+// stored row in sync with it, so a row left over from an earlier session (the web UI,
+// or a prior Electron config) would silently override what THIS session just
+// configured, with no error and no UI signal. Fixed by pushing the current config into
+// the stored rows after every non-test-mode start, so "stored row wins" is always
+// correct-by-construction instead of stale. PORTFOLIO is excluded deliberately — it's
+// env-only by necessity, since the table being written lives in the database being
+// pointed at (see db/runtime.py's docstring). Best-effort: a failure here never blocks
+// the config save or the backend restart, since the backend is already running with the
+// right env vars for this process either way — it only protects against a FUTURE boot
+// (this session or a later one) silently reverting to a stale stored row.
+
+async function waitForApiHealth(cfg, { timeoutMs = 15000, intervalMs = 300 } = {}) {
+  const url = `${apiBaseUrl(cfg)}/health`;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return true;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
+async function syncStoredConnections(cfg) {
+  const roles = [
+    ['SECURITIES', cfg.securitiesDb],
+    ['MACRO', cfg.macroDb],
+    ...(cfg.universeDb && cfg.universeDb.database ? [['UNIVERSE', cfg.universeDb]] : []),
+  ];
+  const base = apiBaseUrl(cfg);
+  for (const [role, db] of roles) {
+    try {
+      const res = await fetch(`${base}/settings/connections/${role}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: db.host,
+          port: db.port,
+          database: db.database,
+          username: db.user,
+          // Electron's cfg is the FULL desired state, not a partial edit form — always
+          // send the real value (including '') rather than null, which the API treats
+          // as "leave the stored secret unchanged" (the web form's semantics, not ours).
+          password: db.password ?? '',
+        }),
+      });
+      if (!res.ok) {
+        console.warn(`[neptune] sync ${role} connection failed: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.warn(`[neptune] sync ${role} connection failed: ${err.message}`);
+    }
   }
 }
 
@@ -239,19 +313,7 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'frontend', 'dist', 'index.html'));
   }
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    broadcastConfig(loadConfig());
-  });
-
   mainWindow.on('closed', () => { mainWindow = null; });
-}
-
-// Inject window._lastCfg into the renderer (also emits a 'config:changed' event via preload).
-function broadcastConfig(cfg) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const payload = JSON.stringify(cfg);
-  mainWindow.webContents.executeJavaScript(`window._lastCfg = ${payload};`).catch(() => {});
-  mainWindow.webContents.send('config:changed', cfg);
 }
 
 // ── IPC handlers (renderer ↔ main) ────────────────────────────────────────────
@@ -259,10 +321,9 @@ function broadcastConfig(cfg) {
 function registerIpc() {
   ipcMain.handle('config:get', () => loadConfig());
 
-  ipcMain.handle('config:save', (_evt, cfg) => {
+  ipcMain.handle('config:save', async (_evt, cfg) => {
     saveConfig(cfg);
-    broadcastConfig(cfg);
-    startApi(cfg);            // reconnect backend to the (possibly new) databases
+    await startApi(cfg);      // reconnect backend to the (possibly new) databases, then sync
     return { ok: true };
   });
 
@@ -271,9 +332,9 @@ function registerIpc() {
   // Test Mode: relaunch the backend on throwaway SQLite (+ seeded demo book) or back on the
   // configured Postgres. Returns the resulting mode so the renderer can reflect it.
   ipcMain.handle('app:isTestMode', () => testMode);
-  ipcMain.handle('app:setTestMode', (_evt, on) => {
+  ipcMain.handle('app:setTestMode', async (_evt, on) => {
     testMode = Boolean(on);
-    startApi(loadConfig());
+    await startApi(loadConfig());
     return testMode;
   });
 
@@ -311,13 +372,6 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('win:close', () => mainWindow?.close());
-
-  ipcMain.handle('shell:openExternal', (_evt, url) => shell.openExternal(url));
-
-  ipcMain.handle('dialog:openFile', async (_evt, options) => {
-    const res = await dialog.showOpenDialog(mainWindow, options || { properties: ['openFile'] });
-    return res.canceled ? null : res.filePaths[0];
-  });
 }
 
 // ── App lifecycle ──────────────────────────────────────────────────────────────

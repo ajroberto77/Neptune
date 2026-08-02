@@ -6,21 +6,10 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Local cache of the latest config, kept in sync via the 'config:changed' event so the
-// renderer can read it synchronously (mirrors window._lastCfg).
-let lastConfig = null;
-ipcRenderer.on('config:changed', (_evt, cfg) => { lastConfig = cfg; });
-
 contextBridge.exposeInMainWorld('neptune', {
   // ── Config ──────────────────────────────────────────────────────────────
   getConfig:   () => ipcRenderer.invoke('config:get'),
   saveConfig:  (cfg) => ipcRenderer.invoke('config:save', cfg),
-  lastConfig:  () => lastConfig,
-  onConfigChanged: (cb) => {
-    const handler = (_evt, cfg) => cb(cfg);
-    ipcRenderer.on('config:changed', handler);
-    return () => ipcRenderer.removeListener('config:changed', handler);
-  },
 
   // ── Backend ─────────────────────────────────────────────────────────────
   getApiBaseUrl:   () => ipcRenderer.invoke('app:getApiBaseUrl'),
@@ -30,18 +19,9 @@ contextBridge.exposeInMainWorld('neptune', {
   isTestMode:    () => ipcRenderer.invoke('app:isTestMode'),
   startTestMode: () => ipcRenderer.invoke('app:setTestMode', true),
   stopTestMode:  () => ipcRenderer.invoke('app:setTestMode', false),
-  onApiLog: (cb) => {
-    const handler = (_evt, line) => cb(line);
-    ipcRenderer.on('api:log', handler);
-    return () => ipcRenderer.removeListener('api:log', handler);
-  },
 
   // ── Window controls (frameless TitleBar) ─────────────────────────────────
   minimizeWindow:       () => ipcRenderer.invoke('win:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('win:toggleMaximize'),
   closeWindow:          () => ipcRenderer.invoke('win:close'),
-
-  // ── Misc ────────────────────────────────────────────────────────────────
-  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
-  pickFile:     (options) => ipcRenderer.invoke('dialog:openFile', options),
 });
