@@ -35,21 +35,31 @@ export function PortfolioSidebar({
     const active = id === selectedId;
     const reason = disabledReason?.(id);
     const disabled = Boolean(reason);
+    // Group headers can be in the disabled set too (e.g. Hedge disables the roll-up groups —
+    // you can't target "Long / Short" itself as a hedge book), but that's about click behavior,
+    // not legibility: a section label reading "unavailable" is misleading, since the label
+    // itself was never a hedge target — only the books under it are. So the dimmed disabled
+    // *color* only applies to book/consolidated rows; group labels keep their own tier color
+    // and stay merely non-clickable (cursor + title tooltip) when disabled.
+    const dimDisabled = disabled && tier !== "group";
     // Resting styles carry the hierarchy; books are NOT indented — the format (case/size/weight)
     // is the differentiator, not an offset.
     const resting =
       tier === "consolidated"
         ? "text-sm font-semibold"
         : tier === "group"
-          ? "mt-2 font-display text-[11px] font-semibold uppercase tracking-[0.12em]"
+          ? "mt-2 font-display text-xs font-semibold uppercase tracking-[0.08em]"
           : "text-sm font-normal";
     // Resting text colour per tier (kept separate from the active colour to avoid Tailwind clashes).
-    const restColor = disabled
+    // Group labels are structural nav headers, not decorative — text-slate-400 (used elsewhere for
+    // secondary/muted text) reads AA-legal in isolation but disappears next to uppercase+tracking at
+    // this size, so it gets a step brighter than the ordinary "muted" tier.
+    const restColor = dimDisabled
       ? "text-slate-600"
       : tier === "consolidated"
         ? "text-slate-100"
         : tier === "group"
-          ? "text-slate-400"
+          ? "text-slate-300"
           : "text-slate-200";
     return (
       <button
@@ -63,7 +73,7 @@ export function PortfolioSidebar({
           "block w-full truncate rounded border-l-2 px-3 py-2 text-left transition",
           resting,
           disabled
-            ? `border-transparent ${restColor} cursor-not-allowed opacity-50`
+            ? `border-transparent ${restColor} cursor-not-allowed${dimDisabled ? " opacity-50" : ""}`
             : active
               ? "border-ocean-accent bg-ocean-accent/15 text-blue-300"
               : `border-transparent ${restColor} hover:bg-white/5`,
