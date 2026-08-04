@@ -104,7 +104,7 @@ export default function App() {
 
   // Poll backend health; retry portfolio load whenever the sidecar comes back online.
   // Fast initial probes at 3 s and 7 s catch the Python startup race (sidecar needs a few
-  // seconds to boot); the 20 s interval handles recoveries after "Save & restart backend".
+  // seconds to boot); the 20 s interval handles recoveries after a Test Mode on/off restart.
   useEffect(() => {
     let alive = true;
     // Start as "was down" so the very first successful health check retries the portfolio

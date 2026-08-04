@@ -368,9 +368,11 @@ function createWindow() {
 function registerIpc() {
   ipcMain.handle('config:get', () => loadConfig());
 
+  // Save only persists — it never restarts the backend. A changed connection takes effect on
+  // the next launch (or immediately via a Test Mode transition, which restarts by necessity
+  // since it's swapping the whole DB target, not just editing config on disk).
   ipcMain.handle('config:save', async (_evt, cfg) => {
     saveConfig(cfg);
-    await startApi(cfg);      // reconnect backend to the (possibly new) databases, then sync
     return { ok: true };
   });
 

@@ -297,9 +297,11 @@ export function Settings({
   const isDirty = dirtyCount > 0;
 
   /** Persists everything edited on the page. Databases fan out across the roles that make up
-   *  each family; in Electron they go in one config write (one backend restart) rather than
-   *  one per database. Failures are reported per item — there is no bulk endpoint, so a
-   *  partial save is possible and is better surfaced than hidden. */
+   *  each family; in Electron they go in one config write rather than one per database. Save
+   *  never restarts the backend — a changed connection takes effect on the next app launch (or
+   *  immediately if it's applied via a Test Mode transition, which restarts by necessity).
+   *  Failures are reported per item — there is no bulk endpoint, so a partial save is possible
+   *  and is better surfaced than hidden. */
   async function handleSaveAll() {
     if (!isDirty || saving) return;
     setSaving(true);
@@ -380,7 +382,7 @@ export function Settings({
     if (failures.length) {
       setError(`Some settings didn't save — ${failures.join("; ")}`);
     } else {
-      setSavedNote(isElectron && dirtyRoles.size > 0 ? "Saved — backend restarting…" : "Saved");
+      setSavedNote("Saved");
       setTimeout(() => setSavedNote(""), 4000);
     }
     setDirtyRoles(new Set());
@@ -517,13 +519,7 @@ export function Settings({
             aria-label="save-settings"
             className="rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-40"
           >
-            {saving
-              ? "Saving…"
-              : isElectron && dirtyRoles.size > 0
-                ? `Save & restart backend (${dirtyCount})`
-                : isDirty
-                  ? `Save (${dirtyCount})`
-                  : "Save"}
+            {saving ? "Saving…" : isDirty ? `Save (${dirtyCount})` : "Save"}
           </button>
           {onClose && (
             <button
@@ -567,51 +563,6 @@ export function Settings({
             {/* ═══ GENERAL ═══ */}
             {section === "general" && (
               <>
-                {/* Test Mode — surfaces only in the Electron shell, and only when relevant:
-                    either no database is reachable (offer it) or it's already active (offer a
-                    way out). It relaunches the backend on a throwaway SQLite DB with a seeded
-                    demo book + synthetic market data. */}
-                {canTestMode && inTestMode ? (
-                  <div className="flex items-center justify-between gap-4 rounded-lg border border-status-watch/40 bg-status-watch/10 p-4">
-                    <div>
-                      <p className="font-display text-sm font-semibold text-status-watch">
-                        Test Mode is active
-                      </p>
-                      <p className="mt-1 text-xs text-slate-300">
-                        Running on a throwaway local database with synthetic demo data — nothing
-                        here is real.
-                      </p>
-                    </div>
-                    <button
-                      onClick={onStopTestMode}
-                      disabled={switchingMode}
-                      className="shrink-0 rounded border border-ocean-border px-3 py-1.5 text-sm text-slate-200 transition hover:border-ocean-accent hover:text-white disabled:opacity-50"
-                    >
-                      {switchingMode ? "Switching…" : "Exit Test Mode"}
-                    </button>
-                  </div>
-                ) : canTestMode && dbReachable === false ? (
-                  <div className="flex items-center justify-between gap-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
-                    <div>
-                      <p className="font-display text-sm font-semibold text-white">
-                        No database connection found
-                      </p>
-                      <p className="mt-1 text-xs text-slate-300">
-                        Can&apos;t reach a database, so risk and positions won&apos;t load. Explore
-                        the app in Test Mode — a throwaway local database seeded with a demo book
-                        and synthetic data.
-                      </p>
-                    </div>
-                    <button
-                      onClick={onStartTestMode}
-                      disabled={switchingMode}
-                      className="shrink-0 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-50"
-                    >
-                      {switchingMode ? "Starting…" : "Enable Test Mode"}
-                    </button>
-                  </div>
-                ) : null}
-
                 {/* Server price refresh — how often the backend pulls fresh marks for the open
                     books. "Live" streaming arrives with the Bloomberg feed (disabled until then). */}
                 {onChangeMins && (
@@ -710,6 +661,54 @@ export function Settings({
                   environment variable. The password is write-only: leave it blank to keep the
                   stored secret.
                 </p>
+
+                {/* Test Mode — surfaces only in the Electron shell, and only when relevant:
+                    either no database is reachable (offer it) or it's already active (offer a
+                    way out). Lives here rather than General since it's specifically about "the
+                    configured databases aren't visible" — the app defaults to them and only
+                    offers this escape hatch when they can't be reached. Unlike Save, entering or
+                    leaving Test Mode does restart the backend (it has to — it's swapping the
+                    whole DB target), since there's no live-DB config to fall back to otherwise. */}
+                {canTestMode && inTestMode ? (
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-status-watch/40 bg-status-watch/10 p-4">
+                    <div>
+                      <p className="font-display text-sm font-semibold text-status-watch">
+                        Test Mode is active
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Running on a throwaway local database with synthetic demo data — nothing
+                        here is real.
+                      </p>
+                    </div>
+                    <button
+                      onClick={onStopTestMode}
+                      disabled={switchingMode}
+                      className="shrink-0 rounded border border-ocean-border px-3 py-1.5 text-sm text-slate-200 transition hover:border-ocean-accent hover:text-white disabled:opacity-50"
+                    >
+                      {switchingMode ? "Switching…" : "Exit Test Mode"}
+                    </button>
+                  </div>
+                ) : canTestMode && dbReachable === false ? (
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
+                    <div>
+                      <p className="font-display text-sm font-semibold text-white">
+                        No database connection found
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Can&apos;t reach a database, so risk and positions won&apos;t load. Explore
+                        the app in Test Mode — a throwaway local database seeded with a demo book
+                        and synthetic data.
+                      </p>
+                    </div>
+                    <button
+                      onClick={onStartTestMode}
+                      disabled={switchingMode}
+                      className="shrink-0 rounded bg-ocean-accent px-3 py-1.5 text-sm font-medium text-white transition hover:bg-ocean-accent/80 disabled:opacity-50"
+                    >
+                      {switchingMode ? "Starting…" : "Enable Test Mode"}
+                    </button>
+                  </div>
+                ) : null}
 
                 {DB_FAMILIES.map((family) => (
                   <DbFamilyCard

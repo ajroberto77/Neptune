@@ -124,8 +124,9 @@ export function DbFamilyCard({
   testDisabledFor: (role: DbRole) => string | undefined;
   /** Which path Save takes for the bootstrap (PORTFOLIO) database — the badge below
    *  describes what actually happens, since the two paths behave differently: Electron
-   *  rewrites its config file and restarts the whole backend; the web path repoints the
-   *  running app live, no restart (see api/main.py's PORTFOLIO branch). */
+   *  rewrites its config file only (no restart — takes effect on next launch); the web
+   *  path repoints the running app live, no restart needed (see api/main.py's PORTFOLIO
+   *  branch). */
   isElectron?: boolean;
 }) {
   const base = familyBase(family, conns);
@@ -169,7 +170,7 @@ export function DbFamilyCard({
                 <div className="mt-0.5 flex flex-wrap items-center gap-1">
                   {m.bootstrap && (
                     <span className="rounded bg-ocean-accent/20 px-1.5 py-0.5 text-[10px] text-ocean-accent">
-                      bootstrap · {isElectron ? "restarts backend on save" : "reconnects immediately"}
+                      bootstrap · {isElectron ? "applies on next launch" : "reconnects immediately"}
                     </span>
                   )}
                   {meta(m.role).fromEnv && (
