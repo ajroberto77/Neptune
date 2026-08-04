@@ -48,10 +48,15 @@ export function TitleBar({
   testMode = false,
   onSettings,
 }: Props) {
-  const pill =
-    statusText ?? (status === "running" ? "Working" : status === "error" ? "Offline" : "Ready");
-  const pillCls =
-    status === "error"
+  // Test Mode subsumes the ordinary status pill rather than adding a second one next to it —
+  // "running on synthetic data" is a more important thing to know than "the backend answered a
+  // health check", so it wins the one pill slot instead of competing for attention with it.
+  const pill = testMode
+    ? "Test Mode · Synthetic Data"
+    : (statusText ?? (status === "running" ? "Working" : status === "error" ? "Offline" : "Ready"));
+  const pillCls = testMode
+    ? "border-status-watch/50 bg-status-watch/10 text-status-watch"
+    : status === "error"
       ? "border-status-breach/50 text-status-breach"
       : status === "running"
         ? "border-status-ok/50 text-status-ok"
@@ -72,14 +77,6 @@ export function TitleBar({
       <span className="h-3.5 w-px bg-white/15" />
       <span className="font-display text-sm font-light text-ocean-muted">{subtitle}</span>
       <div className="flex-1" />
-      {testMode && (
-        <span
-          className="app-no-drag rounded-full border border-status-watch/50 bg-status-watch/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-status-watch"
-          aria-label="test-mode"
-        >
-          Test Mode · synthetic data
-        </span>
-      )}
       <span
         className={`app-no-drag rounded-full border px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${pillCls}`}
         aria-label="backend-status"
