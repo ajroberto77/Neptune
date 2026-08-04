@@ -5,9 +5,9 @@
 
 Starts both servers and streams their logs together:
   * [api]  FastAPI backend via uvicorn on http://localhost:8000  (--reload)
-  * [web]  Vite frontend dev server on http://localhost:5173 (proxies API calls to :8000)
+  * [web]  Vite frontend dev server on http://localhost:5176 (proxies API calls to :8000)
 
-Open the UI at http://localhost:5173. Press Ctrl-C once to stop both.
+Open the UI at http://localhost:5176. Press Ctrl-C once to stop both.
 
 Notes
 -----
@@ -30,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"
 API_URL = "http://localhost:8000"
-WEB_URL = "http://localhost:5173"
+WEB_URL = "http://localhost:5176"
 
 
 def _pump(proc: subprocess.Popen, label: str) -> None:

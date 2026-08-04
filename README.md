@@ -32,10 +32,10 @@ python run.py
 ```
 
 Starts **both** servers and streams their logs together, then open the UI at
-http://localhost:5173:
+http://localhost:5176:
 
 * `[api]` FastAPI backend (uvicorn, `--reload`) on http://localhost:8000
-* `[web]` Vite frontend on http://localhost:5173 (proxies API calls to the backend)
+* `[web]` Vite frontend on http://localhost:5176 (proxies API calls to the backend)
 
 Press **Ctrl-C** once to stop both. Run it from your activated venv (so `uvicorn` resolves);
 first run auto-installs the frontend deps if `frontend/node_modules` is missing (`npm`
