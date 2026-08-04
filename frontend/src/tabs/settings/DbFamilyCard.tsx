@@ -145,12 +145,21 @@ export function DbFamilyCard({
       </div>
       <p className="mb-4 text-xs text-ocean-muted">{family.blurb}</p>
 
-      {/* Databases first, always visible — this is the day-to-day surface: which database each
-          role points at, and whether it connects. Server credentials (host/port/user/password)
-          are edited far less often and aren't "a database" themselves, so they live under
-          Advanced along with the per-database server-override checkboxes, out of the way by
-          default for every family (not just ones with multiple members). */}
+      {/* Server — the base config, always visible: host/port/user/password IS the straight
+          connection to the database. Advanced (below the Databases list) is for the genuinely
+          rare case, breaking one database out onto a different server entirely. */}
       <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
+        Server
+      </div>
+      <ServerFields
+        value={base}
+        onChange={onChangeShared}
+        hasStoredPassword={meta(family.members[0].role).hasPassword}
+        showSslmode={showSslmode}
+        idPrefix={`${family.id}-shared`}
+      />
+
+      <div className="mb-2 mt-5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
         Databases
       </div>
       <div className="space-y-2">
@@ -203,73 +212,58 @@ export function DbFamilyCard({
         })}
       </div>
 
-      <div className="mt-4">
-        <button
-          onClick={() => setShowAdvanced((v) => !v)}
-          aria-label={`${family.id}-advanced-toggle`}
-          className="rounded border border-ocean-border px-3 py-1.5 text-xs text-ocean-muted hover:text-slate-200"
-        >
-          {advancedOpen ? "▾" : "▸"} Advanced — server connection details
-          {overrideCount > 0 && (
-            <span className="ml-2 text-status-watch">
-              {overrideCount} on {overrideCount === 1 ? "its" : "their"} own server
-            </span>
-          )}
-        </button>
-
-        {advancedOpen && (
-          <div className="mt-3 space-y-4 rounded border border-ocean-border/60 bg-ocean-bg/40 p-4">
-            <div>
-              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
-                Server
-              </div>
-              <ServerFields
-                value={base}
-                onChange={onChangeShared}
-                hasStoredPassword={meta(family.members[0].role).hasPassword}
-                showSslmode={showSslmode}
-                idPrefix={`${family.id}-shared`}
-              />
-            </div>
-
-            {family.members.length > 1 && (
-              <div className="space-y-4 border-t border-ocean-border/60 pt-4">
-                <p className="text-xs text-ocean-muted">
-                  Break a database out onto its own server. Left unchecked it follows the family
-                  server above.
-                </p>
-                {family.members.slice(1).map((m) => {
-                  const own = overrides.has(m.role);
-                  return (
-                    <div key={m.role}>
-                      <label className="flex items-center gap-2 text-sm text-slate-200">
-                        <input
-                          type="checkbox"
-                          aria-label={`${m.role.toLowerCase()}-own-server`}
-                          checked={own}
-                          onChange={(e) => onToggleOverride(m.role, e.target.checked)}
-                        />
-                        {m.label} uses a different server
-                      </label>
-                      {own && (
-                        <div className="mt-2 pl-6">
-                          <ServerFields
-                            value={conns[m.role] ?? EMPTY_CONN}
-                            onChange={(patch) => onChangeMember(m.role, patch)}
-                            hasStoredPassword={meta(m.role).hasPassword}
-                            showSslmode={showSslmode}
-                            idPrefix={m.role.toLowerCase()}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+      {family.members.length > 1 && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            aria-label={`${family.id}-advanced-toggle`}
+            className="rounded border border-ocean-border px-3 py-1.5 text-xs text-ocean-muted hover:text-slate-200"
+          >
+            {advancedOpen ? "▾" : "▸"} Advanced — per-database overrides
+            {overrideCount > 0 && (
+              <span className="ml-2 text-status-watch">
+                {overrideCount} on {overrideCount === 1 ? "its" : "their"} own server
+              </span>
             )}
-          </div>
-        )}
-      </div>
+          </button>
+
+          {advancedOpen && (
+            <div className="mt-3 space-y-4 rounded border border-ocean-border/60 bg-ocean-bg/40 p-4">
+              <p className="text-xs text-ocean-muted">
+                Break a database out onto its own server. Left unchecked it follows the family
+                server above.
+              </p>
+              {family.members.slice(1).map((m) => {
+                const own = overrides.has(m.role);
+                return (
+                  <div key={m.role}>
+                    <label className="flex items-center gap-2 text-sm text-slate-200">
+                      <input
+                        type="checkbox"
+                        aria-label={`${m.role.toLowerCase()}-own-server`}
+                        checked={own}
+                        onChange={(e) => onToggleOverride(m.role, e.target.checked)}
+                      />
+                      {m.label} uses a different server
+                    </label>
+                    {own && (
+                      <div className="mt-2 pl-6">
+                        <ServerFields
+                          value={conns[m.role] ?? EMPTY_CONN}
+                          onChange={(patch) => onChangeMember(m.role, patch)}
+                          hasStoredPassword={meta(m.role).hasPassword}
+                          showSslmode={showSslmode}
+                          idPrefix={m.role.toLowerCase()}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
