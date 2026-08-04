@@ -662,13 +662,35 @@ export function Settings({
                   stored secret.
                 </p>
 
+                {DB_FAMILIES.map((family) => (
+                  <DbFamilyCard
+                    key={family.id}
+                    family={family}
+                    conns={conns}
+                    overrides={ownServer}
+                    onChangeShared={(patch) => updateShared(family, patch)}
+                    onChangeMember={updateMember}
+                    onToggleOverride={(role, own) => toggleOverride(family, role, own)}
+                    onTest={handleTest}
+                    status={status}
+                    rowMeta={rowMeta}
+                    showSslmode={!isElectron}
+                    isElectron={isElectron}
+                    testDisabledFor={(role) =>
+                      !isElectron && dirtyRoles.has(role)
+                        ? "Save first — this tests the stored connection, not the edits above."
+                        : undefined
+                    }
+                  />
+                ))}
+
                 {/* Test Mode — surfaces only in the Electron shell, and only when relevant:
                     either no database is reachable (offer it) or it's already active (offer a
-                    way out). Lives here rather than General since it's specifically about "the
-                    configured databases aren't visible" — the app defaults to them and only
-                    offers this escape hatch when they can't be reached. Unlike Save, entering or
-                    leaving Test Mode does restart the backend (it has to — it's swapping the
-                    whole DB target), since there's no live-DB config to fall back to otherwise. */}
+                    way out). Lives at the bottom, below the actual database cards, so it reads as
+                    a fallback for when the above doesn't work rather than a primary option.
+                    Unlike Save, entering or leaving Test Mode does restart the backend (it has
+                    to — it's swapping the whole DB target), since there's no live-DB config to
+                    fall back to otherwise. */}
                 {canTestMode && inTestMode ? (
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-status-watch/40 bg-status-watch/10 p-4">
                     <div>
@@ -692,12 +714,13 @@ export function Settings({
                   <div className="flex items-center justify-between gap-4 rounded-lg border border-ocean-accent/40 bg-ocean-accent/10 p-4">
                     <div>
                       <p className="font-display text-sm font-semibold text-white">
-                        No database connection found
+                        Risk and positions aren&apos;t loading
                       </p>
                       <p className="mt-1 text-xs text-slate-300">
-                        Can&apos;t reach a database, so risk and positions won&apos;t load. Explore
-                        the app in Test Mode — a throwaway local database seeded with a demo book
-                        and synthetic data.
+                        At least one required database (Portfolio, Securities, or Macro) isn&apos;t
+                        reachable — test each one above to see which. Explore the app in Test Mode
+                        meanwhile — a throwaway local database seeded with a demo book and
+                        synthetic data.
                       </p>
                     </div>
                     <button
@@ -709,28 +732,6 @@ export function Settings({
                     </button>
                   </div>
                 ) : null}
-
-                {DB_FAMILIES.map((family) => (
-                  <DbFamilyCard
-                    key={family.id}
-                    family={family}
-                    conns={conns}
-                    overrides={ownServer}
-                    onChangeShared={(patch) => updateShared(family, patch)}
-                    onChangeMember={updateMember}
-                    onToggleOverride={(role, own) => toggleOverride(family, role, own)}
-                    onTest={handleTest}
-                    status={status}
-                    rowMeta={rowMeta}
-                    showSslmode={!isElectron}
-                    isElectron={isElectron}
-                    testDisabledFor={(role) =>
-                      !isElectron && dirtyRoles.has(role)
-                        ? "Save first — this tests the stored connection, not the edits above."
-                        : undefined
-                    }
-                  />
-                ))}
               </>
             )}
 

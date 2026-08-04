@@ -395,23 +395,36 @@ function registerIpc() {
   });
 
   // Test a database connection without saving it. Spawns a short-lived python that opens and
-  // closes a connection using the provided settings.
+  // closes a connection using the provided settings. The script catches its own exception and
+  // prints one clean line — a bare `e.connect()` would otherwise dump SQLAlchemy's full
+  // traceback (dozens of lines, sometimes with raw ANSI colour codes) straight into the UI.
   ipcMain.handle('db:test', async (_evt, db) => {
     const cfg = loadConfig();
-    const script =
-      "import os,sqlalchemy as sa;" +
-      "e=sa.create_engine(os.environ['TEST_DB_URL']);" +
-      "c=e.connect(); c.close(); print('OK')";
+    const script = [
+      'import os, sys, sqlalchemy as sa',
+      'try:',
+      "    e = sa.create_engine(os.environ['TEST_DB_URL'])",
+      '    c = e.connect()',
+      '    c.close()',
+      "    print('OK')",
+      'except Exception as exc:',
+      "    print(f'{type(exc).__name__}: {exc}', file=sys.stderr)",
+      '    sys.exit(1)',
+    ].join('\n');
+    // Strip ANSI escapes and cap length as a defensive fallback — the try/except above should
+    // already keep this to one clean line, but guards against anything unanticipated (e.g. the
+    // interpreter itself failing before reaching the script, a segfault, an env issue).
+    const clean = (s) => s.replace(/\x1b\[[0-9;]*m/g, '').trim().slice(0, 300);
     return await new Promise((resolve) => {
       const env = { ...process.env, TEST_DB_URL: buildDbUrl(db) };
       const p = spawn(resolvePython(cfg), ['-c', script], { cwd: __dirname, env });
       let out = '', err = '';
       p.stdout.on('data', (d) => (out += d));
       p.stderr.on('data', (d) => (err += d));
-      p.on('error', (e) => resolve({ ok: false, message: e.message }));
+      p.on('error', (e) => resolve({ ok: false, message: clean(e.message) }));
       p.on('close', (code) => {
         if (code === 0 && out.includes('OK')) resolve({ ok: true, message: 'Connection OK' });
-        else resolve({ ok: false, message: (err || out || `exit ${code}`).trim() });
+        else resolve({ ok: false, message: clean(err || out || `exit ${code}`) });
       });
     });
   });
