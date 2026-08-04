@@ -187,6 +187,8 @@ describe("Settings", () => {
     render(<Settings />);
     gotoSection("Databases");
     await screen.findByText("Neptune databases");
+    // Server fields live under Advanced now.
+    fireEvent.click(screen.getByLabelText("neptune-advanced-toggle"));
     // One edit to the family server, not three edits to three cards.
     fireEvent.change(screen.getByLabelText("neptune-shared-host"), {
       target: { value: "pg-prod.internal" },
@@ -214,6 +216,7 @@ describe("Settings", () => {
     render(<Settings />);
     gotoSection("Databases");
     await screen.findByText("Neptune databases");
+    fireEvent.click(screen.getByLabelText("neptune-advanced-toggle"));
     fireEvent.change(screen.getByLabelText("neptune-shared-host"), {
       target: { value: "pg-prod.internal" },
     });
@@ -229,6 +232,7 @@ describe("Settings", () => {
     gotoSection("Databases");
     await screen.findByText("CATO databases");
     expect(screen.getByLabelText("universe-test")).toBeEnabled();
+    fireEvent.click(screen.getByLabelText("cato-advanced-toggle"));
     fireEvent.change(screen.getByLabelText("cato-shared-host"), {
       target: { value: "cato-prod.internal" },
     });
@@ -259,6 +263,7 @@ describe("Settings", () => {
     render(<Settings onClose={onClose} />);
     gotoSection("Databases");
     await screen.findByText("Neptune databases");
+    fireEvent.click(screen.getByLabelText("neptune-advanced-toggle"));
     fireEvent.change(screen.getByLabelText("neptune-shared-host"), {
       target: { value: "somewhere-else" },
     });

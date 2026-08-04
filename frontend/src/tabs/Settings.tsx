@@ -146,6 +146,7 @@ export function Settings({
   const [betaDiag, setBetaDiag] = useState<BetaDiagnostics | null>(null);
 
   const [creds, setCreds] = useState<CredentialRow[]>([]);
+  const [credsError, setCredsError] = useState<string | null>(null);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [keyStatus, setKeyStatus] = useState<Record<string, string>>({});
   const [catalog, setCatalog] = useState<MacroCatalogRow[]>([]);
@@ -197,10 +198,20 @@ export function Settings({
       });
   }
 
+  // Unlike DB connections (which Electron edits locally via neptune-config.json and so work
+  // fully offline), API keys are stored via the backend's own settings store — there is no
+  // offline-safe path here in either build. A failed fetch used to be silently swallowed in
+  // Electron (matching the DB-connections fetch, where that's correct since it has a fallback
+  // source); credentials have no such fallback, so that left the API Keys card rendering nothing
+  // with no explanation whenever the backend was unreachable. Surfaced properly instead.
   function loadCreds() {
     fetchCredentials()
-      .then(setCreds)
+      .then((rows) => {
+        setCreds(rows);
+        setCredsError(null);
+      })
       .catch((e) => {
+        setCredsError(String(e));
         if (!isElectron) setError(String(e));
       });
   }
@@ -757,6 +768,14 @@ export function Settings({
                     </a>
                     . Keys are write-only — leave blank to keep the stored secret.
                   </p>
+                  {credsError && creds.length === 0 && (
+                    <p className="mb-3 rounded border border-status-breach/40 bg-status-breach/10 p-3 text-xs text-status-breach">
+                      Can&apos;t load API keys — the backend is unreachable. Unlike database
+                      connections, keys are stored server-side with no offline fallback; fix the
+                      database connection above (or wait for the backend to come up) and reopen
+                      this tab.
+                    </p>
+                  )}
                   <div className="space-y-3">
                     {creds.map((c) => (
                       <div key={c.provider} className="flex flex-wrap items-end gap-2">
