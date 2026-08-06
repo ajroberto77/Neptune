@@ -1,5 +1,5 @@
 // TitleBar — the app's top brand bar, modeled on the Iridium desktop suite's TitleBar
-// (gem mark + mono wordmark + subtitle + backend status pill + settings gear), restyled into
+// (badge mark + mono wordmark + subtitle + backend status pill + settings gear), restyled into
 // Neptune's dark "Deep Ocean" palette. Purely presentational.
 
 interface Props {
@@ -13,30 +13,22 @@ interface Props {
   onSettings?: () => void;
 }
 
-// A small faceted "gem" mark, echoing the suite's logo so Neptune reads as a sibling app —
-// tinted to Neptune's blues/teal rather than Iridium's gold.
-function Gem() {
+// The Neptune brand mark (trident-on-badge), from the official kit — assets/brand/Neptune -
+// Badge.svg, inlined so it can be sized/colored via CSS like the rest of the title bar.
+function Badge() {
   return (
     <svg
-      className="h-[18px] w-[18px] flex-shrink-0"
-      viewBox="0 0 17 17"
+      className="h-[22px] w-[22px] flex-shrink-0"
+      viewBox="0 0 48 48"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
     >
-      <polygon
-        points="8.5,1.5 14.5,5 14.5,12 8.5,15.5 2.5,12 2.5,5"
-        fill="none"
-        stroke="rgba(129,140,248,0.55)"
-        strokeWidth="0.9"
+      <rect width="48" height="48" rx="12" fill="#144696" />
+      <path
+        d="M24.0431 9.4054C24.1814 9.52043 25.8385 14.2453 26.0931 14.8784C25.8001 14.8689 25.4807 14.8731 25.1855 14.8712C25.1789 15.0606 25.1761 15.2537 25.1788 15.4444C25.2239 18.6725 25.1758 21.9109 25.2969 25.1347C25.3055 25.2724 25.5911 25.5886 25.7074 25.6273C26.2933 25.7979 27.1424 25.6842 27.7306 25.5373C29.8818 25.0001 29.8492 23.7907 30.0459 22.0302C30.2346 20.3424 30.5574 17.3096 31.4234 15.9195C31.1586 15.8794 30.834 15.8646 30.5618 15.8457C31.4546 14.6834 32.7027 13.7743 34.075 13.2439C34.5085 13.0763 35.1361 12.9476 35.601 12.8414C35.1499 13.2623 34.7064 13.6868 34.3348 14.1922C32.4515 16.7529 32.5611 19.8505 32.2317 22.8588C32.1638 23.6095 32.1318 24.3507 31.998 25.0921C31.6419 27.0657 29.9879 28.003 28.1655 28.3793C27.0354 28.6127 25.6619 28.6533 25.3959 30.049C25.2524 30.8026 25.7651 30.8319 26.1193 31.3646C26.6559 32.1611 26.0092 32.6941 25.3711 33.0951C25.3023 33.5955 25.3102 34.7091 25.2947 35.2543L25.1707 38.5946L23.9734 38.588L23.0447 38.5749L22.8034 33.0798C22.507 32.9055 22.2983 32.8198 22.0816 32.5312C21.9138 32.3103 21.8436 32.0304 21.8876 31.7565C21.9677 31.2314 22.38 30.9456 22.7707 30.6558C22.8963 28.4252 20.8772 28.6854 19.289 28.2318C15.8857 27.2596 16.061 24.9403 15.842 21.99C15.7643 21.067 15.6705 20.1455 15.5607 19.2257C15.2707 16.6837 14.4547 14.4606 12.399 12.827C12.8598 12.9453 13.3501 13.0236 13.8007 13.181C15.4627 13.7616 16.4916 14.5812 17.6276 15.8548C17.3051 15.8636 17.069 15.8656 16.7512 15.919C17.8293 18.0659 17.9339 20.7502 18.2553 23.1088C18.3564 23.8513 18.4777 24.5063 19.14 25.0038C19.8898 25.5671 21.1187 25.735 22.0381 25.6847C22.3948 25.6652 22.6764 25.4137 22.8812 25.1422C22.9453 24.0438 22.9149 22.6917 22.9289 21.5782C22.9721 19.35 22.9948 17.1215 22.9967 14.8929C22.6804 14.8926 22.3292 14.8748 22.0103 14.8657C22.3008 14.3056 22.6161 13.3416 22.8347 12.7286C23.2293 11.6179 23.6321 10.5101 24.0431 9.4054Z"
+        fill="white"
       />
-      <polygon points="8.5,1.5 14.5,5 8.5,8.5" fill="rgba(59,130,246,0.45)" />
-      <polygon points="8.5,8.5 14.5,5 14.5,12" fill="rgba(59,130,246,0.28)" />
-      <polygon points="8.5,8.5 14.5,12 8.5,15.5" fill="rgba(129,140,248,0.22)" />
-      <polygon points="8.5,8.5 8.5,15.5 2.5,12" fill="rgba(34,197,94,0.26)" />
-      <polygon points="8.5,8.5 2.5,12 2.5,5" fill="rgba(59,130,246,0.34)" />
-      <polygon points="8.5,8.5 2.5,5 8.5,1.5" fill="rgba(129,140,248,0.30)" />
-      <circle cx="8.5" cy="8.5" r="1.4" fill="rgba(232,239,247,0.7)" />
     </svg>
   );
 }
@@ -70,7 +62,7 @@ export function TitleBar({
 
   return (
     <div className="app-drag flex h-12 flex-shrink-0 items-center gap-3 border-b border-ocean-border bg-ocean-panel pl-4">
-      <Gem />
+      <Badge />
       <span className="font-mono text-lg font-bold uppercase tracking-[0.2em] text-white">
         Neptune
       </span>
