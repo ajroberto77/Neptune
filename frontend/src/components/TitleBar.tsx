@@ -19,7 +19,7 @@ interface Props {
 function Glyph() {
   return (
     <svg
-      className="h-[18px] w-[18px] flex-shrink-0"
+      className="h-[22px] w-[22px] flex-shrink-0"
       viewBox="0 0 148 148"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
