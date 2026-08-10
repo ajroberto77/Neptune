@@ -53,6 +53,20 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
 
+    # JANUS (iridium-iam, the suite identity service) issuer this process validates tokens
+    # against — see design doc §15.5: Neptune is already a server holding its own DB
+    # credential, so an auth check added here is genuine enforcement on day one, unlike a
+    # desktop app's login screen. api/auth.py builds the IamClient from this; api/main.py
+    # requires a valid token, aud="iridium:neptune", on every route except /health (see that
+    # file's own comment on the router.dependencies-append ordering trick that achieves it).
+    janus_issuer: str = "http://127.0.0.1:8700"
+    # CORS: the Vite dev server origin, ADDED to the existing file://-origin allowance for the
+    # Electron shell — never allow_origins=["*"] again once real auth headers are involved (a
+    # wildcard origin combined with allow_credentials would be a real CSRF-adjacent hole; here
+    # allow_credentials stays False, same reasoning JANUS's own admin-web CORS setup uses, but
+    # "*" is still needlessly broad now that this isn't a toy).
+    frontend_origin: str = "http://localhost:5176"
+
     # --- Quant Engine constants (HARD invariants; see CLAUDE.md) ---
     ewma_lambda: float = 0.94          # EWMA decay for beta estimation
     beta_lookback: int = 252           # trading days in the estimation window

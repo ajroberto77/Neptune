@@ -8,6 +8,10 @@ import react from "@vitejs/plugin-react";
 // allowlists are all scheme+host+port-specific). API_TARGET must match neptune.config's
 // api_host/api_port default (127.0.0.1:8000) unless NEPTUNE_API_PORT is overridden.
 const API_TARGET = "http://localhost:8000";
+// JANUS (iridium-iam), not Neptune's own backend -- /auth and /me are served by the identity
+// service (design doc §12), reached at its default local port. Proxying them here means the
+// dev-server browser origin never has to CORS against a different port at all.
+const JANUS_TARGET = "http://127.0.0.1:8700";
 
 export default defineConfig({
   // Relative asset paths so a production build loads correctly from a file:// origin when the
@@ -29,6 +33,8 @@ export default defineConfig({
       "/factors": API_TARGET,
       "/people": API_TARGET,
       "/health": API_TARGET,
+      "/auth": JANUS_TARGET,
+      "/me": JANUS_TARGET,
     },
   },
   test: {

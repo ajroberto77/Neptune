@@ -36,3 +36,6 @@ redis==5.0.7
 # --- Dev / test ---
 pytest==9.0.3
 httpx==0.28.1
+
+# --- Identity (JANUS / iridium-iam) — see design doc §15.5 ---
+iridium-iam-client[fastapi] @ git+https://github.com/ajroberto77/Iridium_Infra.git#subdirectory=client/python

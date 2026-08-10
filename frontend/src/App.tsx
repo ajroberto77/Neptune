@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import {
   approveHedge,
+  AUTH_EXPIRED_EVENT,
   bookHedgeLegs,
   fetchFrontier,
   fetchHealth,
@@ -22,6 +23,7 @@ import {
   refreshPrices,
   setPriceRefresh,
 } from "./api/client";
+import { logout } from "./api/auth";
 import type { PortfolioMeta } from "./api/client";
 import type { TradeAction, TransactionInput } from "./types";
 import { Portfolio } from "./tabs/Portfolio";
@@ -411,6 +413,9 @@ export default function App() {
         status={status}
         testMode={inTestMode}
         onSettings={openSettings}
+        onSignOut={() => {
+          void logout().then(() => window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT)));
+        }}
       />
       <TabBar tabs={NAV_TABS} active={tab} onChange={(t) => setTab(t as Tab)} running={runningTabs} />
       <div className="flex min-h-0 flex-1">

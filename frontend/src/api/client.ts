@@ -8,6 +8,7 @@ import type {
   TradeAction,
   TransactionRow,
 } from "../types";
+import { clearTokens, getAccessToken, refresh } from "./auth";
 
 // ── Backend base URL resolution ───────────────────────────────────────────────
 // In a plain browser (dev), requests are relative and Vite's proxy forwards them to the
@@ -55,9 +56,37 @@ async function apiBaseUrl(): Promise<string> {
   }
 }
 
+function withAuthHeader(init: RequestInit | undefined): RequestInit {
+  const token = getAccessToken();
+  if (!token) return init ?? {};
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return { ...init, headers };
+}
+
+/** Dispatched when a request comes back 401 after an attempted refresh -- the session is gone
+ * and the caller must re-authenticate. AuthGate listens for this to fall back to the login
+ * screen without every one of Neptune's ~30 API call sites needing to know about auth at all. */
+export const AUTH_EXPIRED_EVENT = "neptune:auth-expired";
+
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const base = await apiBaseUrl();
-  const res = await fetch(`${base}${url}`, init);
+  let res = await fetch(`${base}${url}`, withAuthHeader(init));
+  if (res.status === 401 && getAccessToken() !== null) {
+    // One retry after a refresh -- covers the ordinary "access token expired mid-session" case
+    // without a caller-visible failure. A second 401 (refresh itself failed, or the new token
+    // is also rejected) means the session is genuinely gone.
+    const refreshed = await refresh();
+    if (refreshed) {
+      res = await fetch(`${base}${url}`, withAuthHeader(init));
+    }
+    if (res.status === 401) {
+      clearTokens();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+      }
+    }
+  }
   if (!res.ok) {
     const detail = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${detail}`);

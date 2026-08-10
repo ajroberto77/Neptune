@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from datetime import date, timedelta
 
+from neptune.api import auth
 from neptune.config import settings, write_env_var
 from neptune.data.fixtures import GOLDEN_PORTFOLIO, golden_positions
 from neptune.data.market import SyntheticMarketData, default_universe_tickers
@@ -280,7 +281,12 @@ async def lifespan(app: FastAPI):
             if removed:
                 logging.getLogger(__name__).info("removed %d demo position(s)", removed)
     start_scheduler()  # always-on price refresh (no-op if apscheduler isn't installed)
+    # JWKS cache warm + revocation poller start/stop — see api/auth.py. Non-fatal if JANUS
+    # isn't reachable yet (IamClient.start()'s own degraded-mode handling); every request still
+    # gets a real token-signature check via JWKS lazily fetched on first use.
+    await auth.iam_client.start()
     yield
+    await auth.iam_client.stop()
     shutdown_scheduler()
 
 
@@ -291,14 +297,40 @@ app = FastAPI(title="Neptune", version="0.1.0", lifespan=lifespan)
 # are cross-origin to the FastAPI sidecar on 127.0.0.1:<port>. Allow them so the browser
 # doesn't block the calls. Running purely in a browser behind the Vite proxy is same-origin
 # and unaffected. (CORSMiddleware is imported lazily to keep the import block above intact.)
+#
+# NOT allow_origins=["*"] anymore, now that every route (bar /health) requires a real bearer
+# token: a wildcard origin is needlessly broad once real auth is involved, even with
+# allow_credentials staying False (no cookies cross this boundary — same reasoning JANUS's own
+# admin-web CORS setup uses). settings.frontend_origin covers the Vite dev server; "null" covers
+# a packaged Electron renderer's file:// origin (Chromium sends the literal string "null", not
+# a "file://..." URL — Starlette's CORSMiddleware matches allow_origins by exact string
+# membership, so listing it directly works with no regex needed).
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[settings.frontend_origin, "null"],
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "beta_tol": settings.beta_tol}
+
+
+# Every route registered on `app` FROM THIS POINT ONWARD gets this dependency automatically —
+# FastAPI/Starlette's APIRouter captures `self.dependencies` at add_api_route() time (when the
+# @app.get/post/... decorator runs), not dynamically per-request, so appending here affects only
+# routes decorated below this line. /health (just above) is deliberately exempt — a liveness
+# probe should never itself depend on JANUS being reachable. This is the "global dependency,
+# explicit unauthenticated allowlist, fail closed by default" shape design doc §7/§15.5 asks
+# for, achieved with no restructuring of the other 42 routes' existing @app.get/post(...)
+# decorators into a separate APIRouter. Role-specific gates (Depends(auth.require_role(...)))
+# are layered ADDITIONALLY on top of this per mutating/sensitive route below — this dependency
+# only proves "some valid iridium:neptune token was presented," not "the right role."
+app.router.dependencies.append(Depends(auth.get_claims))
 
 
 def get_session():
@@ -372,13 +404,11 @@ def _resolve_portfolio(service: PositionService, portfolio_id: str):
 
 
 # --- endpoints -------------------------------------------------------------------
+# /health is defined earlier, deliberately BEFORE app.router.dependencies gained
+# Depends(auth.get_claims) — see that append's own comment. Every route below requires a
+# valid JANUS token; role-specific gates are layered on top per mutating/sensitive route.
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "beta_tol": settings.beta_tol}
-
-
-@app.post("/securities/betas/rebuild")
+@app.post("/securities/betas/rebuild", dependencies=[Depends(auth.require_role("ADMIN"))])
 def rebuild_betas(session: Session = Depends(get_session)):
     """Recompute the MATERIALIZED daily beta series for the whole universe in one sweep and store
     it. Idempotent; normally runs automatically after ingest, exposed here for a manual rebuild
@@ -410,7 +440,7 @@ class BetaDiagIn(BaseModel):
     tickers: list[str]
 
 
-@app.post("/securities/beta-diagnostics")
+@app.post("/securities/beta-diagnostics", dependencies=[Depends(auth.require_role("ADMIN"))])
 def beta_diagnostics(body: BetaDiagIn, session: Session = Depends(get_session)):
     """Why is a name's beta what it is? For each ticker report the REGRESSION INPUTS — stored
     bar count, date span vs the benchmark, observations actually used, forward-filled gap days
@@ -645,7 +675,7 @@ def list_portfolios(session: Session = Depends(get_session)):
     ]
 
 
-@app.post("/portfolios", status_code=201)
+@app.post("/portfolios", status_code=201, dependencies=[Depends(auth.require_role("ADMIN", "PM"))])
 def create_portfolio(body: PortfolioIn, session: Session = Depends(get_session)):
     svc = PositionService(session)
     pid = body.id or _slugify(body.name)
@@ -666,7 +696,7 @@ def create_portfolio(body: PortfolioIn, session: Session = Depends(get_session))
     return {"id": p.id, "name": p.name, "mandate": p.mandate.value}
 
 
-@app.delete("/portfolios/{portfolio_id}")
+@app.delete("/portfolios/{portfolio_id}", dependencies=[Depends(auth.require_role("ADMIN"))])
 def delete_portfolio(portfolio_id: str, session: Session = Depends(get_session)):
     """Remove a book. Roll-up views are virtual (nothing to delete); a book that still holds
     open positions is refused (409) — flatten it first. Deleting a book is bookkeeping only;
@@ -723,7 +753,7 @@ class PersonIn(BaseModel):
     email: str | None = None
 
 
-@app.post("/people", status_code=201)
+@app.post("/people", status_code=201, dependencies=[Depends(auth.require_role("ADMIN"))])
 def create_person(body: PersonIn, session: Session = Depends(get_session)):
     """Register a firm person (PM / analyst / CIO / admin). Firm staff, not a client."""
     service = PositionService(session)
@@ -734,7 +764,10 @@ def create_person(body: PersonIn, session: Session = Depends(get_session)):
     return {"id": body.id}
 
 
-@app.post("/portfolios/{portfolio_id}/positions", status_code=201)
+@app.post(
+    "/portfolios/{portfolio_id}/positions", status_code=201,
+    dependencies=[Depends(auth.require_role("ADMIN", "PM", "ANALYST"))],
+)
 def add_position(portfolio_id: str, body: PositionIn, session: Session = Depends(get_session)):
     service = PositionService(session)
     _require_portfolio(service, portfolio_id)
@@ -762,7 +795,10 @@ class TransactionIn(BaseModel):
     target: str | None = None
 
 
-@app.post("/portfolios/{portfolio_id}/transactions", status_code=201)
+@app.post(
+    "/portfolios/{portfolio_id}/transactions", status_code=201,
+    dependencies=[Depends(auth.require_role("ADMIN", "PM", "ANALYST"))],
+)
 def record_transaction(
     portfolio_id: str, body: TransactionIn, session: Session = Depends(get_session)
 ):
@@ -852,7 +888,10 @@ def list_transactions(
     return [_tx_dict(t) for t in txs]
 
 
-@app.post("/portfolios/{portfolio_id}/positions/{position_id}/reduce")
+@app.post(
+    "/portfolios/{portfolio_id}/positions/{position_id}/reduce",
+    dependencies=[Depends(auth.require_role("ADMIN", "PM", "ANALYST"))],
+)
 def reduce_position(
     portfolio_id: str,
     position_id: int,
@@ -900,7 +939,10 @@ def portfolio_pnl(portfolio_id: str, session: Session = Depends(get_session)):
     }
 
 
-@app.post("/portfolios/{portfolio_id}/refresh-prices")
+@app.post(
+    "/portfolios/{portfolio_id}/refresh-prices",
+    dependencies=[Depends(auth.require_role("ADMIN", "CIO", "PM", "ANALYST"))],
+)
 def refresh_prices(
     portfolio_id: str,
     session: Session = Depends(get_session),
@@ -1161,7 +1203,10 @@ def calibrate_hedge(
             "current_budget": settings.beta_add_budget, "grid": rows}
 
 
-@app.post("/portfolios/{portfolio_id}/hedge/propose")
+@app.post(
+    "/portfolios/{portfolio_id}/hedge/propose",
+    dependencies=[Depends(auth.require_role("ADMIN", "PM", "ANALYST"))],
+)
 def propose_hedge(
     portfolio_id: str,
     sector_limit: float = Query(
@@ -1273,7 +1318,14 @@ class HedgeApproveIn(BaseModel):
     shorts: list[HedgeShortIn]
 
 
-@app.post("/portfolios/{portfolio_id}/hedge/approve", status_code=201)
+@app.post(
+    "/portfolios/{portfolio_id}/hedge/approve", status_code=201,
+    # CIO is allowed here deliberately — the design's asymmetry: CIO may not author a position
+    # directly (see /positions above, no CIO), but may approve an optimizer-proposed hedge that
+    # results in one. Direct entry and approval-driven writes are different gates on the same
+    # table, kept atomic (design doc §3's Neptune role table + §25's CIO-asymmetry framing).
+    dependencies=[Depends(auth.require_role("ADMIN", "CIO", "PM"))],
+)
 def approve_hedge(portfolio_id: str, body: HedgeApproveIn,
                   session: Session = Depends(get_session)):
     service = PositionService(session)
@@ -1326,7 +1378,10 @@ class HedgeLegsIn(BaseModel):
     legs: list[HedgeLegIn]
 
 
-@app.post("/portfolios/{portfolio_id}/hedge/legs", status_code=201)
+@app.post(
+    "/portfolios/{portfolio_id}/hedge/legs", status_code=201,
+    dependencies=[Depends(auth.require_role("ADMIN", "CIO", "PM"))],  # same as hedge/approve
+)
 def book_hedge_legs(portfolio_id: str, body: HedgeLegsIn,
                     session: Session = Depends(get_session)):
     """Book the EXACT hedge legs shown in the delta-aware Trade grid: BUY = buy-to-cover a
@@ -1351,7 +1406,10 @@ def book_hedge_legs(portfolio_id: str, body: HedgeLegsIn,
     }
 
 
-@app.post("/portfolios/{portfolio_id}/hedge/frontier")
+@app.post(
+    "/portfolios/{portfolio_id}/hedge/frontier",
+    dependencies=[Depends(auth.require_role("ADMIN", "CIO", "PM", "ANALYST"))],
+)
 def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
     """Complexity-quality frontier: capped runs (N<=10/20/50) showing the trade-off
     between position count and hedge quality (tracking error / net beta)."""
@@ -1399,7 +1457,10 @@ def hedge_frontier(portfolio_id: str, session: Session = Depends(get_session)):
     }
 
 
-@app.post("/portfolios/{portfolio_id}/stress")
+@app.post(
+    "/portfolios/{portfolio_id}/stress",
+    dependencies=[Depends(auth.require_role("ADMIN", "CIO", "PM", "ANALYST"))],
+)
 def stress(
     portfolio_id: str,
     body: StressIn | None = None,
@@ -1472,14 +1533,14 @@ class ApiKeyIn(BaseModel):
     api_key: str
 
 
-@app.get("/settings/credentials")
+@app.get("/settings/credentials", dependencies=[Depends(auth.require_role("ADMIN"))])
 def list_credentials(session: Session = Depends(get_session)):
     """External data-provider API-key status — masked (never the key itself). ``source``
     tells whether it resolves from the UI-stored value, an env fallback, or is unset."""
     return CredentialsService(session).list_status()
 
 
-@app.put("/settings/credentials/{provider}")
+@app.put("/settings/credentials/{provider}", dependencies=[Depends(auth.require_role("ADMIN"))])
 def set_credential(provider: str, body: ApiKeyIn, session: Session = Depends(get_session)):
     """Store (or clear) a provider's API key. Returns masked status; the key is never echoed."""
     try:
@@ -1528,7 +1589,7 @@ class MacroIngestIn(BaseModel):
     series: list[str] | None = None
 
 
-@app.post("/macro/ingest")
+@app.post("/macro/ingest", dependencies=[Depends(auth.require_role("ADMIN"))])
 def ingest_macro(
     body: MacroIngestIn,
     session: Session = Depends(get_session),
@@ -1561,7 +1622,7 @@ def get_price_refresh(session: Session = Depends(get_session)):
     return {"minutes": AppSettingsService(session).get_price_refresh_minutes()}
 
 
-@app.put("/settings/price-refresh")
+@app.put("/settings/price-refresh", dependencies=[Depends(auth.require_role("ADMIN"))])
 def set_price_refresh(body: PriceRefreshIn, session: Session = Depends(get_session)):
     """Persist the interval and reschedule the running job (live, no restart)."""
     minutes = AppSettingsService(session).set_price_refresh_minutes(body.minutes)
@@ -1583,7 +1644,7 @@ def get_sector_source(session: Session = Depends(get_session)):
     }
 
 
-@app.put("/settings/sector-source")
+@app.put("/settings/sector-source", dependencies=[Depends(auth.require_role("ADMIN"))])
 def set_sector_source(body: SectorSourceIn, session: Session = Depends(get_session)):
     """Persist which scheme drives the sector cap. Takes effect on the next risk/hedge
     computation — nothing to restart."""
@@ -1594,7 +1655,7 @@ def set_sector_source(body: SectorSourceIn, session: Session = Depends(get_sessi
     return {"scheme": scheme}
 
 
-@app.get("/settings/connections")
+@app.get("/settings/connections", dependencies=[Depends(auth.require_role("ADMIN"))])
 def list_connections(session: Session = Depends(get_session)):
     """All configured DB connections, password-masked. Each role reflects the EFFECTIVE
     connection: a stored row if present, else the host/port/database/username parsed from the
@@ -1611,7 +1672,7 @@ def list_connections(session: Session = Depends(get_session)):
     return out
 
 
-@app.put("/settings/connections/{role}")
+@app.put("/settings/connections/{role}", dependencies=[Depends(auth.require_role("ADMIN"))])
 def upsert_connection(
     role: ConnectionRole, body: ConnectionIn, session: Session = Depends(get_session)
 ):
@@ -1673,7 +1734,7 @@ def _repoint_portfolio_connection(body: ConnectionIn) -> dict:
     return {**cfg.masked(), "reconnected": True, "env_updated": env_updated}
 
 
-@app.post("/settings/connections/{role}/test")
+@app.post("/settings/connections/{role}/test", dependencies=[Depends(auth.require_role("ADMIN"))])
 def test_connection(role: ConnectionRole, session: Session = Depends(get_session)):
     """Open a throwaway connection to the resolved URL and run SELECT 1. Never exposes
     the password; returns ok/false plus a sanitized error message."""
@@ -1691,7 +1752,7 @@ def test_connection(role: ConnectionRole, session: Session = Depends(get_session
     return {"role": role.value, "ok": True}
 
 
-@app.post("/settings/universe/sync")
+@app.post("/settings/universe/sync", dependencies=[Depends(auth.require_role("ADMIN"))])
 def sync_universe(session: Session = Depends(get_session)):
     """Project the cato_securities universe into neptune_securities.securities. Reads the
     UNIVERSE connection read-only; if none is configured, falls back to the synthetic
@@ -1729,7 +1790,7 @@ class IngestIn(BaseModel):
     years: float | None = Field(default=None, gt=0, le=25)
 
 
-@app.post("/securities/ingest")
+@app.post("/securities/ingest", dependencies=[Depends(auth.require_role("ADMIN"))])
 def ingest_prices(
     body: IngestIn,
     session: Session = Depends(get_session),
@@ -1814,7 +1875,7 @@ class FactorIngestIn(BaseModel):
     end: date | None = None
 
 
-@app.post("/factors/ingest")
+@app.post("/factors/ingest", dependencies=[Depends(auth.require_role("ADMIN"))])
 def ingest_factor_panel(
     body: FactorIngestIn,
     session: Session = Depends(get_session),

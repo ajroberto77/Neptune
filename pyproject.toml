@@ -17,6 +17,8 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "cvxpy>=1.4",
+    # Identity (JANUS / iridium-iam) — see design doc §15.5. Kept in sync with requirements.txt.
+    "iridium-iam-client[fastapi] @ git+https://github.com/ajroberto77/Iridium_Infra.git#subdirectory=client/python",
 ]
 
 [project.optional-dependencies]

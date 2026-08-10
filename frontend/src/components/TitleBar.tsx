@@ -11,6 +11,7 @@ interface Props {
   /** When true, the backend is running on throwaway SQLite + synthetic data — flag it loudly. */
   testMode?: boolean;
   onSettings?: () => void;
+  onSignOut?: () => void;
 }
 
 // The Neptune brand mark — trident glyph only, no background chip, from the official kit
@@ -39,6 +40,7 @@ export function TitleBar({
   subtitle = "Portfolio and Risk Management Platform",
   testMode = false,
   onSettings,
+  onSignOut,
 }: Props) {
   // Test Mode subsumes the ordinary status pill rather than adding a second one next to it —
   // "running on synthetic data" is a more important thing to know than "the backend answered a
@@ -75,6 +77,16 @@ export function TitleBar({
       >
         {pill}
       </span>
+      {onSignOut && (
+        <button
+          onClick={onSignOut}
+          title="Sign out"
+          aria-label="sign-out"
+          className="app-no-drag mr-1 flex h-8 w-8 items-center justify-center rounded text-sm text-ocean-muted transition hover:bg-white/10 hover:text-white"
+        >
+          ⏻
+        </button>
+      )}
       <button
         onClick={onSettings}
         title="Settings"
