@@ -225,6 +225,15 @@ case).
 part of *estimation* (belongs inside the regression) vs. a *transform of the estimate*
 (applied after). Don't blindly chain them in the order listed.
 
+**2026-08 update — the EWMA+Dimson raw-beta method above was itself later replaced.** Kept
+as-written for the historical record (the step-ORDER lesson — Vasicek last — still holds
+and generalizes beyond this specific pipeline). But the raw-beta estimation method it
+describes is superseded: in production the EWMA weighting + folded-in Dimson lead/lag
+terms weighted only ~32 effective observations and produced unstable, sometimes
+sign-flipped betas. It was revised (PM-approved) to a plain 252-day OLS regression with no
+weighting and no lead/lag terms — see `CLAUDE.md` §4's revision note, which is the
+authoritative current description.
+
 ---
 
 ## Don't state an inferred cause as fact — especially about the user's data

@@ -206,6 +206,3 @@ indices are the only Phase-1-adjacent paid items, both deferred).
 
 - Global (non-US) rates/FX and the trigger to add them.
 - Paid feeds (CDX/MOVE/intraday) if/when budgeted.
-- Reconcile `Neptune_Roadmap.md:160` (still cites the superseded EWMA+Dimson beta) with the
-  authoritative `CLAUDE.md` §4 pipeline — separate from this work, flagged so regime docs
-  don't cite the wrong method.

@@ -13,10 +13,11 @@ product spec is [`Neptune_Roadmap.md`](./Neptune_Roadmap.md); the build plan is 
 ## What's in this vertical slice
 
 A runnable end-to-end path: enter long/short positions → compute betas through the full
-**EWMA + Dimson regression → Vasicek shrinkage** pipeline → factor decomposition → the
-optimizer proposes a short basket under the **`|net beta| ≤ 0.05`** hard constraint → a
-themed dashboard shows net beta and factor exposures. The Stress Engine and
-multi-portfolio Book-of-Books are stubbed for later.
+**252-day OLS regression → Vasicek shrinkage** pipeline (see `CLAUDE.md` §4 — this replaced an
+earlier EWMA + Dimson lead/lag approach that produced unstable, sometimes sign-flipped betas)
+→ factor decomposition → the optimizer proposes a short basket under the
+**`|net beta| ≤ 0.05`** hard constraint → a themed dashboard shows net beta and factor
+exposures. The Stress Engine and multi-portfolio Book-of-Books are stubbed for later.
 
 ## Architecture (three layers, never blurred)
 
@@ -57,11 +58,12 @@ required). To run the pieces separately, use the quickstarts below.
 
 Neptune also runs as a desktop app inside the same Electron shell used by Iridium Backend /
 Mercury / CATO. The shell (`main.js` + `preload.cjs`) creates the window, **spawns the FastAPI
-backend as a Python sidecar** (`scripts/neptune_api.py` on `127.0.0.1:8433` — chosen so it
-coexists with Iridium Backend on 8432), and injects the database URLs from a settings file in
-the OS `userData` dir as env vars (`PORTFOLIO_/SECURITIES_/MACRO_/UNIVERSE_DATABASE_URL`,
+backend as a Python sidecar** (`scripts/neptune_api.py`, default `127.0.0.1:8433` — chosen so
+it coexists with Iridium Backend on 8432), and injects the database URLs from a settings file
+in the OS `userData` dir as env vars (`PORTFOLIO_/SECURITIES_/MACRO_/UNIVERSE_DATABASE_URL`,
 `FRED_API_KEY`). Like the other apps, it ships a **local `venv`** rather than a frozen binary —
-no PyInstaller.
+no PyInstaller. The window/taskbar/dock icon and title-bar mark come from the official brand
+kit under `assets/brand/` (source: `assets/icon.png` / `assets/icon.ico`).
 
 ```bash
 # one-time: a venv next to the app, with Neptune installed (main.js auto-detects ./venv)
@@ -77,6 +79,27 @@ Neptune owns the **portfolio** database (read-write); securities/macro are **rea
 Backend writes them). The renderer resolves the backend URL via the preload bridge
 (`window.neptune.getApiBaseUrl()`), so the same frontend also runs in a plain browser behind the
 Vite proxy (`python run.py`) unchanged.
+
+If the configured port is already taken (e.g. a stale sidecar from an earlier run), `main.js`
+automatically probes for the next free one and starts there instead of failing — no manual
+`netstat`/`taskkill` needed. A `[neptune] port 8433 is in use; falling back to <port>` line in
+the `[app]` log confirms it happened.
+
+### Settings → Databases
+
+Each database family (Neptune's own `Portfolio`/`Securities`/`Macro`, and CATO's read-only
+`Universe`) is a card with its **Server** fields (host/port/user/password) shown immediately —
+that's the base config, not something tucked away. An **Advanced** toggle (only shown when a
+family has more than one database) holds the rarer case: breaking one database out onto its
+own server instead of sharing the family's.
+
+**Save only persists** the config to disk — in Electron it no longer restarts the backend on
+every change. A saved connection (including Portfolio, the bootstrap database) takes effect on
+the **next app launch**, not immediately. The one exception is **Test Mode**: toggling it
+on/off does restart the sidecar, since it's swapping the whole database target (real Postgres
+↔ a throwaway local SQLite file seeded with a demo book and synthetic data) rather than editing
+a value. Test Mode's toggle lives at the bottom of the Databases section and only offers itself
+when the app can't actually load risk/positions data — it's an escape hatch, never the default.
 
 ## Backend — quickstart
 

@@ -28,7 +28,7 @@ Neptune is Iridium's quantitative risk intelligence platform — a cloud-based s
 
 | # | Objective | Description |
 |---|---|---|
-| 1 | Beta Neutrality Engine | Maintain real-time market neutrality on the long book via continuous EWMA/Vasicek/Dimson beta estimation and systematic short book construction. |
+| 1 | Beta Neutrality Engine | Maintain real-time market neutrality on the long book via continuous OLS/Vasicek beta estimation (see `CLAUDE.md` §4 — revised from the original EWMA/Dimson design below after it produced unstable, sign-flipped betas in production) and systematic short book construction. |
 | 2 | Universe-Scanning Optimizer | Scan the Russell 3000 shortable universe and solve a two-pass MIQP to select and size the systematic short book that minimises residual beta and factor tracking error. |
 | 3 | Multi-Factor Exposure Monitor | Decompose portfolio exposures across five factors (Market, Size, Value, Momentum, Sector) and flag breaches against per-portfolio limits. |
 | 4 | Live P&L Engine | Mark-to-market P&L across all positions with FIFO/AVCO/Specific-Lot cost basis tracking, split by Long / Systematic Short / Discretionary Short. |
@@ -155,11 +155,20 @@ CIO default landing page: Portfolio Matrix (every live portfolio as row; columns
 
 ### Beta estimation methods
 
+> **Reconciled with `CLAUDE.md` §4 (PM-approved revision).** The EWMA + Dimson design below
+> was the original Phase 1 plan. In production it weighted only ~32 effective observations,
+> and its collinear lead/lag terms produced unstable, sometimes sign-flipped betas (a
+> high-beta tech name estimated negative), which broke the hedge. It was replaced with a
+> plain 252-day OLS regression, Vasicek shrinkage still last. Rows below are kept for
+> history; **EWMA** and **Dimson Adjustment** are marked superseded/removed rather than
+> deleted, so past decisions stay traceable.
+
 | Method | Description | Formula / Parameters | Data Source | Phase | Notes |
 |---|---|---|---|---|---|
-| EWMA | Exponentially weighted regression vs SPY/benchmark. Fast to respond to regime changes. | λ=0.94, 252-day lookback | yfinance / Bloomberg | Phase 1 | Default method for all portfolios |
-| Vasicek Shrinkage | β_vasicek = w·β_ewma + (1−w)·1.0, w inversely proportional to estimation variance. | w = σ²_prior / (σ²_prior + σ²_OLS) | Derived from EWMA | Phase 1 | Bloomberg "Adjusted Beta" equivalent |
-| Dimson Adjustment | Sum of lagged and leading market return coefficients. Handles illiquid stocks. | β_dimson = Σβ_lag(k) for k=−1, 0, +1 | yfinance / Bloomberg | Phase 1 | Critical for activist targets with asynchronous pricing |
+| OLS Regression | Plain regression of stock returns on market returns. Raw β = the market slope; also yields the estimation variance σ²_OLS. | 252-day (≈1-year) lookback, unweighted | yfinance / Bloomberg | Phase 1 | **Current method** — replaced EWMA below |
+| ~~EWMA~~ | ~~Exponentially weighted regression vs SPY/benchmark. Fast to respond to regime changes.~~ | ~~λ=0.94, 252-day lookback~~ | yfinance / Bloomberg | Phase 1 | **Superseded** — see note above |
+| Vasicek Shrinkage | β_vasicek = w·β_raw + (1−w)·1.0, w inversely proportional to estimation variance. | w = σ²_prior / (σ²_prior + σ²_OLS) | Derived from raw OLS beta | Phase 1 | Bloomberg "Adjusted Beta" equivalent; always the final model step |
+| ~~Dimson Adjustment~~ | ~~Sum of lagged and leading market return coefficients. Handles illiquid stocks.~~ | ~~β_dimson = Σβ_lag(k) for k=−1, 0, +1~~ | yfinance / Bloomberg | Phase 1 | **Removed** — see note above |
 | Forward Override | PM-set manual beta override per position. Overrides all model outputs for that position. | PM input — stored in `positions.forward_beta` | Manual entry | Phase 1 | Logged to audit_log with before/after state |
 | Kalman Filter | Beta as a latent state variable updated with each new return observation. | State-space model; Kalman gain auto-tunes | yfinance / Bloomberg | Phase 3+ | Current best practice — deferred post-Phase 1 |
 

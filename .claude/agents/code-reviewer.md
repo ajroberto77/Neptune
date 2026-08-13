@@ -19,8 +19,9 @@ what changed.
    Fundamental-Layer content** (`thesis`/`target`).
 3. **`|net β| ≤ 0.05`** is enforced as a hard constraint in the optimizer and asserted in
    tests.
-4. **Beta pipeline order** — raw beta from one EWMA+Dimson regression, Vasicek last,
-   forward override supersedes all.
+4. **Beta pipeline order** — raw beta from a plain 252-day OLS regression (not EWMA-weighted,
+   no Dimson lead/lag folded in — that design was revised away, see `CLAUDE.md` §4), Vasicek
+   last, forward override supersedes all.
 5. **Short book is a hedge, not alpha** — optimizer objective is tracking-error/residual
    neutralization, not return maximization. Systematic vs discretionary shorts stay
    separate; the optimizer never mutates discretionary positions.

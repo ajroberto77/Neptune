@@ -1,6 +1,6 @@
 ---
 name: quant-researcher
-description: Read-only reviewer that verifies quantitative methodology and numerical correctness. Use to check the beta pipeline (EWMA + Dimson regression, Vasicek shrinkage), factor decomposition, and optimizer formulation against the roadmap, and to independently recompute golden numbers. Does not edit code.
+description: Read-only reviewer that verifies quantitative methodology and numerical correctness. Use to check the beta pipeline (252-day OLS regression, Vasicek shrinkage), factor decomposition, and optimizer formulation against the roadmap, and to independently recompute golden numbers. Does not edit code.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -14,15 +14,19 @@ Authoritative references: `CLAUDE.md` (hard invariants) and `Neptune_Roadmap.md`
 ## What to verify
 
 1. **Beta pipeline** (`src/neptune/quant/beta.py`):
-   - Raw beta comes from a **single 252-day EWMA-weighted regression**, λ = 0.94, weights
-     `λ^k` newest-first and normalized.
-   - **Dimson lead/lag terms (k = −1, 0, +1) are folded into that same regression**; raw
-     β = sum of contemporaneous + lag + lead market coefficients. They must NOT be a
-     post-hoc adjustment.
+   - Raw beta comes from a **plain 252-day (≈1-year) OLS regression** of stock returns on
+     market returns — unweighted, no lead/lag terms. Raw β = the market slope; the
+     regression also yields the estimation variance σ²_OLS (the slope's SE²).
+   - This replaced an earlier EWMA (λ = 0.94) + Dimson lead/lag (k = −1, 0, +1) design —
+     that version weighted only ~32 effective observations and its collinear lead/lag
+     terms produced unstable, sometimes sign-flipped betas in production (see `CLAUDE.md`
+     §4's revision note). If you see EWMA weighting or Dimson terms folded into the raw
+     beta regression, that IS the bug, not a thing to confirm.
    - **Vasicek shrinkage is the FINAL model step**: `β = w·β_raw + (1−w)·1.0`,
      `w = σ²_prior / (σ²_prior + σ²_OLS)`. Confirm `σ²_OLS` is the regression's beta
      estimation variance and that noisier estimates shrink harder.
    - **Forward beta override** supersedes the entire pipeline for that position.
+   - Betas are computed on **completed daily closes only** — today's live bar is excluded.
 
 2. **Factor decomposition** (`src/neptune/quant/factors.py`): rolling FF5 + Momentum
    regression; portfolio exposures are notional-weighted loadings.
