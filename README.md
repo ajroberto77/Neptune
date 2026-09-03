@@ -144,3 +144,10 @@ npm test                     # Vitest
 `pytest` exercises the beta pipeline (noise-free recovers the true beta; a known-noise
 fixture forces Vasicek's shrinkage weight strictly into (0, 1)), the optimizer (asserts
 `|net beta| ≤ 0.05` on the golden portfolio), and the full API slice.
+
+---
+
+Copyright (c) 2026 Andrew J Roberto. All Rights Reserved. See [NOTICE](NOTICE).
+
+This software is proprietary. No license is granted to use, copy, modify, or
+distribute it, in whole or in part, without express written permission.
